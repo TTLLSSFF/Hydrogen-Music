@@ -47,7 +47,12 @@
   }
 
   const register = () => {
-    windowApi.toRegister('https://music.163.com/')
+    const url = 'https://music.163.com/'
+    if (typeof windowApi !== 'undefined' && windowApi?.toRegister) {
+      windowApi.toRegister(url)
+    } else {
+      window.open(url, '_blank')
+    }
   }
 
   // 登录成功后动画并跳转

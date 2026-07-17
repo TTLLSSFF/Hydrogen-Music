@@ -3,11 +3,9 @@
   import { playAll } from '../utils/player/lazy';
   import { useRouter } from 'vue-router';
   import { useLibraryStore } from '../store/libraryStore'
-  import { useLocalStore } from '../store/localStore';
   import { isLogin } from '../utils/authority';
   import { noticeOpen } from '../utils/dialog';
   const libraryStore = useLibraryStore()
-  const localStore = useLocalStore()
   const router = useRouter()
   const recTime = ref()
   const showMore = ref(false)
@@ -32,7 +30,6 @@
   }
   const checkRecSongs = () => {
     libraryStore.libraryInfo = null
-    localStore.currentSelectedSongs = null
     router.push('/mymusic/playlist/rec')
   }
   const playRecAll = async () => {

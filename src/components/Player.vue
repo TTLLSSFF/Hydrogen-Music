@@ -4,15 +4,14 @@ import { useRouter } from 'vue-router';
 import { songTime2 } from '../utils/time';
 import VueSlider from 'vue-slider-component';
 import OverflowMarquee from './base/OverflowMarquee.vue';
-import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode, likeSong } from '../utils/player/lazy';
+import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode, toggleHeartMode, likeSong } from '../utils/player/lazy';
 import { getDjDetail, subDj } from '../api/dj';
 import { useUserStore } from '../store/userStore';
 import { usePlayerStore } from '../store/playerStore';
-import { useLocalStore } from '../store/localStore';
 import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
-import { toggleDesktopLyric } from '../utils/desktopLyric';
 import { getSongCoverUrl, withCoverParam } from '../utils/coverBackdrop';
+import { noticeOpen } from '../utils/dialog';
 import { getSongDisplayName } from '../utils/songName';
 import { getIndexedSong } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
@@ -66,7 +65,6 @@ const commentCountFontSize = computed(() => {
 
 const router = useRouter();
 const userStore = useUserStore();
-const localStore = useLocalStore();
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
 const {
@@ -84,14 +82,10 @@ const {
     time,
     playerChangeSong,
     localBase64Img,
-    musicVideo,
-    addMusicVideo,
-    videoIsPlaying,
     playerShow,
     listInfo,
     lyricsObjArr,
-    currentLyricIndex, // 添加当前歌词索引
-    isDesktopLyricOpen,
+    currentLyricIndex,
     coverBlur,
     showSongTranslation,
 } = storeToRefs(playerStore);
@@ -211,7 +205,6 @@ const toAlbum = () => {
         lyricShow.value = false;
         playlistWidgetShow.value = false;
         playerStore.forbidLastRouter = true;
-        if (videoIsPlaying.value) videoIsPlaying.value = false;
         return;
     }
     // 普通歌曲：仍然跳转专辑
@@ -224,16 +217,13 @@ const toAlbum = () => {
         lyricShow.value = false;
         playlistWidgetShow.value = false;
         playerStore.forbidLastRouter = true;
-        if (videoIsPlaying.value) videoIsPlaying.value = false;
     }
 };
 
 const download = () => {
     const song = currentSong.value;
     if (song && song.type != 'local') {
-        let list = [];
-        list.push(song);
-        localStore.updateDownloadList(list);
+        noticeOpen('网页版暂不支持下载', 2);
     }
 };
 
@@ -247,23 +237,8 @@ const checkArtist = artistId => {
         lyricShow.value = false;
         playlistWidgetShow.value = false;
         playerStore.forbidLastRouter = true;
-        if (videoIsPlaying.value) videoIsPlaying.value = false;
     }
 };
-const toAddMusicVideo = () => {
-    const song = currentSong.value;
-    if (song) {
-        addMusicVideo.value = {
-            id: songId.value,
-            name: getSongDisplayName(song, '', showSongTranslation.value),
-            dt: time.value,
-        };
-    }
-};
-const backToVideo = () => {
-    if (videoIsPlaying.value) playerShow.value = false;
-};
-
 const addToPlaylist = () => {
     const song = currentSong.value;
     if (song && song.type !== 'local' && song.source !== 'siren') {
@@ -288,7 +263,7 @@ const toggleDjSub = async isSubscribe => {
     <div class="player-container">
         <div class="player">
             <div class="player-cover">
-                <div class="cover" :class="{ 'back-Video': videoIsPlaying }" @click="backToVideo()">
+                <div class="cover">
                     <img
                         v-if="showRemoteCurrentSong && displayedRemoteCoverUrl"
                         :src="displayedRemoteCoverUrl"
@@ -319,12 +294,12 @@ const toggleDjSub = async isSubscribe => {
                     ></OverflowMarquee>
                 </div>
                 <div class="info-music">
-                    <div class="music-author-lable" :class="{ 'music-author-lable-video': videoIsPlaying || coverBlur }"></div>
+                    <div class="music-author-lable" :class="{ 'music-author-lable-dim': coverBlur }"></div>
                     <div class="music-author">
                             <span
                                 @click="checkArtist(singer.id)"
                                 :class="['author', { disabled: isDjMode || isCurrentSirenSong }]"
-                                :style="{ color: videoIsPlaying || coverBlur ? 'var(--text)' : 'var(--muted-text)' }"
+                                :style="{ color: coverBlur ? 'var(--text)' : 'var(--muted-text)' }"
                                 v-for="(singer, index) in currentSongArtists"
                             >
                             {{ singer.name || '' }}{{ index == currentSongArtists.length - 1 ? '' : ' / ' }}
@@ -455,24 +430,6 @@ const toggleDjSub = async isSubscribe => {
             </div>
 
             <div class="song-control">
-                <svg
-                    t="1673355036226"
-                    v-if="musicVideo"
-                    @click="toAddMusicVideo()"
-                    class="icon"
-                    viewBox="0 0 1024 1024"
-                    version="1.1"
-                    xmlns="http://www.w3.org/2000/svg"
-                    p-id="16255"
-                    width="200"
-                    height="200"
-                >
-                    <path
-                        d="M220 600c17.673 0 32 14.327 32 32v91.999l92 0.001c17.673 0 32 14.327 32 32 0 17.673-14.327 32-32 32h-92v92c0 17.673-14.327 32-32 32-17.673 0-32-14.327-32-32v-92H96c-17.673 0-32-14.327-32-32 0-17.673 14.327-32 32-32h92v-92c0-17.673 14.327-32 32-32z m498.268-440c35.307 0 63.928 28.654 63.928 64v147.387l125.63-80.353c21.065-13.473 48.617 1.386 49.166 26.21L957 318v368c0 25.024-27.341 40.268-48.533 27.366l-0.64-0.4-125.63-80.354V800c0 35.346-28.622 64-63.929 64H448v-68.001h266.272V228H134.923V577H67V224c0-35.346 28.622-64 63.928-64h587.34z m174.803 216.417l-110.875 70.916v109.332l110.875 70.916V376.417zM290.713 286c17.673 0 32 14.327 32 32 0 17.673-14.327 32-32 32h-65.854c-17.674 0-32-14.327-32-32 0-17.673 14.326-32 32-32h65.854z"
-                        fill="#000000"
-                        p-id="16256"
-                    ></path>
-                </svg>
                 <!-- 罗马音歌词图标 - 只有在当前歌曲有罗马音歌词时才显示 -->
                 <svg
                     t="1673182533775"
@@ -819,6 +776,26 @@ const toggleDjSub = async isSubscribe => {
                     ></path>
                 </svg>
 
+                <!-- 心动模式按钮 -->
+                <svg
+                    t="1680000000000"
+                    @click="toggleHeartMode()"
+                    class="icon heart-mode-icon"
+                    viewBox="0 0 1024 1024"
+                    version="1.1"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="200"
+                    height="200"
+                >
+                    <path
+                        d="M512 890.9L142.8 521.7C77.3 456.2 77.3 349.4 142.8 283.9s165.8-65.5 231.3 0L512 421.8l137.9-137.9c65.5-65.5 172.3-65.5 237.8 0s65.5 172.3 0 237.8L512 890.9z"
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width="64"
+                        stroke-linejoin="round"
+                    />
+                </svg>
+
                 <!-- 歌词/评论切换按钮：本地歌曲隐藏评论按钮 -->
                 <svg
                     v-if="showCommentPanelAction"
@@ -838,21 +815,6 @@ const toggleDjSub = async isSubscribe => {
                     <text class="comment-count-text" :x="commentCountBadgeCenterX" y="5.35" text-anchor="middle" dominant-baseline="middle" :style="{ fontSize: `${commentCountFontSize}px` }">
                         {{ commentCountText }}
                     </text>
-                </svg>
-                <!-- 桌面歌词控制按钮 -->
-                <svg
-                    @click="toggleDesktopLyric"
-                    :class="{ active: isDesktopLyricOpen }"
-                    class="icon desktop-lyric-btn"
-                    viewBox="0 0 1024 1024"
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="200"
-                    height="200"
-                >
-                    <path
-                        d="M896 128H128c-70.4 0-128 57.6-128 128v512c0 70.4 57.6 128 128 128h768c70.4 0 128-57.6 128-128V256c0-70.4-57.6-128-128-128zM128 192h768c35.2 0 64 28.8 64 64v85.333333H64V256c0-35.2 28.8-64 64-64z m768 640H128c-35.2 0-64-28.8-64-64V405.333333h896V768c0 35.2-28.8 64-64 64z"
-                    ></path>
-                    <path d="M256 576h512v64H256z m0 128h384v64H256z"></path>
                 </svg>
             </div>
         </div>
@@ -951,12 +913,6 @@ const toggleDjSub = async isSubscribe => {
                             transform: scale(1);
                         }
                     }
-                }
-            }
-            .back-Video {
-                &:hover {
-                    cursor: pointer;
-                    transform: scale(1.05);
                 }
             }
             $boderpx: 2 + Px;
@@ -1117,7 +1073,7 @@ const toggleDjSub = async isSubscribe => {
                         transform: translate(-50%, -50%);
                     }
                 }
-                .music-author-lable-video {
+                .music-author-lable-dim {
                     border: 0.5px solid rgb(0, 0, 0);
                     &::after {
                         background-color: rgb(0, 0, 0);
@@ -1320,24 +1276,16 @@ const toggleDjSub = async isSubscribe => {
         }
     }
 
-    .desktop-lyric-btn {
-        opacity: 0.5;
+    .heart-mode-icon {
+        cursor: pointer;
         transition: all 0.2s ease;
 
         path {
-            fill: #8a8a8a;
-        }
-
-        &.active {
-            opacity: 1;
-
-            path {
-                fill: #000000;
-            }
+            stroke: #000000;
         }
 
         &:hover {
-            opacity: 0.8;
+            opacity: 0.7;
             transform: scale(1.05);
         }
 

@@ -16,11 +16,9 @@ import LibraryMVList from '../components/LibraryMVList.vue';
 import SongFilterInput from './SongFilterInput.vue';
 import { usePlayerStore } from '../store/playerStore';
 import { useLibraryStore } from '../store/libraryStore';
-import { useLocalStore } from '../store/localStore';
 import { storeToRefs } from 'pinia';
 
 const playerStore = usePlayerStore();
-const localStore = useLocalStore();
 const libraryStore = useLibraryStore();
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
 const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration } = storeToRefs(libraryStore);
@@ -493,7 +491,7 @@ const playAllSafe = async () => {
 //下载本歌单/专辑全部歌曲
 const downloadAll = async () => {
     await waitCurrentPlaylistHydration();
-    localStore.updateDownloadList(librarySongs.value || []);
+    noticeOpen('网页版暂不支持下载', 2);
 };
 
 watch(

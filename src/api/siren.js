@@ -22,15 +22,41 @@ function buildRequestConfig(extraOptions = {}) {
     }
 }
 
+async function requestViaFetch(url, options = {}) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), options.timeout || DEFAULT_REQUEST_TIMEOUT)
+
+    try {
+        const response = await fetch(url, {
+            method: options.method || 'GET',
+            headers: options.headers || {},
+            signal: controller.signal,
+        })
+
+        if (!response.ok) {
+            throw new Error(`塞壬唱片接口请求失败: ${response.status}`)
+        }
+
+        if (options.responseType === 'text') {
+            return await response.text()
+        }
+
+        return await response.json()
+    } finally {
+        clearTimeout(timeoutId)
+    }
+}
+
 async function requestViaMain(url, options = {}) {
-    if (!windowApi || typeof windowApi.requestTrustedResource !== 'function') {
-        throw new Error('windowApi.requestTrustedResource 不可用')
+    if (typeof windowApi !== 'undefined' && typeof windowApi.requestTrustedResource === 'function') {
+        return windowApi.requestTrustedResource({
+            url,
+            option: buildRequestConfig(options),
+        })
     }
 
-    return windowApi.requestTrustedResource({
-        url,
-        option: buildRequestConfig(options),
-    })
+    // 网页环境下直接通过 fetch 请求，需要目标接口支持 CORS
+    return requestViaFetch(url, buildRequestConfig(options))
 }
 
 async function requestSirenJson(path, options = {}) {

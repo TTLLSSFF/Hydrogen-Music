@@ -1,20 +1,15 @@
 <script setup>
   import { formatTime } from '../utils/time'
-  import { useOtherStore } from '../store/otherStore'
-  const otherStore = useOtherStore()
 
   const props = defineProps(['mvlist'])
   //MV日期
   const publishTime = time => formatTime(time, "YYYY-MM-DD")
-  const playMV = (item) => {
-    otherStore.getMvData(item.id)
-  }
 </script>
 
 <template>
   <div class="library-content">
     <div class="library-mv-list">
-        <div class="list-item" :class="{'list-item-selected': otherStore.currentVideoId == item.id}"  @dblclick="playMV(item)" v-for="(item, index) in props.mvlist" :key="item.id || index">
+        <div class="list-item" v-for="(item, index) in props.mvlist" :key="item.id || index">
             <div class="item-title">
                 <div class="item-img">
                     <img v-lazy :src="item.imgurl + '?param=176y99'" alt="">

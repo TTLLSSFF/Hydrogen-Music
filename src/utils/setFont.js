@@ -74,12 +74,6 @@ export function applyCustomFontStyle(customFont, customFontLabel = '') {
     return insertedFont
 }
 
-export function syncDesktopLyricCustomFont(customFont, customFontLabel = '') {
-    try {
-        window.electronAPI?.updateLyricData?.({
-            type: 'settings-change',
-            customFont,
-            customFontLabel,
-        })
-    } catch (_) {}
+export function syncDesktopLyricCustomFont() {
+    // 网页版无桌面歌词，无需同步
 }

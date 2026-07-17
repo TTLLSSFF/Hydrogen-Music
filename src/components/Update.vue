@@ -4,7 +4,12 @@
   const otherStore = useOtherStore()
   const show = ref(true)
   const toUpdate = () => {
-    windowApi.toRegister("https://github.com/ldx123000/Hydrogen-Music/releases")
+    const url = "https://github.com/ldx123000/Hydrogen-Music/releases"
+    if (typeof windowApi !== 'undefined' && windowApi?.toRegister) {
+      windowApi.toRegister(url)
+    } else {
+      window.open(url, '_blank')
+    }
   }
   const close = () => {
     show.value = !show.value

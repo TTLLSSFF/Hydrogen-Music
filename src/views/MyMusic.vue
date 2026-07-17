@@ -3,12 +3,9 @@
   import { useRouter } from 'vue-router'
   import LibraryType from '../components/LibraryType.vue'
   import LibraryList from '../components/LibraryList.vue'
-  import DownloadList from '../components/DownloadList.vue'
-  import LocalMusicList from '../components/LocalMusicList.vue'
   import { useUserStore } from '../store/userStore'
   import { usePlayerStore } from '../store/playerStore'
   import { useLibraryStore } from '../store/libraryStore'
-  import { useLocalStore } from '../store/localStore';
   import { storeToRefs } from 'pinia'
   const router = useRouter()
   const libraryStore = useLibraryStore()
@@ -16,8 +13,6 @@
   const userStore = useUserStore()
   const { user } = storeToRefs(userStore)
   const playerStore = usePlayerStore()
-  const localStore = useLocalStore()
-  const { downloadedMusicFolder, localMusicFolder, localMusicClassify, downloadedFolderSettings, localFolderSettings } = storeToRefs(localStore)
   const shouldShowNone = computed(() => {
     const isMyMusicRoot = router.currentRoute.value.fullPath == '/mymusic'
     const hasRestorableLibraryRoute = !!lastLibraryRoute.value && (lastLibraryRoute.value.name == 'playlist' || lastLibraryRoute.value.name == 'album' || lastLibraryRoute.value.name == 'artist')
@@ -32,11 +27,6 @@
     <div class="music-library" v-if="user">
       <LibraryType class="library-type"></LibraryType>
       <LibraryList v-show="listType1 != 2 && listType1 != 3" class="library-list"></LibraryList>
-      <DownloadList v-show="listType1 == 2 && listType2 == 0" class="download-list"></DownloadList>
-      <LocalMusicList :folderlist="downloadedMusicFolder" type="downloaded" v-if="downloadedMusicFolder" v-show="listType1 == 2 && listType2 == 1" class="local-list"></LocalMusicList>
-      <LocalMusicList :folderlist="localMusicFolder" :classifylist="localMusicClassify" type="local" v-if="localMusicFolder" v-show="listType1 == 3" class="local-list"></LocalMusicList>
-      <div class="no-folder" @click="router.push('/settings')" v-if="!downloadedFolderSettings && listType1 == 2 && listType2 == 1">去设置下载地址</div>
-      <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length == 0 && listType1 == 3">去设置扫描地址</div>
     </div>
       <div class="library-view" :class="{'library-view-nologin': !user}">
         <router-view v-slot="{ Component }">
@@ -94,33 +84,6 @@
         }
         &:hover::-webkit-scrollbar-thumb{
           background-color: rgba(0, 0, 0, 0.04);
-        }
-      }
-      .download-list{
-        height: calc(100% - 50Px);
-        overflow: auto;
-        &::-webkit-scrollbar{
-          display: none;
-        }
-      }
-      .local-list{
-        height: calc(100% - 50Px);
-        overflow: auto;
-        &::-webkit-scrollbar{
-          display: none;
-        }
-      }
-      .no-folder{
-        font: 14px SourceHanSansCN-Bold;
-        color: black;
-        background-color: rgba(255, 255, 255, 0.35);
-        padding: 10px;
-        transition: 0.2s;
-        &:hover{
-          cursor: pointer;
-        }
-        &:active{
-          opacity: 0.7;
         }
       }
     }

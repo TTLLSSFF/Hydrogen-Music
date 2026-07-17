@@ -9,8 +9,9 @@ const libraryStore = useLibraryStore(pinia)
 
 import { noticeOpen } from "./dialog";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 const request = axios.create({
-  baseURL: 'http://localhost:36530',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   timeout: 10000,
 });

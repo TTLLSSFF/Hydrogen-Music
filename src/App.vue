@@ -1,49 +1,29 @@
 <script setup>
-import { computed, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
+import { defineAsyncComponent, onMounted, onUnmounted } from 'vue';
 import Home from './views/Home.vue';
 import Title from './components/Title.vue';
 import SearchInput from './components/SearchInput.vue';
-import AudioVisualizer from './components/AudioVisualizer.vue';
-import WindowControl from './components/WindowControl.vue';
 import MusicWidget from './components/MusicWidget.vue';
-import { destroyDesktopLyric, initDesktopLyric } from './utils/desktopLyric';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
 
 import { usePlayerStore } from './store/playerStore';
 import { useOtherStore } from './store/otherStore';
 
 const MusicPlayer = defineAsyncComponent(() => import('./views/MusicPlayer.vue'));
-const VideoPlayer = defineAsyncComponent(() => import('./components/VideoPlayer.vue'));
 const ContextMenu = defineAsyncComponent(() => import('./components/ContextMenu.vue'));
 const GlobalDialog = defineAsyncComponent(() => import('./components/GlobalDialog.vue'));
 const GlobalNotice = defineAsyncComponent(() => import('./components/GlobalNotice.vue'));
-const Update = defineAsyncComponent(() => import('./components/Update.vue'));
 
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
-const visualizerActive = computed(() => {
-    return playerStore.audioVisualizer && playerStore.playerShow && !playerStore.widgetState && !!playerStore.currentMusic;
-});
-const removeCheckUpdateListener = windowApi.checkUpdate((version) => {
-    otherStore.toUpdate = true;
-    otherStore.newVersion = version;
-});
 
 onMounted(() => {
     initLyricRuntime();
-    initDesktopLyric();
 });
 
 onUnmounted(() => {
-    destroyDesktopLyric();
     destroyLyricRuntime();
-    removeCheckUpdateListener?.();
 });
-
-// 双击标题栏最大化窗口的处理函数
-const handleTitleBarDoubleClick = () => {
-    windowApi.windowMax('window-max');
-};
 </script>
 
 <template>
@@ -52,15 +32,11 @@ const handleTitleBarDoubleClick = () => {
             <Home class="home" v-show="playerStore.widgetState"></Home>
         </Transition>
     </div>
-    <div class="globalWidget" :class="{ 'visualizer-active': visualizerActive }">
+    <div class="globalWidget">
         <Title class="widget-title"></Title>
-        <AudioVisualizer class="widget-visualizer"></AudioVisualizer>
         <div class="widget-search">
             <SearchInput></SearchInput>
         </div>
-    </div>
-    <div class="dragBar" @dblclick="handleTitleBarDoubleClick">
-        <WindowControl></WindowControl>
     </div>
     <Transition name="widget">
         <div class="musicWidget" v-if="playerStore.songList" v-show="playerStore.widgetState">
@@ -72,11 +48,6 @@ const handleTitleBarDoubleClick = () => {
             <MusicPlayer></MusicPlayer>
         </div>
     </Transition>
-    <Transition name="video">
-        <div class="videoPlayer" v-if="otherStore.videoPlayerShow">
-            <VideoPlayer></VideoPlayer>
-        </div>
-    </Transition>
     <div class="contextMune">
         <ContextMenu v-if="otherStore.contextMenuShow || otherStore.addPlaylistShow"></ContextMenu>
     </div>
@@ -86,11 +57,6 @@ const handleTitleBarDoubleClick = () => {
     <div class="globalNotice">
         <GlobalNotice v-if="otherStore.noticeShow"></GlobalNotice>
     </div>
-    <Transition name="fade">
-        <div class="update" v-if="otherStore.toUpdate">
-            <Update></Update>
-        </div>
-    </Transition>
 </template>
 
 <style lang="scss">
@@ -132,17 +98,13 @@ const handleTitleBarDoubleClick = () => {
     }
 }
 .globalWidget {
-    --visualizer-width: clamp(260px, 28vw, 340px);
-    --visualizer-gap: 24px;
-    --visualizer-shift: calc(var(--visualizer-width) + var(--visualizer-gap));
-
     display: flex;
     flex-direction: row;
     align-items: center;
     position: absolute;
     top: 22px;
     z-index: 999;
-    left: 45px; // 所有平台保持统一的布局位置
+    left: 45px;
     pointer-events: none;
 
     .widget-title {
@@ -154,44 +116,7 @@ const handleTitleBarDoubleClick = () => {
     }
     .widget-search {
         margin-left: 30px;
-        transform: translate3d(calc(-1 * var(--visualizer-shift)), 0, 0);
-        transition: transform 0.72s cubic-bezier(0.16, 1, 0.3, 1);
-        will-change: transform;
         pointer-events: auto;
-    }
-    .widget-visualizer {
-        flex-shrink: 0;
-    }
-    &.visualizer-active {
-        .widget-search {
-            transform: translate3d(0, 0, 0);
-        }
-    }
-}
-.dragBar {
-    width: 100%;
-    height: 35px;
-    background: transparent;
-    position: fixed;
-    top: 0;
-    z-index: 999;
-    -webkit-app-region: drag;
-    .window-control {
-        position: fixed;
-        top: 13px;
-        -webkit-app-region: no-drag;
-        z-index: 999;
-
-        // macOS 按钮在左侧
-        &.macos {
-            left: 15px;
-            top: 11px; // 稍微调整高度使其更居中
-        }
-
-        // Windows/Linux 按钮在右侧
-        &.windows {
-            right: 15px;
-        }
     }
 }
 .musicWidget {
@@ -210,22 +135,8 @@ const handleTitleBarDoubleClick = () => {
     top: 0;
     left: 0;
 }
-.videoPlayer {
-    width: 100%;
-    height: 100%;
-    position: fixed;
-    pointer-events: none;
-    z-index: 999;
-}
 .globalNotice {
     bottom: 120px;
-    position: fixed;
-    z-index: 999;
-}
-.update {
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.1);
     position: fixed;
     z-index: 999;
 }
@@ -259,16 +170,6 @@ const handleTitleBarDoubleClick = () => {
 .player-enter-from,
 .player-leave-to {
     transform: translateY(100%);
-}
-.video-enter-active,
-.video-leave-active {
-    transition: 0.1s;
-}
-
-.video-enter-from,
-.video-leave-to {
-    transform: scale(0.8);
-    opacity: 0;
 }
 .fade-enter-active {
     transition: 0.4s;

@@ -5,10 +5,8 @@
   import { getRecommendedArtists } from '../api/artist';
   import { getRecommendedSongList, getTopList } from '../api/playlist'
   import { useLibraryStore } from '../store/libraryStore'
-  import { useLocalStore } from '../store/localStore';
   import { usePlayerStore } from '../store/playerStore';
   const libraryStore = useLibraryStore()
-  const localStore = useLocalStore()
   const playerStore = usePlayerStore()
   const router = useRouter()
   //0为歌单,1为歌手,2为专辑,3为排行榜
@@ -77,7 +75,6 @@
 
   const checkDetail = (id) => {
     libraryStore.libraryInfo = null
-    localStore.currentSelectedSongs = null
     if(props.recType == 0) router.push('/mymusic/playlist/' + id)
     if(props.recType == 1) router.push('/mymusic/artist/' + id)
     if(props.recType == 2) router.push('/mymusic/album/' + id)

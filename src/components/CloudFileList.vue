@@ -7,7 +7,6 @@
   import { getSongCoverUrl, withCoverParam } from '../utils/coverBackdrop'
   import { markCloudDiskSong } from '../utils/player/lyricFallback'
   import { usePlayerStore } from '../store/playerStore'
-  import { useLocalStore } from '../store/localStore'
 
   const props = defineProps({
     items: {
@@ -27,7 +26,6 @@
   const emit = defineEmits(['refresh'])
 
   const playerStore = usePlayerStore()
-  const localStore = useLocalStore()
 
   const selectedSongIds = ref([])
   const visibleItems = computed(() => Array.isArray(props.items) ? props.items : [])
@@ -112,7 +110,7 @@
   function downloadFile() {
     const selectedSongs = getSelectedSongs()
     if (selectedSongs.length == 0) return
-    localStore.updateDownloadList(selectedSongs)
+    noticeOpen('网页版暂不支持下载', 2)
     clearSelect()
   }
 

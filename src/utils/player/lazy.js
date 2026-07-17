@@ -31,10 +31,6 @@ function callPlayerExport(name, args) {
 
 const lazyPlayerExport = name => (...args) => callPlayerExport(name, args);
 
-export const checkAndLoadVideoForCurrentSong = lazyPlayerExport('checkAndLoadVideoForCurrentSong');
-export const pauseCurrentMusicVideo = lazyPlayerExport('pauseCurrentMusicVideo');
-export const reopenCurrentMusicVideo = lazyPlayerExport('reopenCurrentMusicVideo');
-export const isVideoClosedByUser = lazyPlayerExport('isVideoClosedByUser');
 export const loadLastSong = lazyPlayerExport('loadLastSong');
 export const play = lazyPlayerExport('play');
 export const playResolvedPlaybackInfo = lazyPlayerExport('playResolvedPlaybackInfo');
@@ -43,10 +39,6 @@ export const setId = lazyPlayerExport('setId');
 export const addToList = lazyPlayerExport('addToList');
 export const localMusicHandle = lazyPlayerExport('localMusicHandle');
 export const addLocalMusicTOList = lazyPlayerExport('addLocalMusicTOList');
-export const startLocalMusicVideo = lazyPlayerExport('startLocalMusicVideo');
-export const startMusicVideo = lazyPlayerExport('startMusicVideo');
-export const unloadMusicVideo = lazyPlayerExport('unloadMusicVideo');
-export const loadMusicVideo = lazyPlayerExport('loadMusicVideo');
 export const addSong = lazyPlayerExport('addSong');
 export const syncCloudDiskSongsFromItems = lazyPlayerExport('syncCloudDiskSongsFromItems');
 export const setSongLevel = lazyPlayerExport('setSongLevel');
@@ -61,6 +53,7 @@ export const changeProgress = lazyPlayerExport('changeProgress');
 export const changeProgressByDragStart = lazyPlayerExport('changeProgressByDragStart');
 export const changeProgressByDragEnd = lazyPlayerExport('changeProgressByDragEnd');
 export const changePlayMode = lazyPlayerExport('changePlayMode');
+export const toggleHeartMode = lazyPlayerExport('toggleHeartMode');
 export const playAll = lazyPlayerExport('playAll');
 export const setShuffledList = lazyPlayerExport('setShuffledList');
 export const getLikeActionErrorMessage = lazyPlayerExport('getLikeActionErrorMessage');
@@ -79,5 +72,4 @@ export const likeSong = lazyPlayerExport('likeSong');
 export const addToNext = lazyPlayerExport('addToNext');
 export const addToNextLocal = lazyPlayerExport('addToNextLocal');
 export const savePlaylist = lazyPlayerExport('savePlaylist');
-export const musicVideoCheck = lazyPlayerExport('musicVideoCheck');
 export const initPlayerExternalBridge = lazyPlayerExport('initPlayerExternalBridge');

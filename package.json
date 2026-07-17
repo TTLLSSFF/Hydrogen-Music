@@ -2,8 +2,7 @@
   "name": "hydrogenmusic",
   "private": true,
   "version": "0.6.1",
-  "description": "A modern music player built with Electron and Vue.js",
-  "main": "background.js",
+  "description": "A modern music player built with Vue.js",
   "author": {
     "name": "ldx123000",
     "email": "ldx123000@gmail.com"
@@ -13,36 +12,17 @@
     "build": "vite build",
     "preview": "vite preview",
     "postinstall": "node scripts/patch-ncm-api.cjs",
-    "start": "nodemon --exec electron . --watch ./ --ext js,vue,html,css,json",
-    "_dist": "vite build && node scripts/build.js -p always",
-    "dist": "vite build && node scripts/build.js -p never",
-    "mpv:download": "node scripts/mpv-audio-only/download-artifacts.cjs",
-    "mpv:download:all": "node scripts/mpv-audio-only/download-artifacts.cjs --platform all"
+    "serve": "node web-server.js"
   },
   "dependencies": {
     "@neteasecloudmusicapienhanced/api": "^4.35.1",
     "axios": "^1.12.2",
-    "dbus-next": "^0.10.2",
-    "electron-store": "^11.0.2",
-    "electron-updater": "^6.6.2",
-    "electron-win-state": "^1.1.22",
-    "ffmpeg-static": "^5.2.0",
-    "fs-extra": "^11.3.2",
-    "iconv-lite": "^0.6.3",
-    "metaflac-js": "^1.0.5",
-    "mime-types": "^3.0.2",
-    "mpris-service": "^2.1.2",
-    "music-metadata": "^11.9.0",
-    "nanoid": "^5.1.6",
-    "node-id3": "^0.2.9"
+    "nanoid": "^5.1.6"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",
-    "electron": "^38.3.0",
-    "electron-builder": "^26.1.0",
     "howler": "^2.2.4",
     "js-cookie": "^3.0.5",
-    "nodemon": "^3.1.10",
     "opencc-js": "^1.0.5",
     "pinia": "^3.0.3",
     "pinia-plugin-persistedstate": "^4.5.0",

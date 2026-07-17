@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLibraryStore } from '../store/libraryStore'
 import { usePlayerStore } from '../store/playerStore'
-import { useOtherStore } from '../store/otherStore'
 import { addToNext } from '../utils/player/lazy'
 import { noticeOpen } from '../utils/dialog'
 import { copyToClipboard } from '../utils/clipboard'
@@ -29,7 +28,6 @@ const emit = defineEmits(['close'])
 const router = useRouter()
 const libraryStore = useLibraryStore()
 const playerStore = usePlayerStore()
-const otherStore = useOtherStore()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -250,8 +248,11 @@ const handlePrimaryAction = async () => {
       noticeOpen('MV 信息缺失', 2)
       return
     }
-    const success = await otherStore.getMvData(mvId)
-    if (success) closeModal()
+    const url = buildMvUrl(mvId)
+    if (url) {
+      window.open(url, '_blank')
+      closeModal()
+    }
     return
   }
 

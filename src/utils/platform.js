@@ -1,11 +1,12 @@
 // src/utils/platform.js
-const isWindows = process.platform === 'win32';
-const isMac = process.platform === 'darwin';
-const isLinux = process.platform === 'linux';
-const isDevelopment = process.env.NODE_ENV === 'development';
+const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+const isWindows = /Windows/i.test(userAgent);
+const isMac = /Macintosh|Mac OS X/i.test(userAgent);
+const isLinux = /Linux/i.test(userAgent) && !/Android/i.test(userAgent);
+const isDevelopment = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
 
-const isCreateTray = isWindows || isLinux || isDevelopment;
-const isCreateMpris = isLinux;
+const isCreateTray = false;
+const isCreateMpris = false;
 
 module.exports = {
   isWindows,

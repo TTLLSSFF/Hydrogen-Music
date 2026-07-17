@@ -15,7 +15,6 @@ import { confirmAccountLogout } from '@/utils/accountSession'
 import { getSettingsSnapshot, setCachedSettingsSnapshot } from '@/utils/settingsSnapshot'
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
-import { markHifiOutputModeConfigured, resolveInitialHifiOutputMode } from '@/utils/hifiOutputModeMigration'
 import settingsSchema from '@/shared/settingsSchema.js'
 
 const { MUSIC_LEVEL_OPTIONS, normalizeSettings } = settingsSchema
@@ -50,44 +49,9 @@ const themeOptions = ref([
     { label: '浅色', value: 'light' },
     { label: '深色', value: 'dark' },
 ])
-const hifiAudioDeviceOptions = ref([{ label: '自动', value: 'auto' }])
-const hifiOutputState = ref({
-    available: false,
-    mpvPath: '',
-    source: '',
-    platform: '',
-})
-const getRendererPlatform = () => {
-    try {
-        return globalThis.process?.platform || ''
-    } catch (_) {
-        return ''
-    }
-}
-const hifiOutputPlatform = computed(() => hifiOutputState.value.platform || getRendererPlatform())
-const localHifiOutputModeOptions = computed(() => {
-    if (hifiOutputPlatform.value === 'darwin') {
-        return [
-            { label: 'CoreAudio 共享', value: 'shared' },
-            { label: 'CoreAudio 独占', value: 'exclusive' },
-        ]
-    }
-    if (hifiOutputPlatform.value === 'linux') {
-        return [
-            { label: 'PipeWire 共享', value: 'shared' },
-            { label: 'PipeWire 独占', value: 'exclusive' },
-        ]
-    }
-    return [
-        { label: 'WASAPI 共享', value: 'shared' },
-        { label: 'WASAPI 独占', value: 'exclusive' },
-    ]
-})
-const hifiOutputBusy = ref(false)
 const downloadFolder = ref(null)
 const downloadCreateSongFolder = ref(false)
 const downloadSaveLyricFile = ref(false)
-const videoFolder = ref(null)
 const localFolder = ref([])
 const shortcutsList = ref(null)
 const selectedShortcut = ref(null)
@@ -114,7 +78,6 @@ let updateListenersInitialized = false
 let removeUpdateListeners = null
 const PERFORMANCE_CONFIRM_MESSAGE = '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？'
 const GAPLESS_CONFIRM_MESSAGE = '开启后会提前预缓冲下一首音频，可能增加网络流量和内存占用，确定开启吗？'
-const LOCAL_HIFI_OUTPUT_CONFIRM_MESSAGE = '开启后本地音乐会使用 MPV 后端输出，独占模式会占用音频设备，确定开启吗？'
 
 const loadVipInfo = async () => {
     const requestUserId = userStore.user?.userId
@@ -145,12 +108,6 @@ const applySettingsToForm = settings => {
     searchAssistLimit.value = normalizedSettings.music.searchAssistLimit
     playerStore.showSongTranslation = normalizedSettings.music.showSongTranslation !== false
     playerStore.gaplessPlayback = normalizedSettings.music.gaplessPlayback === true
-    playerStore.audioVisualizer = normalizedSettings.music.audioVisualizer === true
-    playerStore.localHifiOutput = normalizedSettings.music.localHifiOutput === true
-    playerStore.localHifiOutputMode = resolveInitialHifiOutputMode(normalizedSettings.music.localHifiOutputMode)
-    playerStore.localHifiMpvPath = normalizedSettings.music.localHifiMpvPath
-    playerStore.localHifiAudioDevice = normalizedSettings.music.localHifiAudioDevice
-    videoFolder.value = normalizedSettings.local.videoFolder
     downloadFolder.value = normalizedSettings.local.downloadFolder
     downloadCreateSongFolder.value = !!normalizedSettings.local.downloadCreateSongFolder
     downloadSaveLyricFile.value = !!normalizedSettings.local.downloadSaveLyricFile
@@ -165,7 +122,6 @@ const applySettingsToForm = settings => {
 onActivated(() => {
     void getSettingsSnapshot().then(applySettingsToForm)
     void loadSystemFonts()
-    void refreshHifiOutputBackend()
 
     // Initialize theme selection
     try {
@@ -203,10 +159,12 @@ const setupUpdateListeners = () => {
     if (updateListenersInitialized) return
     updateListenersInitialized = true
     // 监听手动更新检查结果（不显示大窗弹出）
-    removeUpdateListeners = windowApi.manualUpdateAvailable(version => {
-        newVersion.value = version
-        // 手动检查时直接在UpdateDialog中显示结果，不触发大窗弹出
-    })
+    if (typeof windowApi !== 'undefined' && windowApi?.manualUpdateAvailable) {
+        removeUpdateListeners = windowApi.manualUpdateAvailable(version => {
+            newVersion.value = version
+            // 手动检查时直接在UpdateDialog中显示结果，不触发大窗弹出
+        })
+    }
 }
 
 onBeforeUnmount(() => {
@@ -227,13 +185,6 @@ watch(
     }
 )
 
-watch(
-    () => playerStore.localHifiOutputMode,
-    mode => {
-        markHifiOutputModeConfigured(mode)
-    }
-)
-
 const setAppSettings = () => {
     const settings = {
         music: {
@@ -245,14 +196,8 @@ const setAppSettings = () => {
             searchAssistLimit: searchAssistLimit.value,
             showSongTranslation: playerStore.showSongTranslation,
             gaplessPlayback: playerStore.gaplessPlayback,
-            audioVisualizer: playerStore.audioVisualizer,
-            localHifiOutput: playerStore.localHifiOutput,
-            localHifiOutputMode: playerStore.localHifiOutputMode,
-            localHifiMpvPath: playerStore.localHifiMpvPath,
-            localHifiAudioDevice: playerStore.localHifiAudioDevice,
         },
         local: {
-            videoFolder: videoFolder.value,
             downloadFolder: downloadFolder.value,
             downloadCreateSongFolder: downloadCreateSongFolder.value,
             downloadSaveLyricFile: downloadSaveLyricFile.value,
@@ -269,7 +214,11 @@ const setAppSettings = () => {
 
     const normalizedSettings = normalizeSettings(settings)
     const snapshot = setCachedSettingsSnapshot(normalizedSettings)
-    windowApi.setSettings(JSON.stringify(normalizedSettings))
+    if (typeof windowApi !== 'undefined' && windowApi?.setSettings) {
+        windowApi.setSettings(JSON.stringify(normalizedSettings))
+    } else {
+        localStorage.setItem('hydrogen-settings', JSON.stringify(normalizedSettings))
+    }
     applySettingsSnapshot(snapshot, { hydrateLocalMusic: false })
     syncDesktopLyricCustomFont(snapshot?.other?.customFont, snapshot?.other?.customFontLabel)
     return snapshot
@@ -328,6 +277,7 @@ const routerChange = () => {
 }
 
 const selectFolder = type => {
+    if (typeof windowApi === 'undefined' || !windowApi?.openFile) return
     if (type == 'download') {
         windowApi.openFile().then(path => {
             downloadFolder.value = path
@@ -335,10 +285,6 @@ const selectFolder = type => {
     } else if (type == 'local') {
         windowApi.openFile().then(path => {
             if (path && localFolder.value.indexOf(path) == -1) localFolder.value.push(path)
-        })
-    } else if (type == 'video') {
-        windowApi.openFile().then(path => {
-            videoFolder.value = path
         })
     }
 }
@@ -364,7 +310,9 @@ const changeShortcut = (id, type) => {
         id: id,
         type: type,
     }
-    windowApi.unregisterShortcuts()
+    if (typeof windowApi !== 'undefined' && windowApi?.unregisterShortcuts) {
+        windowApi.unregisterShortcuts()
+    }
 }
 /**
  * author: yesplaymusic
@@ -434,15 +382,6 @@ const setDefaultShortcuts = () => {
         { id: 'processBack', name: '后退(3s)', shortcut: 'CommandOrControl+[', globalShortcut: 'CommandOrControl+Alt+[' },
     ]
 }
-const clearMusicVideo = () => {
-    windowApi.clearUnusedVideo().then(result => {
-        if (result == 'noSavePath') {
-            noticeOpen('请先在设置中设置音乐视频缓存目录', 2)
-            return
-        } else if (result) noticeOpen('清除完毕', 3)
-        else noticeOpen('删除失败', 3)
-    })
-}
 const togglePlayerFlag = key => {
     playerStore[key] = !playerStore[key]
 }
@@ -455,104 +394,9 @@ const setConfirmedPlayerFlag = (key, message) => {
         if (flag) togglePlayerFlag(key)
     })
 }
-const setMusicVideo = () => setConfirmedPlayerFlag('musicVideo', PERFORMANCE_CONFIRM_MESSAGE)
 const setLyricBlur = () => setConfirmedPlayerFlag('lyricBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setCoverBlur = () => setConfirmedPlayerFlag('coverBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setGaplessPlayback = () => setConfirmedPlayerFlag('gaplessPlayback', GAPLESS_CONFIRM_MESSAGE)
-const setAudioVisualizer = () => setConfirmedPlayerFlag('audioVisualizer', PERFORMANCE_CONFIRM_MESSAGE)
-const buildHifiOutputConfig = () => ({
-    mpvPath: playerStore.localHifiMpvPath,
-    mode: playerStore.localHifiOutputMode,
-    audioDevice: playerStore.localHifiAudioDevice,
-})
-const applyHifiOutputState = state => {
-    if (state && typeof state === 'object') hifiOutputState.value = state
-}
-const loadHifiOutputState = async () => {
-    if (!windowApi?.getHifiOutputState) return null
-    try {
-        const state = await windowApi.getHifiOutputState(buildHifiOutputConfig())
-        applyHifiOutputState(state)
-        return state
-    } catch (error) {
-        console.error('加载 HiFi 输出状态失败:', error)
-        return null
-    }
-}
-const loadHifiAudioDevices = async () => {
-    if (!windowApi?.listHifiOutputDevices) return hifiAudioDeviceOptions.value
-    try {
-        const result = await windowApi.listHifiOutputDevices(buildHifiOutputConfig())
-        const devices = Array.isArray(result?.devices) ? result.devices : []
-        const options = [{ label: '自动', value: 'auto' }]
-        devices.forEach(device => {
-            if (!device?.value || device.value === 'auto') return
-            options.push({
-                label: device.label || device.value,
-                value: device.value,
-            })
-        })
-        if (playerStore.localHifiAudioDevice && playerStore.localHifiAudioDevice !== 'auto' && !options.some(option => option.value === playerStore.localHifiAudioDevice)) {
-            options.push({
-                label: playerStore.localHifiAudioDevice,
-                value: playerStore.localHifiAudioDevice,
-            })
-        }
-        hifiAudioDeviceOptions.value = options
-        return options
-    } catch (error) {
-        console.error('加载 HiFi 输出设备失败:', error)
-        return hifiAudioDeviceOptions.value
-    }
-}
-const refreshHifiOutputBackend = async () => {
-    if (hifiOutputBusy.value) return
-    hifiOutputBusy.value = true
-    try {
-        await loadHifiOutputState()
-        if (playerStore.localHifiOutput) await loadHifiAudioDevices()
-    } finally {
-        hifiOutputBusy.value = false
-    }
-}
-const setLocalHifiOutput = async () => {
-    if (playerStore.localHifiOutput) {
-        playerStore.localHifiOutput = false
-        return
-    }
-
-    const state = await loadHifiOutputState()
-    if (!state?.available) {
-        noticeOpen('未找到 MPV 后端', 2)
-        return
-    }
-
-    dialogOpen('确定开启', LOCAL_HIFI_OUTPUT_CONFIRM_MESSAGE, flag => {
-        if (!flag) return
-        playerStore.localHifiOutput = true
-        void loadHifiAudioDevices()
-    })
-}
-const selectHifiMpvPath = async () => {
-    if (hifiOutputBusy.value || !windowApi?.selectHifiOutputMpv) return
-    hifiOutputBusy.value = true
-    try {
-        const filePath = await windowApi.selectHifiOutputMpv()
-        if (!filePath) return
-        playerStore.localHifiMpvPath = filePath
-        await loadHifiOutputState()
-        await loadHifiAudioDevices()
-    } catch (error) {
-        console.error('选择 MPV 后端失败:', error)
-        noticeOpen('选择失败', 2)
-    } finally {
-        hifiOutputBusy.value = false
-    }
-}
-const clearHifiMpvPath = async () => {
-    playerStore.localHifiMpvPath = ''
-    await refreshHifiOutputBackend()
-}
 const confirmLogout = () => {
     confirmAccountLogout(router)
 }
@@ -563,30 +407,49 @@ const save = () => {
     noticeOpen('设置已保存', 2)
 }
 const toGithub = () => {
-    windowApi.toRegister('https://github.com/ldx123000/Hydrogen-Music')
+    const url = 'https://github.com/ldx123000/Hydrogen-Music'
+    if (typeof windowApi !== 'undefined' && windowApi?.toRegister) {
+        windowApi.toRegister(url)
+    } else {
+        window.open(url, '_blank')
+    }
 }
 
 // 检查更新功能
 const checkForUpdates = () => {
     showUpdateDialog.value = true
-    windowApi.checkForUpdate()
+    if (typeof windowApi !== 'undefined' && windowApi?.checkForUpdate) {
+        windowApi.checkForUpdate()
+    } else {
+        noticeOpen('网页版暂不支持自动更新', 2)
+    }
 }
 
 // 更新对话框事件处理
 const handleUpdateDownload = () => {
-    windowApi.downloadUpdate()
+    if (typeof windowApi !== 'undefined' && windowApi?.downloadUpdate) {
+        windowApi.downloadUpdate()
+    }
 }
 
 const handleUpdateInstall = () => {
-    windowApi.installUpdate()
+    if (typeof windowApi !== 'undefined' && windowApi?.installUpdate) {
+        windowApi.installUpdate()
+    }
 }
 
 const handleUpdateCancel = () => {
-    windowApi.cancelUpdate()
+    if (typeof windowApi !== 'undefined' && windowApi?.cancelUpdate) {
+        windowApi.cancelUpdate()
+    }
 }
 
 const handleUpdateRetry = () => {
-    windowApi.checkForUpdate()
+    if (typeof windowApi !== 'undefined' && windowApi?.checkForUpdate) {
+        windowApi.checkForUpdate()
+    } else {
+        noticeOpen('网页版暂不支持自动更新', 2)
+    }
 }
 
 const closeUpdateDialog = () => {
@@ -699,17 +562,6 @@ const clearFmRecent = () => {
                             </div>
                         </div>
                         <div class="option">
-                            <div class="option-name">音频可视化</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="setAudioVisualizer()">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.audioVisualizer }">{{ playerStore.audioVisualizer ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="playerStore.audioVisualizer"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option">
                             <div class="option-name">搜索下拉条目数量</div>
                             <div class="option-operation">
                                 <input v-model="searchAssistLimit" name="searchAssistLimit" />
@@ -739,77 +591,12 @@ const clearFmRecent = () => {
                                 <input v-model="lyricInterlude" name="lyricInterlude" />
                             </div>
                         </div>
-                        <div class="option">
-                            <div class="option-name">开启音乐视频功能</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="setMusicVideo()">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.musicVideo }">{{ playerStore.musicVideo ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="playerStore.musicVideo"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option" v-if="playerStore.musicVideo">
-                            <div class="option-name">删除所有未被使用的音乐视频</div>
-                            <div class="option-operation">
-                                <div class="button" @click="clearMusicVideo()">清除</div>
-                            </div>
-                        </div>
                     </div>
                 </div>
                 <div class="settings-item">
                     <h2 class="item-title">本地</h2>
                     <div class="line"></div>
                     <div class="item-options">
-                        <div class="option">
-                            <div class="option-name">本地音乐 HiFi 输出</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="setLocalHifiOutput()">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.localHifiOutput }">{{ playerStore.localHifiOutput ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="playerStore.localHifiOutput"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option" v-if="playerStore.localHifiOutput">
-                            <div class="option-name">本地 HiFi 输出模式</div>
-                            <div class="option-operation">
-                                <Selector v-model="playerStore.localHifiOutputMode" :options="localHifiOutputModeOptions"></Selector>
-                            </div>
-                        </div>
-                        <div class="option" v-if="playerStore.localHifiOutput">
-                            <div class="option-name">本地 HiFi 输出设备</div>
-                            <div class="option-operation">
-                                <Selector
-                                    v-model="playerStore.localHifiAudioDevice"
-                                    :options="hifiAudioDeviceOptions"
-                                    :maxItems="8"
-                                    :searchable="true"
-                                    :optionWidth="280"
-                                    @open="loadHifiAudioDevices"
-                                ></Selector>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">MPV 后端</div>
-                            <div class="select-download-folder">
-                                <div class="selected-folder" :title="hifiOutputState.mpvPath || playerStore.localHifiMpvPath">
-                                    {{ hifiOutputState.available ? (hifiOutputState.source === 'builtin' ? '内置 MPV' : hifiOutputState.mpvPath) : '未检测到' }}
-                                </div>
-                                <div class="select-option" @click="selectHifiMpvPath">{{ hifiOutputBusy ? '检测中' : '选择' }}</div>
-                                <div class="select-option" @click="refreshHifiOutputBackend">刷新</div>
-                                <div class="select-option" v-if="playerStore.localHifiMpvPath" @click="clearHifiMpvPath">清除</div>
-                            </div>
-                        </div>
-                        <div class="option" v-if="playerStore.musicVideo">
-                            <div class="option-name">音乐视频缓存</div>
-                            <div class="select-download-folder">
-                                <div class="selected-folder" :title="videoFolder">{{ videoFolder ? videoFolder : '待选择' }}</div>
-                                <div class="select-option" @click="selectFolder('video')">选择</div>
-                            </div>
-                        </div>
                         <div class="option">
                             <div class="option-name">下载目录</div>
                             <div class="select-download-folder">

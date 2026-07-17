@@ -401,7 +401,9 @@ function searchFoucs(event, state) {
         assistVisible.value = true
         resetAssistActiveIndex()
         resetMouseHoverSuppression()
-        windowApi.unregisterShortcuts()
+        if (typeof windowApi !== 'undefined' && windowApi?.unregisterShortcuts) {
+            windowApi.unregisterShortcuts()
+        }
 
         if (JTrim(searchKeyword.value)) handleSearchInput()
         else fetchHotList()
@@ -410,7 +412,9 @@ function searchFoucs(event, state) {
         resetAssistActiveIndex()
         resetMouseHoverSuppression()
         isComposing.value = false
-        windowApi.registerShortcuts()
+        if (typeof windowApi !== 'undefined' && windowApi?.registerShortcuts) {
+            windowApi.registerShortcuts()
+        }
         event.target.placeholder = 'SEARCH'
         searchShow.value = false
         assistVisible.value = false
@@ -428,7 +432,6 @@ const searchInfo = (keyword = searchKeyword.value, byAssist = false) => {
         if (!playerStore.widgetState) {
             playerStore.widgetState = true
             playerStore.lyricShow = false
-            if (playerStore.videoIsPlaying) playerStore.videoIsPlaying = false
         }
     } else {
         noticeOpen('输入不能为空', 2)

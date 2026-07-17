@@ -5,7 +5,6 @@ import { ensureDeferredAppInit } from '../utils/initApp'
 import { runIdleTask } from '../utils/player/idleTask'
 import { useUserStore } from '../store/userStore'
 import { useLibraryStore } from '../store/libraryStore'
-import { useLocalStore } from '../store/localStore'
 import { storeToRefs } from 'pinia'
 import { useOtherStore } from '../store/otherStore'
 
@@ -32,7 +31,6 @@ const MyMusic = createRouteLoader(() => import('../views/MyMusic.vue'))
 const SirenPage = createRouteLoader(() => import('../views/SirenPage.vue'))
 const LibraryDetail = createRouteLoader(() => import('../components/LibraryDetail.vue'))
 const RecommendSongs = createRouteLoader(() => import('../components/RecommendSongs.vue'))
-const LocalMusicDetail = createRouteLoader(() => import('../components/LocalMusicDetail.vue'))
 const SearchResult = createRouteLoader(() => import('../views/SearchResult.vue'))
 const Settings = createRouteLoader(() => import('../views/Settings.vue'))
 const RadioDetail = createRouteLoader(() => import('../components/RadioDetail.vue'))
@@ -41,7 +39,6 @@ const userStore = useUserStore()
 const libraryStore = useLibraryStore()
 const { updateLibraryDetail } = libraryStore
 const { libraryInfo } = storeToRefs(libraryStore)
-const localStore = useLocalStore()
 const otherStore = useOtherStore()
 const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
 const routeComponentPreloadLoaders = [
@@ -51,7 +48,6 @@ const routeComponentPreloadLoaders = [
     PersonalFMPage,
     LibraryDetail,
     RecommendSongs,
-    LocalMusicDetail,
     RadioDetail,
     SearchResult,
     Settings,
@@ -178,33 +174,6 @@ const routes = [
                 path: '/mymusic/dj/:id',
                 name: 'dj',
                 component: RadioDetail,
-            },
-            {
-                path: '/mymusic/local/files',
-                name: 'localFiles',
-                component: LocalMusicDetail,
-                beforeEnter: (to, from, next) => {
-                    if(from.name != 'localFiles') localStore.updateLocalMusicDetail(to.name, to.query)
-                    next()
-                }
-            },
-            {
-                path: '/mymusic/local/album/:id',
-                name: 'localAlbum',
-                component: LocalMusicDetail,
-                beforeEnter: (to, from, next) => {
-                    if(from.name != 'localAlbum') localStore.updateLocalMusicDetail(to.name, null, to.params.id)
-                    next()
-                }
-            },
-            {
-                path: '/mymusic/local/artist/:id',
-                name: 'localArtist',
-                component: LocalMusicDetail,
-                beforeEnter: (to, from, next) => {
-                    if(from.name != 'localArtist') localStore.updateLocalMusicDetail(to.name, null, to.params.id)
-                    next()
-                }
             },
         ],
         beforeEnter: (to, from, next) => {

@@ -31,7 +31,9 @@
         widgetState.value = true;
         lyricShow.value = false
       }
-      windowApi.setWindowTile('Hydrogen Music')
+      if (typeof windowApi !== 'undefined' && windowApi?.setWindowTile) {
+        windowApi.setWindowTile('Hydrogen Music')
+      }
       clearTimeout(clearMusic)
     }, 300);
   }

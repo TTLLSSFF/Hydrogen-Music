@@ -12,8 +12,6 @@ import { getIndexedSongOrFirst } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
 const playerStore = usePlayerStore();
 const Comments = defineAsyncComponent(() => import('../components/Comments.vue'));
-const MusicVideo = defineAsyncComponent(() => import('../components/MusicVideo.vue'));
-const PlayerVideo = defineAsyncComponent(() => import('../components/PlayerVideo.vue'));
 
 // 右侧内容切换状态 (0: 歌词, 1: 评论)
 const rightPanelMode = ref(0);
@@ -60,7 +58,7 @@ const handleCoverBgError = () => {
     );
 };
 
-const showCoverBackdrop = computed(() => !!playerStore.coverBlur && !!displayedCoverBgUrl.value && !playerStore.videoIsPlaying);
+const showCoverBackdrop = computed(() => !!playerStore.coverBlur && !!displayedCoverBgUrl.value);
 
 // 当切到本地歌曲时，若右侧是评论区则自动切回歌词，避免无按钮无法关闭
 const currentTrack = computed(() => {
@@ -205,8 +203,6 @@ watch(currentTrack, (song) => {
         <Player
             class="player-container"
             :class="{
-                'player-hide': playerStore.videoIsPlaying && !playerStore.playerShow,
-                'player-blur': playerStore.videoIsPlaying,
                 'cover-blur': showCoverBackdrop,
             }"
             :comment-count-badge="commentCountBadge"
@@ -214,7 +210,7 @@ watch(currentTrack, (song) => {
         ></Player>
 
         <!-- 右侧面板 -->
-        <div class="right-panel" :class="{ 'panel-hide': playerStore.videoIsPlaying && !playerStore.playerShow }">
+        <div class="right-panel">
             <!-- 内容区域 -->
             <Transition name="panel-switch" mode="out-in">
                 <ProgramIntro v-if="rightPanelMode === 0 && isDj" key="program-intro" />
@@ -222,13 +218,6 @@ watch(currentTrack, (song) => {
                 <Comments class="comments-container" v-else-if="rightPanelMode === 1" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
             </Transition>
         </div>
-
-        <Transition name="fade">
-            <MusicVideo class="music-video" v-if="playerStore.addMusicVideo"></MusicVideo>
-        </Transition>
-        <Transition name="fade2">
-            <PlayerVideo class="back-video" v-show="playerStore.videoIsPlaying" v-if="playerStore.currentMusicVideo && playerStore.musicVideo"></PlayerVideo>
-        </Transition>
     </div>
 </template>
 
@@ -381,43 +370,6 @@ watch(currentTrack, (song) => {
         opacity: 0;
         transform: translateX(-30px) scale(0.95);
     }
-    .music-video {
-        position: absolute;
-        z-index: 999;
-    }
-}
-.back-video {
-    width: 100%;
-    height: 100%;
-    background: black;
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: 0;
-    pointer-events: none;
-    .video-player {
-        width: 100%;
-        height: 100%;
-    }
-}
-.fade-enter-active,
-.fade-leave-active {
-    transition: 0.1s;
-}
-.fade-enter-from,
-.fade-leave-to {
-    transform: scale(0.95);
-    opacity: 0;
-}
-.fade2-enter-active {
-    transition: 1s;
-}
-.fade2-leave-active {
-    transition: 0.4s;
-}
-.fade2-enter-from,
-.fade2-leave-to {
-    opacity: 0;
 }
 
 .fade3-enter-active,

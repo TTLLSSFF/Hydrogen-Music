@@ -1,17 +1,17 @@
 <script setup>
   import { useRouter } from 'vue-router';
   import { usePlayerStore } from '../store/playerStore';
-  import { useOtherStore } from '../store/otherStore';
 
   const router = useRouter()
   const playerStore = usePlayerStore()
-  const otherStore = useOtherStore()
   const props = defineProps(['listdata', 'type'])
   const checkDetail = (id) => {
     playerStore.forbidLastRouter = true
     if(props.type == 'playlist') router.push('/mymusic/playlist/' + id)
     if(props.type == 'artist') router.push('/mymusic/artist/' + id)
-    if(props.type == 'mv') otherStore.getMvData(id)
+    if(props.type == 'mv') {
+      // MV 预览已移除
+    }
   }
 </script>
 

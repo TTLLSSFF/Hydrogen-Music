@@ -162,6 +162,23 @@ export function updatePlaylist(params) {
 }
 
 /**
+ * 说明 : 调用此接口 , 可获取心动模式播放列表
+ * 必选参数 : id : 歌曲 id, pid : 歌单 id
+ * @param {*} params
+ * @returns
+ */
+export function getIntelligenceList(params) {
+    return request({
+      url: '/playmode/intelligence/list',
+      method: 'get',
+      params: {
+        ...params,
+        timestamp: new Date().getTime(),
+      }
+    });
+}
+
+/**
  * 说明 : 调用此接口 , 传入歌单 id 可删除歌单
  * 必选参数 : id : 歌单 id,可多个,用逗号隔开
  * @param {*} params 

@@ -27,7 +27,7 @@
     if(listType1.value == 1 && listType2.value == 0) router.push('/mymusic/album/' + item.id)
     if(listType1.value == 1 && listType2.value == 1) router.push('/mymusic/artist/' + item.id)
     if(listType1.value == 1 && listType2.value == 2) {
-      otherStore.getMvData(item.vid)
+      // MV 预览已移除
     }
     if(listType1.value == 1 && listType2.value == 3) {
       // 收藏-电台：优先使用 rid（API 使用 rid 作为电台ID）
@@ -98,7 +98,7 @@
 
 <template>
   <div id="libraryListScroll" class="library-list">
-    <div class="list-item" :class="{'list-item-selected': (item.id == router.currentRoute.value.fullPath.split('/')[3] && listType2 != 2) || (otherStore.currentVideoId == item.vid && listType2 == 2)}" v-for="(item, index) in libraryList" @click="showDetail(index, item)" @contextmenu="openMenu($event,item)">
+    <div class="list-item" :class="{'list-item-selected': item.id == router.currentRoute.value.fullPath.split('/')[3] && listType2 != 2}" v-for="(item, index) in libraryList" @click="showDetail(index, item)" @contextmenu="openMenu($event,item)">
         <div class="item-img">
             <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl || item.coverUrl) + '?param=128y128'" alt="">
         </div>

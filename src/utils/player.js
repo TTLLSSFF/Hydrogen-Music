@@ -4,7 +4,7 @@ import { songTime as formatSongTime, songTime2 as formatSongProgressTime } from 
 import { noticeOpen } from './dialog'
 import { checkMusic, likeMusic } from '../api/song'
 import { getSirenLyricText, getSirenSong } from '../api/siren'
-import { updatePlaylist } from '../api/playlist'
+import { updatePlaylist, getIntelligenceList } from '../api/playlist'
 import { getLikelist, getUserPlaylist } from '../api/user'
 import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
@@ -27,11 +27,8 @@ import { normalizeQueueSong, normalizeQueueSongs } from './player/queueSong'
 import { getPrefetchedSongAssets, getSongAssetKey, prefetchSongAssets } from './player/assetPrefetch'
 import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong } from './player/lyricFallback'
 import { createDecodedAudioPlayer } from './player/webAudioGapless'
-import { createHifiOutputPlayer } from './player/hifiOutputPlayer'
 import { runIdleTask } from './player/idleTask'
 import { createEmptyLyric, hasUsableLyricPayload } from './player/lyricPayload'
-import { verifyStoredMusicVideo } from './musicVideoLookup'
-import { isSeekInMusicVideoTiming, isValidMusicVideoTiming } from './musicVideoTiming'
 import { getIndexedSong, getIndexedSongOrFirst } from './songList'
 import { reportNcmPlaybackEnd, reportNcmPlaybackStart } from './ncmRecentPlayReporter'
 import {
@@ -45,7 +42,7 @@ const userStore = useUserStore()
 const libraryStore = useLibraryStore(pinia)
 const playerStore = usePlayerStore(pinia)
 const { libraryInfo } = storeToRefs(libraryStore)
-const { currentMusic, playing, progress, volume, quality, playMode, songList, shuffledList, shuffleIndex, listInfo, songId, currentIndex, time, playlistWidgetShow, playerChangeSong, lyric, lyricsObjArr, lyricShow, lyricEle, isLyricDelay, widgetState, localBase64Img, musicVideo, currentMusicVideo, musicVideoDOM, videoIsPlaying, playerShow, lyricBlur, currentLyricIndex, showSongTranslation, gaplessPlayback, localHifiOutput, localHifiOutputMode, localHifiMpvPath, localHifiAudioDevice } = storeToRefs(playerStore)
+const { currentMusic, playing, progress, volume, quality, playMode, songList, shuffledList, shuffleIndex, listInfo, songId, currentIndex, time, playlistWidgetShow, playerChangeSong, lyric, lyricsObjArr, lyricShow, lyricEle, isLyricDelay, widgetState, localBase64Img, playerShow, lyricBlur, currentLyricIndex, showSongTranslation, gaplessPlayback } = storeToRefs(playerStore)
 
 const PLAYBACK_SNAPSHOT_PERSIST_INTERVAL_MS = 5000
 let isProgress = false
@@ -55,7 +52,6 @@ let refreshingStream = false
 let lastRefreshAttempt = 0
 let streamRefreshToken = 0
 let disposeProgressTicker = null
-let disposeVideoTicker = null
 let playerExternalBridgeInitialized = false
 let gaplessPreload = null
 let gaplessPreloadToken = 0
@@ -74,7 +70,6 @@ let lastPersistedProgressSignature = ''
 let lyricLoadToken = 0
 let activeRemoteLyricFetch = null
 let pendingCurrentCloudLyricRetrySongId = ''
-let lastLocalHifiFallbackNoticeAt = 0
 let playbackLoadToken = 0
 let pendingPlaybackSongId = ''
 let pendingPlaybackAutoplay = false
@@ -366,8 +361,6 @@ function updateWindowTitleDock() {
         // 保底不抛错
     }
 }
-let currentTiming = null
-let closedVideoMemory = new Set() // 记录用户主动关闭视频的歌曲ID
 const NORMAL_PLAY_MODES = Object.freeze([0, 1, 2, 3])
 let preFmPlayMode = null
 const LIKE_SYNC_RETRY_DELAY = 280
@@ -590,59 +583,10 @@ async function resolveSongPlaybackInfo(song, options = {}) {
     return resolveMatchedPlaybackInfo(song, preferredQuality)
 }
 
-function shouldUseHifiOutput(playbackInfo = {}) {
-    return localHifiOutput.value === true && !!playbackInfo.localPath
-}
-
-function buildHifiOutputOptions(playbackInfo = {}, targetSongId = songId.value) {
-    return {
-        mode: localHifiOutputMode.value || 'shared',
-        mpvPath: localHifiMpvPath.value || '',
-        audioDevice: localHifiAudioDevice.value || 'auto',
-        volume: volume.value,
-        duration: getPlaybackDurationSeconds(playbackInfo, targetSongId),
-        localPath: playbackInfo.localPath || '',
-        url: '',
-    }
-}
-
-function notifyHifiFallback(message = 'HiFi 输出不可用，已回退普通播放') {
-    const now = Date.now()
-    if (now - lastLocalHifiFallbackNoticeAt < 8000) return
-    lastLocalHifiFallbackNoticeAt = now
-    noticeOpen(message, 2)
-}
-
 async function playPlaybackInfo(playbackInfo, autoplay, targetSongId, options = {}) {
     const resumeSeek = typeof options.resumeSeek === 'number' && !Number.isNaN(options.resumeSeek)
         ? Math.max(0, options.resumeSeek)
         : null
-
-    if (shouldUseHifiOutput(playbackInfo)) {
-        clearGaplessPreload()
-        preparePlaybackSwitch(null, true)
-
-        try {
-            const source = playbackInfo.localPath
-            const nextPlayer = markRaw(await createHifiOutputPlayer(source, buildHifiOutputOptions(playbackInfo, targetSongId)))
-            if (songId.value !== targetSongId) {
-                nextPlayer.unload?.()
-                return true
-            }
-
-            nextPlayer.loop?.(playMode.value == 2)
-            activatePlaybackHowl(nextPlayer, {
-                autoplay,
-                resumeSeek,
-                instantStart: true,
-                fadeInMs: 0,
-            })
-            return true
-        } catch (error) {
-            console.warn('HiFi 输出启动失败，回退普通播放:', error)
-            notifyHifiFallback(error?.message ? `HiFi 输出不可用，已回退普通播放：${error.message}` : undefined)
-        }
-    }
 
     if (songId.value !== targetSongId) return false
     play(playbackInfo.url, autoplay, resumeSeek, {
@@ -664,10 +608,6 @@ export function preloadGaplessSongPlayback(song, options = {}) {
         return Promise.resolve(null)
     }
     if (!song || typeof song !== 'object') {
-        clearGaplessPreload()
-        return Promise.resolve(null)
-    }
-    if (localHifiOutput.value === true && song?.type === 'local') {
         clearGaplessPreload()
         return Promise.resolve(null)
     }
@@ -772,13 +712,15 @@ function resetCurrentLyricState() {
 function loadLocalCoverForSong(song, targetSongId) {
     if (applyPrefetchedLocalCoverForSong(song, targetSongId)) return
 
-    windowApi.getLocalMusicImage(song.url).then(base64 => {
-        if (songId.value !== targetSongId) return
-        localBase64Img.value = base64
-        try { window.dispatchEvent(new CustomEvent('mediaSession:updateArtwork')) } catch (_) {}
-    }).catch(() => {
-        if (songId.value === targetSongId) localBase64Img.value = null
-    })
+    if (typeof windowApi !== 'undefined' && windowApi?.getLocalMusicImage) {
+        windowApi.getLocalMusicImage(song.url).then(base64 => {
+            if (songId.value !== targetSongId) return
+            localBase64Img.value = base64
+            try { window.dispatchEvent(new CustomEvent('mediaSession:updateArtwork')) } catch (_) {}
+        }).catch(() => {
+            if (songId.value === targetSongId) localBase64Img.value = null
+        })
+    }
 }
 
 async function loadLocalLyricForSong(song, targetSongId) {
@@ -920,7 +862,9 @@ function normalizePlayMode(mode, inFM = isPersonalFMContext()) {
 }
 
 function syncPlayModeExternalState(mode) {
-    windowApi.changeTrayMusicPlaymode(mode)
+    if (typeof windowApi !== 'undefined' && windowApi?.changeTrayMusicPlaymode) {
+        windowApi.changeTrayMusicPlaymode(mode)
+    }
     syncWindowsTaskbarPlaybackState()
 
     // 通知 MPRIS 循环模式
@@ -987,75 +931,6 @@ watch(
     }
 )
 
-/**
- * 基于当前歌曲ID检查并加载对应的视频
- */
-export function checkAndLoadVideoForCurrentSong() {
-    loadMusicVideoForSong(songId.value, {
-        respectEnabled: true,
-        respectClosedMemory: true,
-        startDelay: 500,
-    })
-}
-
-/**
- * 关闭当前音乐视频显示功能，恢复到原本无视频状态
- */
-export function pauseCurrentMusicVideo() {
-    if (!musicVideo.value) {
-        return false
-    }
-
-    if (!currentMusicVideo.value || !currentMusicVideo.value.id) {
-        return false
-    }
-
-    if (currentMusicVideo.value.id !== songId.value) {
-        return false
-    }
-
-    // 将当前歌曲ID添加到关闭记忆中
-    closedVideoMemory.add(songId.value)
-
-    // 完全卸载当前音乐视频，恢复到无视频状态
-    unloadMusicVideo()
-
-    return true
-}
-
-/**
- * 重新打开当前音乐的视频显示
- */
-export function reopenCurrentMusicVideo() {
-    if (!musicVideo.value) {
-        return false
-    }
-
-    if (!songId.value) {
-        return false
-    }
-
-    // 如果当前已经有视频在播放，不需要重新打开
-    if (currentMusicVideo.value && currentMusicVideo.value.id === songId.value) {
-        return true
-    }
-
-    // 从关闭记忆中移除当前歌曲ID
-    closedVideoMemory.delete(songId.value)
-
-    // 调用统一的视频检查和加载函数
-    checkAndLoadVideoForCurrentSong()
-
-    return true
-}
-
-/**
- * 检查指定歌曲是否被用户主动关闭了视频显示
- */
-export function isVideoClosedByUser(songId) {
-    return closedVideoMemory.has(songId)
-}
-
 export function loadLastSong() {
     if (loadLast) {
         return loadStoredPlaylist().then(list => {
@@ -1086,7 +961,6 @@ export function loadLastSong() {
 
                 if (currentSong.type == 'local') getSongUrl(currentSong.id, currentIndex.value, false, true)
                 else getSongUrl(currentSong.id, currentIndex.value, false, false)
-                if (musicVideo.value) loadMusicVideo(currentSong.id)
             }
         })
     }
@@ -1264,12 +1138,6 @@ function stopProgressSampling() {
     }
 }
 
-function stopMusicVideoSampling() {
-    if (!disposeVideoTicker) return
-    disposeVideoTicker()
-    disposeVideoTicker = null
-}
-
 function getCurrentHowl() {
     return currentMusic.value && typeof currentMusic.value === 'object' ? currentMusic.value : null
 }
@@ -1326,17 +1194,6 @@ function handlePlaybackLoadFailure(error, { advance = false, song = null, availa
     noticeOpen(isNetworkError ? '网络请求失败，请稍后重试' : getRestrictedPlaybackFailureMessage(song, availability || error), 2)
     resetFailedPlaybackState()
     if (advance && !isNetworkError) playNext()
-}
-
-function startMusicVideoSampling() {
-    stopMusicVideoSampling()
-    disposeVideoTicker = subscribePlaybackTick(snapshot => {
-        musicVideoCheck(snapshot.seek)
-    }, {
-        id: 'player-mv-sync',
-        interval: PLAYBACK_TICK_FAST_INTERVAL_MS,
-        immediate: true,
-    })
 }
 
 function getPlaybackSource(playback) {
@@ -1532,11 +1389,10 @@ function syncActivatedHowlAfterLoad(nextHowl, normalizedSeek, autoplay) {
 function activatePlaybackHowl(nextHowl, { autoplay, resumeSeek = null, instantStart = false, fadeInMs = 200 } = {}) {
     const normalizedSeek = typeof resumeSeek === 'number' && !Number.isNaN(resumeSeek) ? Math.max(resumeSeek, 0) : null
     bindPlaybackLifecycleEvents(nextHowl, {
-        endEvent: (nextHowl?.__hmWebAudioPlayer || nextHowl?.__hmHifiOutputPlayer) ? 'end' : '',
+        endEvent: nextHowl?.__hmWebAudioPlayer ? 'end' : '',
     })
     currentMusic.value = nextHowl
     window.playerApi?.setVolume?.(volume.value)
-    checkAndLoadVideoForCurrentSong()
 
     if (nextHowl.state?.() === 'loaded') {
         syncActivatedHowlAfterLoad(nextHowl, normalizedSeek, autoplay)
@@ -1565,18 +1421,6 @@ function bindPlaybackLifecycleEvents(playback, options = {}) {
             handlePlaybackEnded()
         })
     }
-    if (playback.__hmHifiOutputPlayer) {
-        playback.on('duration', duration => {
-            if (!isCurrentHowl(playback)) return
-            const normalizedDuration = normalizePlaybackDuration(duration)
-            if (normalizedDuration <= 0) return
-            time.value = normalizedDuration
-            updateCurrentSongDurationFromHowl()
-        })
-        playback.on('loaderror', (_id, error) => {
-            handleHowlPlaybackError(playback, 'loaderror', error, 'HiFi 输出播放失败，尝试刷新播放地址')
-        })
-    }
 }
 
 function handlePlaybackStarted(playback) {
@@ -1584,7 +1428,7 @@ function handlePlaybackStarted(playback) {
     resetStreamRecoveryAttempts()
     const fadeInMs = fadeInDurationByHowl.has(playback) ? fadeInDurationByHowl.get(playback) : 200
     fadeInDurationByHowl.delete(playback)
-    if (playback?.__hmHifiOutputPlayer || fadeInMs <= 0) {
+    if (fadeInMs <= 0) {
         playback.volume(volume.value)
     } else {
         playback.fade(0, volume.value, fadeInMs)
@@ -1601,7 +1445,6 @@ function handlePlaybackPaused(playback) {
     stopProgressSampling()
     playing.value = false
     syncExternalPlaybackState()
-    if (playback?.__hmHifiOutputPlayer) return
     playback.fade(volume.value, 0, 200)
 }
 
@@ -1693,7 +1536,6 @@ function startGaplessTarget(target, entry, options = {}) {
     resetPlaybackStateForGaplessStart()
     applyGaplessTargetState(target)
     syncWindowsTaskbarPlaybackState()
-    unloadMusicVideo()
     applyGaplessTrackInfo(target.song, entry)
     hydrateGaplessStartedSongAssets(target.song, target.id)
     stopProgressSampling()
@@ -1990,141 +1832,6 @@ export function addLocalMusicTOList(listType, localMusicList, playId, playIndex)
     addSong(playId, playIndex, true, true)
     savePlaylist()
 }
-export function startLocalMusicVideo() {
-    startMusicVideoSampling()
-}
-
-export function startMusicVideo() {
-    startMusicVideoSampling()
-}
-
-function prepareMusicVideoDOMForPlayback() {
-    if (!musicVideoDOM.value) return
-    try {
-        musicVideoDOM.value.muted = true
-        musicVideoDOM.value.volume = 0
-        if (musicVideoDOM.value.media) {
-            musicVideoDOM.value.media.muted = true
-            musicVideoDOM.value.media.defaultMuted = true
-            musicVideoDOM.value.media.volume = 0
-            musicVideoDOM.value.media.setAttribute?.('muted', '')
-        }
-    } catch (error) {
-        console.warn('准备音乐视频播放时出错:', error)
-    }
-}
-
-function pauseMusicVideoDOM() {
-    if (!musicVideoDOM.value) return
-    try {
-        musicVideoDOM.value.pause()
-    } catch (error) {
-        console.warn('暂停音乐视频时出错:', error)
-    }
-}
-
-function stopVisibleMusicVideo() {
-    videoIsPlaying.value = false
-    playerShow.value = true
-    currentTiming = null
-    pauseMusicVideoDOM()
-}
-
-export function unloadMusicVideo() {
-    // 清理状态变量
-    currentMusicVideo.value = null
-    videoIsPlaying.value = false
-    playerShow.value = true
-    currentTiming = null
-
-    // 清理定时器
-    stopMusicVideoSampling()
-
-    // 如果存在视频播放器，暂停并清理
-    if (musicVideoDOM.value) {
-        try {
-            pauseMusicVideoDOM()
-            // 尝试清理视频源
-            if (musicVideoDOM.value.source) {
-                musicVideoDOM.value.source = null
-            }
-        } catch (error) {
-            console.warn('清理视频播放器时出错:', error)
-        }
-    }
-}
-
-function isValidMusicVideoResult(result, targetSongId) {
-    return !!(
-        result &&
-        result !== '404' &&
-        result.data?.path &&
-        result.data.id === targetSongId
-    )
-}
-
-function startCurrentMusicVideoSampling(targetSongId, { respectClosedMemory = false } = {}) {
-    if (
-        songId.value !== targetSongId ||
-        !currentMusicVideo.value ||
-        currentMusicVideo.value.id !== targetSongId ||
-        (respectClosedMemory && closedVideoMemory.has(targetSongId))
-    ) {
-        return
-    }
-
-    startMusicVideoSampling()
-}
-
-function loadMusicVideoForSong(targetSongId, options = {}) {
-    unloadMusicVideo()
-
-    if (!targetSongId) return
-    if (options.respectEnabled && !musicVideo.value) return
-    if (options.respectClosedMemory && closedVideoMemory.has(targetSongId)) return
-
-    const initialDelay = Math.max(0, Number(options.initialDelay) || 0)
-    const startDelay = Math.max(0, Number(options.startDelay) || 0)
-    const clearOnMiss = options.clearOnMiss === true
-
-    const verifyAndLoadMusicVideo = () => {
-        verifyStoredMusicVideo(targetSongId).then(result => {
-            if (!isValidMusicVideoResult(result, targetSongId)) {
-                if (clearOnMiss) unloadMusicVideo()
-                return
-            }
-            if (songId.value !== targetSongId) return
-            if (options.respectClosedMemory && closedVideoMemory.has(targetSongId)) return
-
-            currentMusicVideo.value = result.data
-
-            const startSampling = () => {
-                startCurrentMusicVideoSampling(targetSongId, {
-                    respectClosedMemory: options.respectClosedMemory === true,
-                })
-            }
-
-            if (startDelay > 0) setTimeout(startSampling, startDelay)
-            else startSampling()
-        }).catch(error => {
-            console.error('检查视频文件时出错:', error)
-            if (clearOnMiss) unloadMusicVideo()
-        })
-    }
-
-    if (initialDelay > 0) setTimeout(verifyAndLoadMusicVideo, initialDelay)
-    else verifyAndLoadMusicVideo()
-}
-
-export function loadMusicVideo(id) {
-    // FM模式下需要稍长的延迟，等待FM切歌异步操作完成
-    const initialDelay = isPersonalFMContext() ? 300 : 100
-
-    loadMusicVideoForSong(id, {
-        initialDelay,
-        clearOnMiss: true,
-    })
-}
 
 export function addSong(id, index, autoplay, isLocal) {
     reportCurrentNcmPlaybackEnd('interrupt')
@@ -2137,9 +1844,6 @@ export function addSong(id, index, autoplay, isLocal) {
     clearActivePlaybackForSongSwitch()
     syncWindowsTaskbarPlaybackState()
     scheduleNextSongAssetPrefetch()
-
-    // 切歌时清理视频状态（新的统一视频检查函数会处理加载）
-    unloadMusicVideo()
 
     const targetSong = getSongByIdOrIndex(id, currentIndex.value)
     if (!targetSong) {
@@ -2195,6 +1899,7 @@ function applyPlaybackInfoToCurrentSong(targetSong, playbackInfo) {
 }
 
 export async function getLocalLyric(filePath) {
+    if (typeof windowApi === 'undefined' || !windowApi?.getLocalMusicLyric) return false
     const lyric = await windowApi.getLocalMusicLyric(filePath)
     if (lyric && typeof lyric === 'object') return lyric
     return false
@@ -2307,11 +2012,11 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
                     return
                 }
 
-                const hifiStarted = await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId)
+                const playbackStarted = await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId)
                 clearPendingPlayback(playbackRequest)
                 if (songId.value !== targetSongId) return
 
-                if (hifiStarted) {
+                if (playbackStarted) {
                     applyPlaybackInfoToCurrentSong(targetSong, playbackInfo)
                 } else {
                     // 在音频加载完成后设置塞壬歌曲音质信息
@@ -2408,48 +2113,23 @@ export function startMusic() {
             clearTimeout(forbidDelayTimer)
         }, 700);
     }
-
-    // 检查是否有视频需要同步播放
-    if (currentMusicVideo.value && currentMusicVideo.value.id === songId.value) {
-        if (musicVideoDOM.value && videoIsPlaying.value) {
-            prepareMusicVideoDOMForPlayback()
-            musicVideoDOM.value.play()
-        }
-        // 根据歌曲类型启动对应的视频时间检查
-        if (getCurrentSong()?.type === 'local') {
-            startLocalMusicVideo()
-        } else {
-            startMusicVideo()
-        }
-    } else if (musicVideo.value && songId.value) {
-        // 如果没有视频但功能开启，检查是否需要加载视频
-        checkAndLoadVideoForCurrentSong()
-    }
 }
 export function pauseMusic() {
     stopProgressSampling()
     const currentHowl = getCurrentHowl()
     persistPlaybackSnapshotNow()
-    if (playing.value && currentHowl?.__hmHifiOutputPlayer) {
-        currentHowl.pause?.()
-        playing.value = false
-        syncExternalPlaybackState()
-    } else if (playing.value && currentHowl && typeof currentHowl.fade === 'function' && typeof currentHowl.once === 'function') {
+    if (playing.value && currentHowl && typeof currentHowl.fade === 'function' && typeof currentHowl.once === 'function') {
         currentHowl.fade(volume.value, 0, 200)
         currentHowl.once('fade', () => {
             currentHowl.pause?.()
             playing.value = false
             syncExternalPlaybackState()
         })
-    } else if (!currentHowl) {
+    } else if (!currentHowl || playing.value) {
+        currentHowl?.pause?.()
         playing.value = false
         syncExternalPlaybackState()
     }
-    if (musicVideoDOM.value) {
-        pauseMusicVideoDOM()
-    }
-    // 为所有类型的音乐清理视频检查
-    stopMusicVideoSampling()
 }
 
 export function playLast() {
@@ -2497,9 +2177,6 @@ export function changeProgress(toTime) {
     const currentHowl = getCurrentHowl()
     const durationLimit = normalizePlaybackDuration(getStablePlaybackDuration(currentHowl, getCurrentSong()) || time.value)
     const normalizedTime = clampPlaybackProgress(toTime, durationLimit)
-    if (videoIsPlaying.value) {
-        musicVideoCheck(normalizedTime, true)
-    }
     // 先更新进度与歌词索引，再执行实际 seek，确保 UI 与索引同步
     if (typeof normalizedTime === 'number' && Number.isFinite(normalizedTime)) {
         progress.value = normalizedTime
@@ -2538,6 +2215,42 @@ export function changePlayMode() {
         return
     }
     applyPlayMode(playMode.value != 3 ? playMode.value + 1 : 0, { inFM: false })
+}
+
+export async function toggleHeartMode() {
+    if (!listInfo.value || listInfo.value.type !== 'playlist' || !listInfo.value.id) {
+        noticeOpen('心动模式需要正在播放歌单', 2)
+        return false
+    }
+    if (!songList.value || songList.value.length === 0) {
+        noticeOpen('心动模式需要正在播放歌单', 2)
+        return false
+    }
+    const seedId = songId.value || songList.value[0].id
+    const playlistId = listInfo.value.id
+    try {
+        const result = await getIntelligenceList({ id: seedId, pid: playlistId })
+        if (result.data && result.data.length > 0) {
+            const newList = result.data.map(item => item.songInfo).filter(Boolean)
+            if (newList.length > 0) {
+                const normalizedList = normalizeQueueSongs(newList)
+                songList.value = normalizedList
+                shuffledList.value = null
+                shuffleIndex.value = null
+                if (playMode.value == 3) {
+                    applyPlayMode(3, { syncExternal: false })
+                }
+                addSong(songList.value[0].id, 0, true)
+                return true
+            }
+        }
+        noticeOpen('心动模式暂不可用', 2)
+        return false
+    } catch (error) {
+        console.error('心动模式加载失败:', error)
+        noticeOpen('心动模式加载失败', 2)
+        return false
+    }
 }
 
 export function playAll(listType, list, listMeta = null) {
@@ -3003,104 +2716,6 @@ export function songTime2(time) {
     return formatSongProgressTime(time)
 }
 
-function syncMusicVideoTiming(timing, seek, update) {
-    if (playing.value && musicVideoDOM.value) {
-        prepareMusicVideoDOMForPlayback()
-        musicVideoDOM.value.play()
-    }
-
-    const videoTime = timing.videoTiming + seek - timing.start
-    if (musicVideoDOM.value) {
-        musicVideoDOM.value.currentTime = videoTime
-    }
-    currentTiming = timing
-    videoIsPlaying.value = true
-    if (!update) playerShow.value = false
-}
-
-/**
- * 音乐视频监测
- */
-export function musicVideoCheck(seek, update) {
-    // 多重严格检查
-    if (!musicVideo.value) {
-        return // 功能未启用
-    }
-
-    if (!currentMusicVideo.value) {
-        return // 没有视频数据
-    }
-
-    if (!currentMusicVideo.value.timing || !Array.isArray(currentMusicVideo.value.timing) || currentMusicVideo.value.timing.length === 0) {
-        return // 没有有效的时间轴数据
-    }
-
-    if (!musicVideoDOM.value) {
-        return // 视频播放器不存在
-    }
-
-    // 检查当前歌曲ID是否匹配，FM模式下需要特殊处理
-    const isPersonalFM = isPersonalFMContext()
-
-    if (!songId.value || !currentMusicVideo.value.id) {
-        unloadMusicVideo()
-        return
-    }
-
-    // FM模式和普通模式都需要严格检查ID匹配
-    if (songId.value !== currentMusicVideo.value.id) {
-        unloadMusicVideo() // 清理不匹配的视频
-        return
-    }
-
-    // 普通模式下还需要检查歌曲列表中的当前歌曲ID是否也匹配
-    const currentSong = getCurrentSong()
-    if (!isPersonalFM && currentSong && currentSong.id !== currentMusicVideo.value.id) {
-        unloadMusicVideo() // 清理不匹配的视频
-        return
-    }
-
-    const normalizedSeek = normalizePlaybackNumber(seek)
-
-    if (currentTiming && isSeekInMusicVideoTiming(normalizedSeek, currentTiming)) {
-        if (!videoIsPlaying.value || update) {
-            syncMusicVideoTiming(currentTiming, normalizedSeek, update)
-        }
-        return
-    }
-
-    if (videoIsPlaying.value && currentTiming && !update) {
-        if (normalizedSeek > currentTiming.end) {
-            stopVisibleMusicVideo()
-        }
-        return
-    }
-
-    if (musicVideo.value && currentMusicVideo.value && (!videoIsPlaying.value || update)) {
-        let foundTiming = false
-
-        for (let i = 0; i < currentMusicVideo.value.timing.length; i++) {
-            const timing = currentMusicVideo.value.timing[i]
-
-            // 验证时间段数据的完整性
-            if (!isValidMusicVideoTiming(timing)) {
-                console.warn('无效的时间段数据:', timing)
-                continue
-            }
-
-            if (!isSeekInMusicVideoTiming(normalizedSeek, timing)) continue
-
-            foundTiming = true
-            syncMusicVideoTiming(timing, normalizedSeek, update)
-            return
-        }
-
-        if (!foundTiming) {
-            stopVisibleMusicVideo()
-        }
-    }
-}
-
 
 function setVolumeForPlay(value) {
   volume.value = normalizePlaybackVolume(value)
@@ -3156,14 +2771,6 @@ export function initPlayerExternalBridge() {
             }
             if (otherStore.contextMenuShow) otherStore.contextMenuShow = false
 
-            const videoPlayer = document.getElementById('videoPlayer')
-            const controls = document.getElementsByClassName('plyr__controls')[0]
-            if (!otherStore.videoIsBlur && otherStore.videoPlayerShow && videoPlayer && videoPlayer.contains(target) == false) {
-                otherStore.videoIsBlur = true
-            } else if (otherStore.videoIsBlur && otherStore.videoPlayerShow && videoPlayer && controls && videoPlayer.contains(target) == true && controls.contains(target) != true) {
-                otherStore.videoIsBlur = false
-            }
-
             const userHead = document.getElementsByClassName('user-head')[0]
             if (userStore.appOptionShow && userHead && userHead.contains(target) != true) userStore.appOptionShow = false
         },
@@ -3200,7 +2807,9 @@ export function initPlayerExternalBridge() {
             changeProgress(progress.value)
         },
         onBeforeQuit() {
-            windowApi.downloadPause('shutdown')
+            if (typeof windowApi !== 'undefined' && windowApi?.downloadPause) {
+                windowApi.downloadPause('shutdown')
+            }
             persistPlaylistBeforeExit(buildPersistedPlaylistPayload())
         },
         onSetPosition(positionSeconds) {
@@ -3255,5 +2864,7 @@ export function initPlayerExternalBridge() {
     })
 
     syncExternalPlaybackState()
-    windowApi.changeTrayMusicPlaymode(playMode.value)
+    if (typeof windowApi !== 'undefined' && windowApi?.changeTrayMusicPlaymode) {
+        windowApi.changeTrayMusicPlaymode(playMode.value)
+    }
 }
