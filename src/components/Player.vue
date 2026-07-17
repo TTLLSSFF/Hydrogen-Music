@@ -1212,6 +1212,7 @@ const toggleDjSub = async isSubscribe => {
         position: absolute;
         right: -370px;
         bottom: 0;
+        z-index: 100;
     }
     .playlist-widget-open {
         height: 450px;
@@ -1317,7 +1318,7 @@ const toggleDjSub = async isSubscribe => {
         transition: all 0.2s ease;
         width: 2.6vh !important;
         height: 2.6vh !important;
-        fill: #8a8a8a;
+        fill: #000000;
 
         &:hover {
             opacity: 0.7;

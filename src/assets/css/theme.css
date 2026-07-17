@@ -490,9 +490,26 @@ body {
   fill: none !important;
 }
 
-.dark .player .song-control .icon:not(.comment-icon) path {
+.dark .player .song-control .icon:not(.comment-icon):not(.heart-mode-icon):not(.playlist-icon) path {
   fill: var(--text) !important;
   stroke: var(--text) !important;
+}
+
+.dark .player .song-control .heart-mode-icon {
+  color: var(--text) !important;
+}
+
+.dark .player .song-control .heart-mode-icon path {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+.dark .player .song-control .playlist-icon {
+  color: var(--text) !important;
+}
+
+.dark .player .song-control .playlist-icon path {
+  fill: currentColor !important;
 }
 
 /* Keep liked heart red in dark mode */
@@ -1097,6 +1114,15 @@ body {
 .dark .home-header .header-router svg path {
   fill: var(--text) !important;
   stroke: var(--text) !important;
+}
+
+.dark .home-header .heart-mode-icon {
+  color: var(--text) !important;
+}
+
+.dark .home-header .heart-mode-icon path {
+  fill: none !important;
+  stroke: currentColor !important;
 }
 
 /* My Radio page */
