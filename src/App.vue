@@ -17,12 +17,31 @@ const GlobalNotice = defineAsyncComponent(() => import('./components/GlobalNotic
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
 
+const toggleFullscreen = async () => {
+    if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+    } else {
+        await document.exitFullscreen();
+    }
+};
+
+const preventBrowserContextMenu = e => {
+    const target = e.target;
+    const tagName = String(target?.tagName || '').toLowerCase();
+    if (tagName === 'input' || tagName === 'textarea' || tagName === 'a' || target?.isContentEditable) {
+        return;
+    }
+    e.preventDefault();
+};
+
 onMounted(() => {
     initLyricRuntime();
+    document.addEventListener('contextmenu', preventBrowserContextMenu);
 });
 
 onUnmounted(() => {
     destroyLyricRuntime();
+    document.removeEventListener('contextmenu', preventBrowserContextMenu);
 });
 </script>
 
@@ -37,6 +56,11 @@ onUnmounted(() => {
         <div class="widget-search">
             <SearchInput></SearchInput>
         </div>
+    </div>
+    <div class="web-fullscreen" @click="toggleFullscreen()">
+        <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+            <path d="M128.576377 895.420553 128.576377 128.578424l766.846222 0 0 766.842129L128.576377 895.420553zM799.567461 224.434585 224.432539 224.434585l0 575.134923 575.134923 0L799.567461 224.434585z" p-id="1188"></path>
+        </svg>
     </div>
     <Transition name="widget">
         <div class="musicWidget" v-if="playerStore.songList" v-show="playerStore.widgetState">
@@ -117,6 +141,22 @@ onUnmounted(() => {
     .widget-search {
         margin-left: 30px;
         pointer-events: auto;
+    }
+}
+.web-fullscreen {
+    position: fixed;
+    top: 13px;
+    right: 15px;
+    z-index: 999;
+    opacity: 0.5;
+    transition: 0.3s;
+    cursor: pointer;
+    svg {
+        width: 18px;
+        height: 18px;
+    }
+    &:hover {
+        opacity: 1;
     }
 }
 .musicWidget {

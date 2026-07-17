@@ -200,7 +200,7 @@ const openMenu = (e, item) => {
                 @mouseenter="hoverRowKey = item.rowKey"
                 @mouseleave="hoverRowKey = null"
                 @dblclick="play(item.song, item.sourceIndex)"
-                @contextmenu="openMenu($event, item.song)"
+                @contextmenu.prevent.stop="openMenu($event, item.song)"
             >
                 <div class="item-title">
                     <div class="item-state">
