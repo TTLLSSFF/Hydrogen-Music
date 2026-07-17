@@ -1116,11 +1116,12 @@ body {
   stroke: var(--text) !important;
 }
 
-.dark .home-header .heart-mode-icon {
+.dark .home-header .header-router .heart-mode-icon {
   color: var(--text) !important;
 }
 
-.dark .home-header .heart-mode-icon path {
+.dark .home-header .header-router .heart-mode-icon svg path,
+.dark .home-header .header-router .heart-mode-icon path {
   fill: none !important;
   stroke: currentColor !important;
 }
