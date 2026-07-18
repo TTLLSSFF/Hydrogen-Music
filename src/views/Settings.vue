@@ -32,28 +32,12 @@ const tlyricSize = ref(13)
 const rlyricSize = ref(12)
 const lyricInterlude = ref(13)
 const searchAssistLimit = ref(8)
-const globalShortcuts = ref(false)
-const quitApp = ref('minimize')
-const quitAppOptions = ref([
-    {
-        label: '最小化至托盘',
-        value: 'minimize',
-    },
-    {
-        label: '直接退出',
-        value: 'quit',
-    },
-])
 const theme = ref('system')
 const themeOptions = ref([
     { label: '跟随系统', value: 'system' },
     { label: '浅色', value: 'light' },
     { label: '深色', value: 'dark' },
 ])
-const downloadFolder = ref(null)
-const downloadCreateSongFolder = ref(false)
-const downloadSaveLyricFile = ref(false)
-const localFolder = ref([])
 const shortcutsList = ref(null)
 const selectedShortcut = ref(null)
 const newShortcut = ref([])
@@ -109,13 +93,7 @@ const applySettingsToForm = settings => {
     searchAssistLimit.value = normalizedSettings.music.searchAssistLimit
     playerStore.showSongTranslation = normalizedSettings.music.showSongTranslation !== false
     playerStore.gaplessPlayback = normalizedSettings.music.gaplessPlayback === true
-    downloadFolder.value = normalizedSettings.local.downloadFolder
-    downloadCreateSongFolder.value = !!normalizedSettings.local.downloadCreateSongFolder
-    downloadSaveLyricFile.value = !!normalizedSettings.local.downloadSaveLyricFile
-    localFolder.value = normalizedSettings.local.localFolder
     shortcutsList.value = normalizedSettings.shortcuts
-    globalShortcuts.value = normalizedSettings.other.globalShortcuts
-    quitApp.value = normalizedSettings.other.quitApp
     customFont.value = normalizedSettings.other.customFont
     customFontLabel.value = normalizedSettings.other.customFontLabel
 }
@@ -198,16 +176,8 @@ const setAppSettings = () => {
             showSongTranslation: playerStore.showSongTranslation,
             gaplessPlayback: playerStore.gaplessPlayback,
         },
-        local: {
-            downloadFolder: downloadFolder.value,
-            downloadCreateSongFolder: downloadCreateSongFolder.value,
-            downloadSaveLyricFile: downloadSaveLyricFile.value,
-            localFolder: localFolder.value,
-        },
         shortcuts: shortcutsList.value,
         other: {
-            globalShortcuts: globalShortcuts.value,
-            quitApp: quitApp.value,
             customFont: customFont.value,
             customFontLabel: customFont.value ? customFontLabel.value : '',
         },
@@ -221,7 +191,6 @@ const setAppSettings = () => {
         localStorage.setItem('hydrogen-settings', JSON.stringify(normalizedSettings))
     }
     applySettingsSnapshot(snapshot, { hydrateLocalMusic: false })
-    syncDesktopLyricCustomFont(snapshot?.other?.customFont, snapshot?.other?.customFontLabel)
     return snapshot
 }
 
@@ -277,21 +246,7 @@ const routerChange = () => {
     router.back()
 }
 
-const selectFolder = type => {
-    if (typeof windowApi === 'undefined' || !windowApi?.openFile) return
-    if (type == 'download') {
-        windowApi.openFile().then(path => {
-            downloadFolder.value = path
-        })
-    } else if (type == 'local') {
-        windowApi.openFile().then(path => {
-            if (path && localFolder.value.indexOf(path) == -1) localFolder.value.push(path)
-        })
-    }
-}
-const deleteLocalFolder = index => {
-    localFolder.value.splice(index, 1)
-}
+
 
 const formatShortcutName = name => {
     return name
@@ -367,20 +322,19 @@ const inputShortcut = k => {
         ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(k.key) ||
         shortcutCharacter.includes(k.key)
     ) {
-        if (selectedShortcut.value.type) shortcutsList.value.find(sc => sc.id == selectedShortcut.value.id).globalShortcut = updateShortcut()
-        else shortcutsList.value.find(sc => sc.id == selectedShortcut.value.id).shortcut = updateShortcut()
+        shortcutsList.value.find(sc => sc.id == selectedShortcut.value.id).shortcut = updateShortcut()
         newShortcut.value = []
     }
 }
 const setDefaultShortcuts = () => {
     shortcutsList.value = [
-        { id: 'play', name: '播放/暂停', shortcut: 'CommandOrControl+P', globalShortcut: 'CommandOrControl+Alt+P' },
-        { id: 'last', name: '上一首', shortcut: 'CommandOrControl+Left', globalShortcut: 'CommandOrControl+Alt+Left' },
-        { id: 'next', name: '下一首', shortcut: 'CommandOrControl+Right', globalShortcut: 'CommandOrControl+Alt+Right' },
-        { id: 'volumeUp', name: '增加音量', shortcut: 'CommandOrControl+Up', globalShortcut: 'CommandOrControl+Alt+Up' },
-        { id: 'volumeDown', name: '减少音量', shortcut: 'CommandOrControl+Down', globalShortcut: 'CommandOrControl+Alt+Down' },
-        { id: 'processForward', name: '快进(3s)', shortcut: 'CommandOrControl+]', globalShortcut: 'CommandOrControl+Alt+]' },
-        { id: 'processBack', name: '后退(3s)', shortcut: 'CommandOrControl+[', globalShortcut: 'CommandOrControl+Alt+[' },
+        { id: 'play', name: '播放/暂停', shortcut: 'CommandOrControl+P' },
+        { id: 'last', name: '上一首', shortcut: 'CommandOrControl+Left' },
+        { id: 'next', name: '下一首', shortcut: 'CommandOrControl+Right' },
+        { id: 'volumeUp', name: '增加音量', shortcut: 'CommandOrControl+Up' },
+        { id: 'volumeDown', name: '减少音量', shortcut: 'CommandOrControl+Down' },
+        { id: 'processForward', name: '快进(3s)', shortcut: 'CommandOrControl+]' },
+        { id: 'processBack', name: '后退(3s)', shortcut: 'CommandOrControl+[' },
     ]
 }
 const togglePlayerFlag = key => {
@@ -595,69 +549,12 @@ const clearFmRecent = () => {
                     </div>
                 </div>
                 <div class="settings-item">
-                    <h2 class="item-title">本地</h2>
-                    <div class="line"></div>
-                    <div class="item-options">
-                        <div class="option">
-                            <div class="option-name">下载目录</div>
-                            <div class="select-download-folder">
-                                <div class="selected-folder" :title="downloadFolder">{{ downloadFolder ? downloadFolder : '待选择' }}</div>
-                                <div class="select-option" @click="selectFolder('download')">选择</div>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">下载歌曲时创建独立文件夹</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="downloadCreateSongFolder = !downloadCreateSongFolder">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': downloadCreateSongFolder }">{{ downloadCreateSongFolder ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="downloadCreateSongFolder"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">下载歌曲时创建独立歌词文件</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="downloadSaveLyricFile = !downloadSaveLyricFile">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': downloadSaveLyricFile }">{{ downloadSaveLyricFile ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="downloadSaveLyricFile"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">本地目录</div>
-                            <div class="local-folder">
-                                <div class="selected-local-folder-item">
-                                    <div class="selected-folder" :title="item" @contextmenu="deleteLocalFolder(index)" v-for="(item, index) in localFolder">{{ item ? item : '请添加' }}</div>
-                                    <div class="tip">您可以同时添加多个目录,右键移除您不需要的目录。数据量过大时需要一定扫描时间,请稍等。</div>
-                                </div>
-                                <div class="add-option" @click="selectFolder('local')">添加</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="settings-item">
                     <h2 class="item-title">快捷键</h2>
                     <div class="line"></div>
                     <div class="item-options" tabindex="0" @keydown="inputShortcut($event)">
-                        <div class="option">
-                            <div class="option-name">开启全局快捷键</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="globalShortcuts = !globalShortcuts">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': globalShortcuts }">{{ globalShortcuts ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="globalShortcuts"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
                         <div class="shortcuts-title">
                             <div class="title-function">功能说明</div>
                             <div class="title-shortcuts">快捷键</div>
-                            <div class="title-globalShortcuts" :class="{ 'forbid-shortcuts': !globalShortcuts }">全局快捷键</div>
                         </div>
                         <div class="shortcuts" v-for="(item, index) in shortcutsList">
                             <div class="shortcut-name">{{ item.name }}</div>
@@ -667,13 +564,6 @@ const clearFmRecent = () => {
                                 @click.stop="changeShortcut(item.id, false)"
                             >
                                 {{ formatShortcutName(item.shortcut) }}
-                            </div>
-                            <div
-                                class="globalShortcut"
-                                :class="{ 'shortcut-selected': selectedShortcut && selectedShortcut.id == item.id && selectedShortcut.type, 'forbid-shortcuts': !globalShortcuts }"
-                                @click.stop="changeShortcut(item.id, true)"
-                            >
-                                {{ formatShortcutName(item.globalShortcut) }}
                             </div>
                         </div>
                         <div class="default-shortcuts" @click="setDefaultShortcuts()">恢复默认快捷键</div>
@@ -743,12 +633,6 @@ const clearFmRecent = () => {
                             <div class="option-name">清空漫游缓存</div>
                             <div class="option-operation">
                                 <div class="button" @click="clearFmRecent">清空</div>
-                            </div>
-                        </div>
-                        <div class="option">
-                            <div class="option-name">退出应用时</div>
-                            <div class="option-operation">
-                                <Selector v-model="quitApp" :options="quitAppOptions"></Selector>
                             </div>
                         </div>
                     </div>

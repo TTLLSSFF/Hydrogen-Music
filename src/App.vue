@@ -5,6 +5,7 @@ import Title from './components/Title.vue';
 import SearchInput from './components/SearchInput.vue';
 import MusicWidget from './components/MusicWidget.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
+import { initKeyboardShortcuts, destroyKeyboardShortcuts } from './utils/keyboardShortcuts';
 
 import { usePlayerStore } from './store/playerStore';
 import { useOtherStore } from './store/otherStore';
@@ -37,11 +38,13 @@ const preventBrowserContextMenu = e => {
 onMounted(() => {
     initLyricRuntime();
     document.addEventListener('contextmenu', preventBrowserContextMenu);
+    initKeyboardShortcuts();
 });
 
 onUnmounted(() => {
     destroyLyricRuntime();
     document.removeEventListener('contextmenu', preventBrowserContextMenu);
+    destroyKeyboardShortcuts();
 });
 </script>
 
