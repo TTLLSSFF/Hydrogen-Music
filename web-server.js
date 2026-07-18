@@ -1,6 +1,7 @@
 // 同时启动网易云音乐 API Enhanced 与静态文件服务，
 // 让 Web 部署只需一个命令即可运行。
 const http = require('http')
+const https = require('https')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
@@ -84,9 +85,36 @@ function proxyToApi(req, res) {
   pipeline(req, proxyReq, () => {})
 }
 
+function proxyToSiren(req, res) {
+  const [rawPath, query] = req.url.split('?')
+  const targetPath = rawPath.replace(/^\/siren-api/, '') || '/'
+  const options = {
+    hostname: 'monster-siren.hypergryph.com',
+    port: 443,
+    path: '/api' + targetPath + (query ? '?' + query : ''),
+    method: req.method,
+    headers: { ...req.headers, host: 'monster-siren.hypergryph.com' },
+  }
+
+  const proxyReq = https.request(options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers)
+    pipeline(proxyRes, res, () => {})
+  })
+
+  proxyReq.on('error', (err) => {
+    console.error('Siren API proxy error:', err)
+    res.writeHead(502)
+    res.end('Siren API service unavailable')
+  })
+
+  pipeline(req, proxyReq, () => {})
+}
+
 const server = http.createServer((req, res) => {
   if (req.url.startsWith('/api/') || req.url === '/api') {
     proxyToApi(req, res)
+  } else if (req.url.startsWith('/siren-api/') || req.url === '/siren-api') {
+    proxyToSiren(req, res)
   } else {
     serveStatic(req, res)
   }

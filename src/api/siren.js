@@ -1,4 +1,4 @@
-const SIREN_API_BASE = 'https://monster-siren.hypergryph.com/api'
+const SIREN_API_BASE = '/siren-api'
 const DEFAULT_REQUEST_TIMEOUT = 15000
 
 const albumsCache = {
@@ -101,12 +101,24 @@ export async function getSirenSong(songCid, options = {}) {
     return data
 }
 
+function resolveSirenUrl(url) {
+    if (!url) return url
+    if (url.startsWith('https://monster-siren.hypergryph.com/api')) {
+        return '/siren-api' + url.replace('https://monster-siren.hypergryph.com/api', '')
+    }
+    if (url.startsWith('http://monster-siren.hypergryph.com/api')) {
+        return '/siren-api' + url.replace('http://monster-siren.hypergryph.com/api', '')
+    }
+    return url
+}
+
 export async function getSirenLyricText(lyricUrl, options = {}) {
     const cacheKey = String(lyricUrl || '').trim()
     if (!cacheKey) return ''
     if (!options.force && lyricCache.has(cacheKey)) return lyricCache.get(cacheKey)
 
-    const payload = await requestViaMain(cacheKey, {
+    const resolvedUrl = resolveSirenUrl(cacheKey)
+    const payload = await requestViaMain(resolvedUrl, {
         timeout: DEFAULT_REQUEST_TIMEOUT,
         responseType: 'text',
         headers: {

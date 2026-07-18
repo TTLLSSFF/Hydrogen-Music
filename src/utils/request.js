@@ -294,15 +294,16 @@ request.interceptors.response.use(function (response) {
 }, function (error) {
   const url = error?.config?.url || ''
   const status = error?.response?.status
-  const msg = error?.response?.data?.message || error?.response?.data?.msg
-  const code = error?.response?.data?.code
+  const responseData = error?.response?.data
+  const msg = responseData?.message || responseData?.msg
+  const code = responseData?.code
 
   // 若后端以HTTP身份错误返回，直接触发自动登出
   if (status === 401 || status === 403) {
     triggerAutoLogout('登录已过期，请重新登录');
   } else {
     // 后端也可能以200以外的状态携带业务code
-    const text = error?.response?.data?.msg || error?.response?.data?.message || ''
+    const text = responseData?.msg || responseData?.message || ''
     if (code === 301 || /需要登录|请先登录|not\s*login|invalid\s*session/i.test(text || '')) {
       triggerAutoLogout('登录状态已失效，已自动退出');
     }
@@ -310,11 +311,22 @@ request.interceptors.response.use(function (response) {
 
   // 对 /like 与 /playlist/tracks 的错误不进行全局提示，这些操作由调用方负责降级与提示
   const suppressGlobalNotice = url === '/like' || url === '/playlist/tracks'
+  
   if (!suppressGlobalNotice) {
-    if (msg) noticeOpen(`请求错误：${msg}`, 2)
-    else if (status) noticeOpen(`请求错误 (${status})`, 2)
-    else noticeOpen('请求错误', 2)
+    if (msg) {
+      noticeOpen(msg, 2)
+    } else if (status) {
+      noticeOpen(`请求错误 (${status})`, 2)
+    } else {
+      noticeOpen('请求错误', 2)
+    }
   }
+  
+  // 如果返回了业务错误数据，将其包装在 error 对象中以便调用方处理
+  if (responseData && typeof responseData === 'object') {
+    error.responseData = responseData
+  }
+  
   return Promise.reject(error);
 });
 

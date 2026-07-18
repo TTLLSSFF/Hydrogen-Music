@@ -62,6 +62,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:36530',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/siren-api': {
+        target: 'https://monster-siren.hypergryph.com/api',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/siren-api/, '')
       }
     }
   },
