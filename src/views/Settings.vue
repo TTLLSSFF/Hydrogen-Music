@@ -12,7 +12,7 @@ import FontSelector from '../components/FontSelector.vue'
 import UpdateDialog from '../components/UpdateDialog.vue'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout } from '@/utils/accountSession'
-import { getSettingsSnapshot, setCachedSettingsSnapshot } from '@/utils/settingsSnapshot'
+import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from '@/utils/settingsSnapshot'
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
 import settingsSchema from '@/shared/settingsSchema.js'
@@ -39,9 +39,6 @@ const themeOptions = ref([
     { label: '深色', value: 'dark' },
 ])
 const shortcutsList = ref(null)
-const selectedShortcut = ref(null)
-const newShortcut = ref([])
-const shortcutCharacter = ['=', '-', '~', '@', '#', '$', '[', ']', ';', "'", ',', '.', '/', '!']
 const customFont = ref('')
 const customFontLabel = ref('')
 const systemFonts = ref([])
@@ -93,6 +90,7 @@ const applySettingsToForm = settings => {
     searchAssistLimit.value = normalizedSettings.music.searchAssistLimit
     playerStore.showSongTranslation = normalizedSettings.music.showSongTranslation !== false
     playerStore.gaplessPlayback = normalizedSettings.music.gaplessPlayback === true
+    playerStore.audioVisualizer = normalizedSettings.music.audioVisualizer === true
     shortcutsList.value = normalizedSettings.shortcuts
     customFont.value = normalizedSettings.other.customFont
     customFontLabel.value = normalizedSettings.other.customFontLabel
@@ -175,6 +173,7 @@ const setAppSettings = () => {
             searchAssistLimit: searchAssistLimit.value,
             showSongTranslation: playerStore.showSongTranslation,
             gaplessPlayback: playerStore.gaplessPlayback,
+            audioVisualizer: playerStore.audioVisualizer,
         },
         shortcuts: shortcutsList.value,
         other: {
@@ -184,11 +183,9 @@ const setAppSettings = () => {
     }
 
     const normalizedSettings = normalizeSettings(settings)
-    const snapshot = setCachedSettingsSnapshot(normalizedSettings)
+    const snapshot = typeof windowApi !== 'undefined' && windowApi?.setSettings ? setCachedSettingsSnapshot(normalizedSettings) : setSettingsSnapshot(normalizedSettings)
     if (typeof windowApi !== 'undefined' && windowApi?.setSettings) {
         windowApi.setSettings(JSON.stringify(normalizedSettings))
-    } else {
-        localStorage.setItem('hydrogen-settings', JSON.stringify(normalizedSettings))
     }
     applySettingsSnapshot(snapshot, { hydrateLocalMusic: false })
     return snapshot
@@ -261,82 +258,6 @@ const formatShortcutName = name => {
         .replace('CommandOrControl', 'Ctrl')
         .replace('Control', 'Ctrl')
 }
-const changeShortcut = (id, type) => {
-    selectedShortcut.value = {
-        id: id,
-        type: type,
-    }
-    if (typeof windowApi !== 'undefined' && windowApi?.unregisterShortcuts) {
-        windowApi.unregisterShortcuts()
-    }
-}
-/**
- * author: yesplaymusic
- */
-const updateShortcut = () => {
-    let shortcut = []
-    newShortcut.value.map(e => {
-        if (e.keyCode >= 65 && e.keyCode <= 90) {
-            shortcut.push(e.code.replace('Key', ''))
-        } else if (['Control', 'Shift', 'Alt'].includes(e.key)) {
-            shortcut.push(e.key)
-        } else if (e.keyCode >= 48 && e.keyCode <= 57) {
-            shortcut.push(e.code.replace('Digit', ''))
-        } else if (e.keyCode >= 96 && e.keyCode <= 105) {
-            shortcut.push(e.code.replace('Numpad', 'num'))
-        } else if (e.keyCode >= 112 && e.keyCode <= 123) {
-            shortcut.push(e.code)
-        } else if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
-            shortcut.push(e.code.replace('Arrow', ''))
-        } else if (shortcutCharacter.includes(e.key)) {
-            shortcut.push(e.key)
-        }
-    })
-    const sortTable = {
-        Control: 1,
-        Shift: 2,
-        Alt: 3,
-    }
-    shortcut = shortcut.sort((a, b) => {
-        if (!sortTable[a] || !sortTable[b]) return 0
-        if (sortTable[a] - sortTable[b] <= -1) {
-            return -1
-        } else if (sortTable[a] - sortTable[b] >= 1) {
-            return 1
-        } else {
-            return 0
-        }
-    })
-    shortcut = shortcut.join('+')
-    return shortcut
-}
-const inputShortcut = k => {
-    if (!selectedShortcut.value) return
-    if (newShortcut.value.find(nk => nk.keyCode === k.keyCode)) return
-    else newShortcut.value.push(k)
-    if (
-        (k.keyCode >= 65 && k.keyCode <= 90) ||
-        (k.keyCode >= 48 && k.keyCode <= 57) ||
-        (k.keyCode >= 96 && k.keyCode <= 105) ||
-        (k.keyCode >= 112 && k.keyCode <= 123) ||
-        ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(k.key) ||
-        shortcutCharacter.includes(k.key)
-    ) {
-        shortcutsList.value.find(sc => sc.id == selectedShortcut.value.id).shortcut = updateShortcut()
-        newShortcut.value = []
-    }
-}
-const setDefaultShortcuts = () => {
-    shortcutsList.value = [
-        { id: 'play', name: '播放/暂停', shortcut: 'CommandOrControl+P' },
-        { id: 'last', name: '上一首', shortcut: 'CommandOrControl+Left' },
-        { id: 'next', name: '下一首', shortcut: 'CommandOrControl+Right' },
-        { id: 'volumeUp', name: '增加音量', shortcut: 'CommandOrControl+Up' },
-        { id: 'volumeDown', name: '减少音量', shortcut: 'CommandOrControl+Down' },
-        { id: 'processForward', name: '快进(3s)', shortcut: 'CommandOrControl+]' },
-        { id: 'processBack', name: '后退(3s)', shortcut: 'CommandOrControl+[' },
-    ]
-}
 const togglePlayerFlag = key => {
     playerStore[key] = !playerStore[key]
 }
@@ -352,11 +273,11 @@ const setConfirmedPlayerFlag = (key, message) => {
 const setLyricBlur = () => setConfirmedPlayerFlag('lyricBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setCoverBlur = () => setConfirmedPlayerFlag('coverBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setGaplessPlayback = () => setConfirmedPlayerFlag('gaplessPlayback', GAPLESS_CONFIRM_MESSAGE)
+const setAudioVisualizer = () => setConfirmedPlayerFlag('audioVisualizer', PERFORMANCE_CONFIRM_MESSAGE)
 const confirmLogout = () => {
     confirmAccountLogout(router)
 }
 const save = () => {
-    selectedShortcut.value = null
     setCustomFont()
     saveSettings()
     noticeOpen('设置已保存', 2)
@@ -430,7 +351,7 @@ const clearFmRecent = () => {
 </script>
 
 <template>
-    <div class="settings-page" @click="selectedShortcut = null">
+    <div class="settings-page">
         <div class="view-control">
             <svg t="1669039513804" @click="routerChange()" class="router-last" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200">
                 <path d="M716.608 1010.112L218.88 512.384 717.376 13.888l45.248 45.248-453.248 453.248 452.48 452.48z" p-id="1054"></path>
@@ -517,6 +438,17 @@ const clearFmRecent = () => {
                             </div>
                         </div>
                         <div class="option">
+                            <div class="option-name">音频可视化</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="setAudioVisualizer()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.audioVisualizer }">{{ playerStore.audioVisualizer ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="playerStore.audioVisualizer"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option">
                             <div class="option-name">搜索下拉条目数量</div>
                             <div class="option-operation">
                                 <input v-model="searchAssistLimit" name="searchAssistLimit" />
@@ -551,22 +483,17 @@ const clearFmRecent = () => {
                 <div class="settings-item">
                     <h2 class="item-title">快捷键</h2>
                     <div class="line"></div>
-                    <div class="item-options" tabindex="0" @keydown="inputShortcut($event)">
+                    <div class="item-options">
                         <div class="shortcuts-title">
                             <div class="title-function">功能说明</div>
                             <div class="title-shortcuts">快捷键</div>
                         </div>
                         <div class="shortcuts" v-for="(item, index) in shortcutsList">
                             <div class="shortcut-name">{{ item.name }}</div>
-                            <div
-                                class="shortcut"
-                                :class="{ 'shortcut-selected': selectedShortcut && selectedShortcut.id == item.id && !selectedShortcut.type }"
-                                @click.stop="changeShortcut(item.id, false)"
-                            >
+                            <div class="shortcut">
                                 {{ formatShortcutName(item.shortcut) }}
                             </div>
                         </div>
-                        <div class="default-shortcuts" @click="setDefaultShortcuts()">恢复默认快捷键</div>
                     </div>
                 </div>
                 <div class="settings-item">

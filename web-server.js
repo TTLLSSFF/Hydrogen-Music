@@ -60,6 +60,25 @@ function serveStatic(req, res) {
   })
 }
 
+function pipeToResponse(readable, res) {
+  if (res.destroyed || res.writableEnded) {
+    readable.destroy()
+    return
+  }
+
+  pipeline(readable, res, (err) => {
+    if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.code !== 'ERR_STREAM_UNABLE_TO_PIPE') {
+      console.error('Proxy response stream error:', err)
+    }
+  })
+}
+
+function sendProxyError(res, message) {
+  if (res.destroyed || res.writableEnded || res.headersSent) return
+  res.writeHead(502)
+  res.end(message)
+}
+
 function proxyToApi(req, res) {
   const [rawPath, query] = req.url.split('?')
   const targetPath = rawPath.replace(/^\/api/, '') || '/'
@@ -72,17 +91,25 @@ function proxyToApi(req, res) {
   }
 
   const proxyReq = http.request(options, (proxyRes) => {
+    if (res.destroyed || res.writableEnded) {
+      proxyRes.destroy()
+      return
+    }
     res.writeHead(proxyRes.statusCode, proxyRes.headers)
-    pipeline(proxyRes, res, () => {})
+    pipeToResponse(proxyRes, res)
   })
 
+  res.on('close', () => proxyReq.destroy())
   proxyReq.on('error', (err) => {
-    console.error('API proxy error:', err)
-    res.writeHead(502)
-    res.end('API service unavailable')
+    if (err.code !== 'ECONNRESET') console.error('API proxy error:', err)
+    sendProxyError(res, 'API service unavailable')
   })
 
-  pipeline(req, proxyReq, () => {})
+  pipeline(req, proxyReq, (err) => {
+    if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.code !== 'ECONNRESET') {
+      console.error('API request stream error:', err)
+    }
+  })
 }
 
 function proxyToSiren(req, res) {
@@ -97,17 +124,25 @@ function proxyToSiren(req, res) {
   }
 
   const proxyReq = https.request(options, (proxyRes) => {
+    if (res.destroyed || res.writableEnded) {
+      proxyRes.destroy()
+      return
+    }
     res.writeHead(proxyRes.statusCode, proxyRes.headers)
-    pipeline(proxyRes, res, () => {})
+    pipeToResponse(proxyRes, res)
   })
 
+  res.on('close', () => proxyReq.destroy())
   proxyReq.on('error', (err) => {
-    console.error('Siren API proxy error:', err)
-    res.writeHead(502)
-    res.end('Siren API service unavailable')
+    if (err.code !== 'ECONNRESET') console.error('Siren API proxy error:', err)
+    sendProxyError(res, 'Siren API service unavailable')
   })
 
-  pipeline(req, proxyReq, () => {})
+  pipeline(req, proxyReq, (err) => {
+    if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.code !== 'ECONNRESET') {
+      console.error('Siren request stream error:', err)
+    }
+  })
 }
 
 const server = http.createServer((req, res) => {

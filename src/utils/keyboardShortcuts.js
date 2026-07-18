@@ -2,10 +2,11 @@ import { startMusic, pauseMusic, playLast, playNext, changeProgress } from './pl
 import { usePlayerStore } from '../store/playerStore'
 import { getSettingsSnapshot } from './settingsSnapshot'
 
-const playerStore = usePlayerStore()
+const getPlayerStore = () => usePlayerStore()
 
 const SHORTCUT_ACTIONS = {
     play: async () => {
+        const playerStore = getPlayerStore()
         if (playerStore.playing) {
             await pauseMusic()
         } else {
@@ -19,15 +20,19 @@ const SHORTCUT_ACTIONS = {
         await playNext()
     },
     volumeUp: () => {
+        const playerStore = getPlayerStore()
         playerStore.volume = Math.min(1, playerStore.volume + 0.1)
     },
     volumeDown: () => {
+        const playerStore = getPlayerStore()
         playerStore.volume = Math.max(0, playerStore.volume - 0.1)
     },
     processForward: async () => {
+        const playerStore = getPlayerStore()
         await changeProgress(playerStore.progress + 3)
     },
     processBack: async () => {
+        const playerStore = getPlayerStore()
         await changeProgress(playerStore.progress - 3)
     },
 }
@@ -86,6 +91,8 @@ function matchShortcut(event, keyMap) {
         eventKey = 'num' + eventCode.slice(6)
     } else if (/^Arrow(Up|Down|Left|Right)$/.test(eventCode)) {
         eventKey = eventCode.slice(5)
+    } else if (eventCode === 'Space') {
+        eventKey = 'Space'
     }
     
     if (key.length === 1) {

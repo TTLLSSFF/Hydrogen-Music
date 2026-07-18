@@ -20,7 +20,8 @@
       "lyricInterlude": 13,
       "searchAssistLimit": 8,
       "showSongTranslation": true,
-      "gaplessPlayback": false
+      "gaplessPlayback": false,
+      "audioVisualizer": false
     },
     "local": {
       "videoFolder": null,
@@ -33,7 +34,7 @@
       {
         "id": "play",
         "name": "播放/暂停",
-        "shortcut": "CommandOrControl+P",
+        "shortcut": "Space",
         "globalShortcut": "CommandOrControl+Alt+P"
       },
       {

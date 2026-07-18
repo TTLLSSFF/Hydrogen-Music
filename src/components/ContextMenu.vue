@@ -294,16 +294,18 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
 
 <template>
   <div id="menu" class="context-menu">
-    <div class="menu-container" v-show="otherStore.contextMenuShow">
-      <div class="menu-item">
-        <div class="item" @click="menuOpt(item.id)" v-for="(item, index) in otherStore.menuTree">{{item.name}}</div>
+    <Transition name="context-menu-pop">
+      <div class="menu-container" v-if="otherStore.contextMenuShow">
+        <div class="menu-item">
+          <div class="item" @click="menuOpt(item.id)" v-for="(item, index) in otherStore.menuTree" :key="item.id" :style="{ '--item-index': index }">{{item.name}}</div>
+        </div>
+        <div class="menu-style menu-style1">+</div>
+        <div class="menu-style menu-style2">+</div>
+        <div class="menu-style menu-style3">+</div>
+        <div class="menu-style menu-style4">+</div>
+        <div class="menu-style5">MENU</div>
       </div>
-      <div class="menu-style menu-style1">+</div>
-      <div class="menu-style menu-style2">+</div>
-      <div class="menu-style menu-style3">+</div>
-      <div class="menu-style menu-style4">+</div>
-      <div class="menu-style5">MENU</div>
-    </div>
+    </Transition>
     <Transition name="add-fade">
       <div class="add-to-playlist" v-if="otherStore.addPlaylistShow" @click="otherStore.addPlaylistShow = false;createActive = false;newPlaylistTitle = '';">
         <div class="playlist-container" :class="{'playlist-container-newPlaylist': justNewPlaylist}" @click.stop>
@@ -352,12 +354,8 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
       padding: 18Px 0;
       position: relative;
       background-color: rgb(32, 32, 32);
-      transform: translateY(-100%);
-      animation: menu-container-in 0.2s cubic-bezier(.3,.79,.55,.99) forwards;
-      @keyframes menu-container-in {
-        0%{transform: translateY(-100%)}
-        100%{transform: translateY(0)}
-      }
+      box-shadow: 0 18Px 48Px rgba(0, 0, 0, 0.18);
+      transform-origin: 12Px 12Px;
       .menu-item{
         display: flex;
         flex-direction: column;
@@ -369,12 +367,18 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
           text-align: left;
           transition: 0.2s;
           z-index: 2;
+          opacity: 0;
+          clip-path: inset(0 100% 0 0);
+          transform: translateX(0);
+          animation: menu-item-in 0.22s cubic-bezier(.3,.79,.55,.99) forwards;
+          animation-delay: calc(0.035s * var(--item-index));
           &:hover{
             cursor: pointer;
             background-color: rgba(53, 53, 53, 0.7);
+            transform: translateX(3Px);
           }
           &:active{
-            transform: scale(0.95);
+            transform: translateX(3Px) scale(0.95);
           }
           &:first-child{
             padding-top: 8Px;
@@ -387,6 +391,8 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
       .menu-style{
         position: absolute;
         color: white;
+        opacity: 0;
+        animation: menu-corner-in 0.34s 0.04s cubic-bezier(.3,.79,.55,.99) forwards;
       }
       .menu-style1{
         top: 0;
@@ -412,6 +418,66 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
         left: 50%;
         transform: translateX(-50%);
         z-index: 1;
+        opacity: 0;
+        animation: menu-watermark-in 0.28s 0.06s ease forwards;
+      }
+    }
+    .context-menu-pop-enter-active {
+      animation: menu-container-in 0.22s cubic-bezier(.3,.79,.55,.99) forwards;
+    }
+    .context-menu-pop-leave-active {
+      animation: menu-container-out 0.14s ease-in forwards;
+    }
+    @keyframes menu-container-in {
+      0% {
+        opacity: 0;
+        clip-path: inset(0 0 100% 0);
+        transform: translateY(-10Px) scaleY(0.82);
+      }
+      100% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+        transform: translateY(0) scaleY(1);
+      }
+    }
+    @keyframes menu-container-out {
+      0% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+        transform: translateY(0) scaleY(1);
+      }
+      100% {
+        opacity: 0;
+        clip-path: inset(0 0 100% 0);
+        transform: translateY(-6Px) scaleY(0.9);
+      }
+    }
+    @keyframes menu-item-in {
+      0% {
+        opacity: 0;
+        clip-path: inset(0 100% 0 0);
+      }
+      100% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+      }
+    }
+    @keyframes menu-corner-in {
+      0% { opacity: 0; }
+      18% { opacity: 1; }
+      36% { opacity: 0; }
+      54% { opacity: 1; }
+      72% { opacity: 0.35; }
+      100% { opacity: 1; }
+    }
+    @keyframes menu-watermark-in {
+      0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-3Px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
       }
     }
     .add-to-playlist{

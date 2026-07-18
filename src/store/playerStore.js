@@ -117,6 +117,7 @@ export const usePlayerStore = defineStore('playerStore', {
             lyricBlur: false,
             showSongTranslation: true, // 歌曲名是否显示翻译（原名 (翻译)）
             gaplessPlayback: false, // 是否预缓冲下一首以减少切歌空隙
+            audioVisualizer: false, // 是否显示顶部音频可视化
             isDesktopLyricOpen: false, // 桌面歌词是否打开
             coverBlur: false, // 播放页使用封面模糊背景
         }
@@ -125,6 +126,6 @@ export const usePlayerStore = defineStore('playerStore', {
     },
     persist: {
         storage: playerPersistStorage,
-        pick: ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur']
+        pick: ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','audioVisualizer','coverBlur']
     },
 })
