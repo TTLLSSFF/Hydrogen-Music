@@ -154,6 +154,7 @@ onUnmounted(() => {
     svg {
         width: 18px;
         height: 18px;
+        fill: var(--text);
     }
     &:hover {
         opacity: 1;

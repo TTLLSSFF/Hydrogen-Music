@@ -762,7 +762,7 @@ const clearFmRecent = () => {
                 <div class="update-check">
                     <button class="check-update-btn" @click="checkForUpdates">检查更新</button>
                 </div>
-                <div class="app-author" @click="toGithub()">Made by ldx123000 | Modified from Hydrogen Music</div>
+                <div class="app-author" @click="toGithub()">Made by ldx123000/TTLLSSFF | Modified from Hydrogen Music</div>
             </div>
         </div>
 

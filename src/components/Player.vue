@@ -1076,7 +1076,7 @@ const toggleDjSub = async isSubscribe => {
                 .music-author-lable {
                     width: 8px;
                     height: 8px;
-                    border: 0.5px solid rgb(105, 105, 105);
+                    border: 0.5px solid var(--muted-text);
                     position: absolute;
                     top: 1px;
                     left: -2px;
@@ -1084,7 +1084,7 @@ const toggleDjSub = async isSubscribe => {
                         content: '';
                         width: 4px;
                         height: 4px;
-                        background-color: rgb(105, 105, 105);
+                        background-color: var(--muted-text);
                         position: absolute;
                         top: 50%;
                         left: 50%;
@@ -1092,9 +1092,9 @@ const toggleDjSub = async isSubscribe => {
                     }
                 }
                 .music-author-lable-dim {
-                    border: 0.5px solid rgb(0, 0, 0);
+                    border: 0.5px solid var(--text);
                     &::after {
-                        background-color: rgb(0, 0, 0);
+                        background-color: var(--text);
                     }
                 }
                 .music-author {
