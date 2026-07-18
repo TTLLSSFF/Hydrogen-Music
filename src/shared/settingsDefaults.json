@@ -75,7 +75,6 @@
     ],
     "other": {
       "globalShortcuts": true,
-      "quitApp": "minimize",
       "customFont": "",
       "customFontLabel": ""
     }

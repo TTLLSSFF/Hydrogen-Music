@@ -61,6 +61,7 @@ function normalizeOtherSettings(other = {}) {
     normalized.customFont = normalizeCustomText(normalized.customFont, DEFAULT_SETTINGS.other.customFont)
     normalized.customFontLabel = normalizeCustomText(normalized.customFontLabel, DEFAULT_SETTINGS.other.customFontLabel)
     if (!normalized.customFont) normalized.customFontLabel = DEFAULT_SETTINGS.other.customFontLabel
+    delete normalized.quitApp
     return normalized
 }
 
