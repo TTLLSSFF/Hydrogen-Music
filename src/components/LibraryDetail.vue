@@ -16,10 +16,12 @@ import LibraryMVList from '../components/LibraryMVList.vue';
 import SongFilterInput from './SongFilterInput.vue';
 import { usePlayerStore } from '../store/playerStore';
 import { useLibraryStore } from '../store/libraryStore';
+import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
 
 const playerStore = usePlayerStore();
 const libraryStore = useLibraryStore();
+const otherStore = useOtherStore();
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
 const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration } = storeToRefs(libraryStore);
 
@@ -30,6 +32,8 @@ const isSongList = ref(false);
 const introduceDetailShow = ref(false);
 const introduceDetailShowDelay = ref(false);
 const songSearchKeyword = ref('');
+const downloadSelectionMode = ref(false);
+const selectedDownloadSongs = ref([]);
 
 const canGoBack = ref(false);
 const canGoForward = ref(false);
@@ -244,6 +248,7 @@ const playlistHydrationTotal = computed(() => {
 const showSongSearchEmpty = computed(() => showSongSearch.value && hasSongSearchKeyword.value && currentSearchResultCount.value == 0);
 const isSongSearchLoading = computed(() => isPlaylistRoute.value && showSongSearchEmpty.value && playlistHydration.value?.status == 'loading');
 const isSongSearchFailed = computed(() => isPlaylistRoute.value && showSongSearchEmpty.value && playlistHydration.value?.status == 'failed');
+const selectedDownloadIds = computed(() => selectedDownloadSongs.value.map(song => song.id));
 const songSearchEmptyTitle = computed(() => {
     if (isSongSearchLoading.value) return '正在加载更多歌曲...';
     if (isArtistAlbumRoute.value) return '未找到相关专辑';
@@ -491,9 +496,41 @@ const playAllSafe = async () => {
 //下载本歌单/专辑全部歌曲
 const downloadAll = async () => {
     await waitCurrentPlaylistHydration();
-    noticeOpen('网页版暂不支持下载', 2);
+    if (!downloadSelectionMode.value) {
+        downloadSelectionMode.value = true;
+        selectedDownloadSongs.value = [];
+        noticeOpen('请选择要下载的歌曲', 2);
+        return;
+    }
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    otherStore.downloadItems = [...selectedDownloadSongs.value];
+    otherStore.downloadTitle = `下载 ${selectedDownloadSongs.value.length} 首歌曲`;
+    otherStore.downloadQualityShow = true;
+    downloadSelectionMode.value = false;
+    selectedDownloadSongs.value = [];
 };
 
+const toggleDownloadSelection = song => {
+    if (!song) return;
+    const index = selectedDownloadSongs.value.findIndex(item => String(item?.id) === String(song.id));
+    if (index >= 0) {
+        selectedDownloadSongs.value.splice(index, 1);
+        return;
+    }
+    selectedDownloadSongs.value.push(song);
+};
+
+const selectAllDownloadSongs = () => {
+    selectedDownloadSongs.value = (visibleLibrarySongs.value || []).filter(song => song?.type !== 'local');
+};
+
+const cancelDownloadSelection = () => {
+    downloadSelectionMode.value = false;
+    selectedDownloadSongs.value = [];
+};
 watch(
     () => songSearchKeyword.value,
     () => {
@@ -638,7 +675,11 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                             data-v-7f63928d=""
                                         ></path>
                                     </svg>
-                                    <span @click="downloadAll()">下载</span>
+                                    <span @click="downloadAll()">{{ downloadSelectionMode ? `下载所选(${selectedDownloadSongs.length})` : '下载' }}</span>
+                                </div>
+                                <div class="operation-download-select" v-if="downloadSelectionMode">
+                                    <button @click="selectAllDownloadSongs()">全选</button>
+                                    <button @click="cancelDownloadSelection()">取消</button>
                                 </div>
                             </template>
                             <div class="operation-search" v-if="showSongSearch">
@@ -709,6 +750,9 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :songlist="visibleLibrarySongs"
                         :queue-songlist="hasSongSearchKeyword ? librarySongs : null"
                         :source-indexes="visibleLibrarySourceIndexes"
+                        :download-selection-mode="downloadSelectionMode"
+                        :selected-download-ids="selectedDownloadIds"
+                        @toggle-download-selection="toggleDownloadSelection"
                         class="library-content"
                     ></LibrarySongList>
                 </template>
@@ -903,6 +947,29 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                             }
                             :deep(.song-filter-input .filter-input) {
                                 text-align: center;
+                            }
+                        }
+                        .operation-download-select {
+                            display: flex;
+                            align-items: center;
+                            gap: 8px;
+                            button {
+                                min-width: 38px;
+                                height: 22px;
+                                padding: 0 8px;
+                                border: 1px solid var(--ld-border);
+                                background: transparent;
+                                color: var(--ld-text);
+                                font: 11px SourceHanSansCN-Bold;
+                                transition: 0.2s;
+                                &:hover {
+                                    cursor: pointer;
+                                    background-color: var(--ld-btn-bg);
+                                    color: var(--ld-btn-text);
+                                }
+                                &:active {
+                                    transform: scale(0.94);
+                                }
                             }
                         }
                     }

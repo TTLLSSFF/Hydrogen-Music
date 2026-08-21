@@ -221,6 +221,18 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
   const menuOpt = (id) => {
     if(id == 1) { addToNext(otherStore.selectedItem, true); return; }
     if(id == 2) { addToNext(otherStore.selectedItem, false); return; }
+    if(id == 3) {
+      const song = otherStore.selectedItem
+      if (!song || song.type === 'local') {
+        noticeOpen('本地歌曲无需通过浏览器下载', 2)
+        return
+      }
+      otherStore.contextMenuShow = false
+      otherStore.downloadItems = [song]
+      otherStore.downloadTitle = '下载当前歌曲'
+      otherStore.downloadQualityShow = true
+      return
+    }
     if(id == 11) {
       const song = otherStore.selectedItem
       const albumId = song?.al?.id

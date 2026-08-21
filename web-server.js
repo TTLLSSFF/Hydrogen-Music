@@ -79,6 +79,95 @@ function sendProxyError(res, message) {
   res.end(message)
 }
 
+function sanitizeDownloadFileName(value) {
+  return String(value || 'Hydrogen Music')
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160) || 'Hydrogen Music'
+}
+
+function getContentDispositionFileName(filename) {
+  const safeName = sanitizeDownloadFileName(filename)
+  const asciiName = safeName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'")
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+}
+
+function proxyDownloadUrl(targetUrl, filename, req, res, redirectCount = 0) {
+  if (redirectCount > 5) {
+    sendProxyError(res, 'Too many download redirects')
+    return
+  }
+
+  let parsedTarget = null
+  try {
+    parsedTarget = new URL(targetUrl)
+    if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
+      throw new Error('unsupported protocol')
+    }
+  } catch (_) {
+    res.writeHead(400)
+    res.end('Invalid download url')
+    return
+  }
+
+  const transport = parsedTarget.protocol === 'https:' ? https : http
+  const proxyReq = transport.request(parsedTarget, {
+    method: 'GET',
+    headers: {
+      'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+      Accept: 'audio/*,*/*',
+      Referer: parsedTarget.origin,
+    },
+  }, (proxyRes) => {
+    if (res.destroyed || res.writableEnded) {
+      proxyRes.destroy()
+      return
+    }
+
+    const redirectLocation = proxyRes.headers.location
+    if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && redirectLocation) {
+      proxyRes.resume()
+      const nextUrl = new URL(redirectLocation, parsedTarget).toString()
+      proxyDownloadUrl(nextUrl, filename, req, res, redirectCount + 1)
+      return
+    }
+
+    const headers = {
+      'Content-Type': proxyRes.headers['content-type'] || 'application/octet-stream',
+      'Content-Disposition': getContentDispositionFileName(filename || path.basename(parsedTarget.pathname) || 'Hydrogen Music'),
+      'Cache-Control': 'no-store',
+    }
+    if (proxyRes.headers['content-length']) headers['Content-Length'] = proxyRes.headers['content-length']
+    res.writeHead(proxyRes.statusCode || 200, headers)
+    pipeToResponse(proxyRes, res)
+  })
+
+  res.on('close', () => proxyReq.destroy())
+  proxyReq.on('error', (err) => {
+    if (err.code !== 'ECONNRESET') console.error('Download proxy error:', err)
+    sendProxyError(res, 'Download unavailable')
+  })
+  proxyReq.end()
+}
+
+function proxyDownload(req, res) {
+  let targetUrl = ''
+  let filename = ''
+  try {
+    const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+    targetUrl = requestUrl.searchParams.get('url') || ''
+    filename = requestUrl.searchParams.get('filename') || ''
+  } catch (_) {
+    res.writeHead(400)
+    res.end('Invalid download url')
+    return
+  }
+
+  proxyDownloadUrl(targetUrl, filename, req, res)
+}
+
 function proxyToApi(req, res) {
   const [rawPath, query] = req.url.split('?')
   const targetPath = rawPath.replace(/^\/api/, '') || '/'
@@ -150,6 +239,8 @@ const server = http.createServer((req, res) => {
     proxyToApi(req, res)
   } else if (req.url.startsWith('/siren-api/') || req.url === '/siren-api') {
     proxyToSiren(req, res)
+  } else if (req.url.startsWith('/download-proxy?')) {
+    proxyDownload(req, res)
   } else {
     serveStatic(req, res)
   }

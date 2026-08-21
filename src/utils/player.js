@@ -583,6 +583,15 @@ async function resolveSongPlaybackInfo(song, options = {}) {
     return resolveMatchedPlaybackInfo(song, preferredQuality)
 }
 
+export async function resolveDownloadPlaybackInfo(song, requestedQuality, options = {}) {
+    return resolveSongPlaybackInfo(song, {
+        ...options,
+        quality: requestedQuality,
+        checkAvailability: true,
+        force: options.force === true,
+    })
+}
+
 async function playPlaybackInfo(playbackInfo, autoplay, targetSongId, options = {}) {
     const resumeSeek = typeof options.resumeSeek === 'number' && !Number.isNaN(options.resumeSeek)
         ? Math.max(0, options.resumeSeek)

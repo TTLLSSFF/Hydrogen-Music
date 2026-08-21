@@ -14,6 +14,7 @@ const MusicPlayer = defineAsyncComponent(() => import('./views/MusicPlayer.vue')
 const ContextMenu = defineAsyncComponent(() => import('./components/ContextMenu.vue'));
 const GlobalDialog = defineAsyncComponent(() => import('./components/GlobalDialog.vue'));
 const GlobalNotice = defineAsyncComponent(() => import('./components/GlobalNotice.vue'));
+const DownloadQualityDialog = defineAsyncComponent(() => import('./components/DownloadQualityDialog.vue'));
 
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
@@ -78,6 +79,7 @@ onUnmounted(() => {
     <div class="contextMune">
         <ContextMenu></ContextMenu>
     </div>
+    <DownloadQualityDialog></DownloadQualityDialog>
     <div class="globalDialog">
         <GlobalDialog v-if="otherStore.dialogShow"></GlobalDialog>
     </div>

@@ -276,10 +276,6 @@ function writeCachedTrackInfo(cacheKey, trackInfo) {
 async function resolveTrackByQualityPreferenceUncached(id, normalizedPreferredLevel) {
     const playbackRequestParams = getPlaybackRequestParams(normalizedPreferredLevel)
 
-    if (!ADVANCED_QUALITY_LEVELS.has(normalizedPreferredLevel)) {
-        return requestTrack(id, normalizedPreferredLevel, playbackRequestParams)
-    }
-
     let firstRequestError = null
     let preferredTrack = null
     try {
@@ -289,6 +285,9 @@ async function resolveTrackByQualityPreferenceUncached(id, normalizedPreferredLe
     }
 
     if (isPlayableTrack(preferredTrack) && getTrackLevel(preferredTrack) === normalizedPreferredLevel) {
+        return preferredTrack
+    }
+    if (isPlayableTrack(preferredTrack) && !ADVANCED_QUALITY_LEVELS.has(normalizedPreferredLevel)) {
         return preferredTrack
     }
 

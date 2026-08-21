@@ -54,7 +54,16 @@ const props = defineProps({
         type: String,
         default: '',
     },
+    downloadSelectionMode: {
+        type: Boolean,
+        default: false,
+    },
+    selectedDownloadIds: {
+        type: Array,
+        default: () => [],
+    },
 })
+const emit = defineEmits(['toggle-download-selection'])
 const hoverRowKey = ref(null)
 const recycleScroller = ref(null)
 const rowKeyBySong = new WeakMap()
@@ -112,6 +121,8 @@ const refreshListRuntimeState = () => {
 const isSongDisabled = song => {
     return shouldBlockRestrictedPlayback(song)
 }
+const selectedDownloadIdSet = computed(() => new Set((props.selectedDownloadIds || []).map(id => String(id))))
+const isDownloadSelected = song => selectedDownloadIdSet.value.has(String(song?.id ?? ''))
 
 watch(scrollerItems, scheduleRecycleScrollerRefresh, { flush: 'post' })
 
@@ -125,6 +136,7 @@ const checkArtist = artistId => {
     playerStore.forbidLastRouter = true
 }
 const play = async (song, index) => {
+    if (props.downloadSelectionMode) return
     if (shouldBlockRestrictedPlayback(song)) {
         noticeOpen(getRestrictedPlaybackFailureMessage(song), 2)
         return
@@ -154,6 +166,11 @@ const togglePlay = async (song, index) => {
         return
     }
     await play(song, index)
+}
+
+const handleRowClick = song => {
+    if (!props.downloadSelectionMode) return
+    emit('toggle-download-selection', song)
 }
 
 const openMenu = (e, item) => {
@@ -196,9 +213,10 @@ const openMenu = (e, item) => {
         <RecycleScroller ref="recycleScroller" v-if="props.songlist" id="libraryScroll" class="library-song-list" :items="scrollerItems" :item-size="42" key-field="rowKey" v-slot="{ item }">
             <div
                 class="list-item"
-                :class="{ 'list-item-playing': songId == item.song.id, 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly }"
+                :class="{ 'list-item-playing': songId == item.song.id, 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly, 'list-item-download-mode': props.downloadSelectionMode, 'list-item-download-selected': isDownloadSelected(item.song) }"
                 @mouseenter="hoverRowKey = item.rowKey"
                 @mouseleave="hoverRowKey = null"
+                @click="handleRowClick(item.song)"
                 @dblclick="play(item.song, item.sourceIndex)"
                 @contextmenu.prevent.stop="openMenu($event, item.song)"
             >
@@ -276,6 +294,20 @@ const openMenu = (e, item) => {
             align-items: center;
             transition: 0.2s;
             user-select: text;
+            position: relative;
+            overflow: hidden;
+            &::before {
+                content: '';
+                width: 100%;
+                height: 100%;
+                position: absolute;
+                top: 0;
+                left: 0;
+                background-color: black;
+                transform: translateX(-101%);
+                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
+                z-index: 0;
+            }
             &:hover {
                 cursor: default;
                 background-color: rgba(0, 0, 0, 0.045);
@@ -285,6 +317,9 @@ const openMenu = (e, item) => {
                 display: flex;
                 flex-direction: row;
                 align-items: center;
+                position: relative;
+                z-index: 1;
+                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
                 svg {
                     width: 14px;
                     height: 14px;
@@ -382,6 +417,9 @@ const openMenu = (e, item) => {
                 display: flex;
                 flex-direction: row;
                 justify-content: space-between;
+                position: relative;
+                z-index: 1;
+                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
                 span {
                     font: 14px SourceHanSansCN-Bold;
                     font-weight: bold;
@@ -414,11 +452,45 @@ const openMenu = (e, item) => {
         .list-item-playing {
             background-color: rgba(0, 0, 0, 0.045);
         }
+        .list-item-download-mode {
+            cursor: pointer;
+            user-select: none;
+            &:hover {
+                cursor: pointer;
+            }
+        }
+        .list-item-download-selected {
+            &::before {
+                transform: translateX(0);
+            }
+            .item-title,
+            .item-other {
+                transform: translateX(22px) scale(1.04);
+                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
+            }
+            .item-title .item-name,
+            .item-title .item-state .item-num,
+            .item-other span {
+                color: white;
+            }
+            .item-play-btn,
+            .playing-eq {
+                color: white;
+            }
+        }
         .list-item-disabled {
             opacity: 0.7;
             .item-title .item-name,
             .item-other span {
                 color: rgba(156, 156, 156, 0.7);
+            }
+        }
+        .list-item-download-selected {
+            opacity: 1;
+            .item-title .item-name,
+            .item-title .item-state .item-num,
+            .item-other span {
+                color: white;
             }
         }
         .list-item-vip {

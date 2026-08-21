@@ -223,7 +223,9 @@ const toAlbum = () => {
 const download = () => {
     const song = currentSong.value;
     if (song && song.type != 'local') {
-        noticeOpen('网页版暂不支持下载', 2);
+        otherStore.downloadItems = [song];
+        otherStore.downloadTitle = '下载当前歌曲';
+        otherStore.downloadQualityShow = true;
     }
 };
 
