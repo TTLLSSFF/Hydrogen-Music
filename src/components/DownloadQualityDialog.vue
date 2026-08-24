@@ -99,6 +99,9 @@ const startDownload = async level => {
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
+        overflow: hidden;
+        isolation: isolate;
+        z-index: 0;
         animation: download-container-in 0.6s 0.3s forwards;
         @keyframes download-container-in {
             0% {
@@ -111,14 +114,20 @@ const startDownload = async level => {
             }
             100% {
                 width: 300px;
-                height: 430px;
+                height: 460px;
             }
         }
         .download-title {
             display: inline-block;
+            max-width: calc(100% - 32px);
             padding: 10px 0;
+            position: relative;
+            z-index: 2;
             font: 16px SourceHanSansCN-Bold;
             color: white;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
             opacity: 0;
             animation: download-title-in 0.3s 0.5s forwards;
             @keyframes download-title-in {
@@ -132,8 +141,12 @@ const startDownload = async level => {
         }
         .download-quality-list {
             width: 100%;
-            height: calc(100% - 72px);
+            height: calc(100% - 52px);
+            padding-bottom: 34px;
+            box-sizing: border-box;
             overflow: auto;
+            position: relative;
+            z-index: 1;
             &::-webkit-scrollbar {
                 display: none;
             }
@@ -141,18 +154,20 @@ const startDownload = async level => {
                 padding: 11px 22px;
                 width: 100%;
                 min-height: 42px;
-                border: 0;
+                border: 0 !important;
+                border-radius: 0 !important;
                 outline: none;
-                background: transparent;
+                background: transparent !important;
+                background-color: transparent !important;
                 display: flex;
                 flex-direction: row;
                 justify-content: space-between;
                 align-items: center;
                 transition: 0.2s;
-                color: white;
+                color: white !important;
                 &:hover:not(:disabled) {
                     cursor: pointer;
-                    background-color: rgba(53, 53, 53, 0.7);
+                    background-color: rgba(53, 53, 53, 0.7) !important;
                 }
                 &:active:not(:disabled) {
                     transform: scale(0.98);
@@ -166,7 +181,7 @@ const startDownload = async level => {
                 }
                 .quality-code {
                     font: 10px Bender-Bold;
-                    color: rgb(165, 165, 165);
+                    color: rgb(165, 165, 165) !important;
                     text-transform: uppercase;
                 }
             }
@@ -176,8 +191,9 @@ const startDownload = async level => {
             bottom: 14px;
             left: 0;
             width: 100%;
+            z-index: 2;
             font: 11px SourceHanSansCN-Bold;
-            color: rgb(190, 190, 190);
+            color: rgb(190, 190, 190) !important;
             text-align: center;
         }
         .download-style {
@@ -185,6 +201,7 @@ const startDownload = async level => {
             height: 9px;
             background-color: rgb(247, 247, 247);
             position: absolute;
+            z-index: 2;
             opacity: 0;
             animation: download-style-in 0.4s forwards;
             @keyframes download-style-in {
@@ -241,12 +258,16 @@ const startDownload = async level => {
             left: $position;
         }
         .download-style5 {
-            font: 42px Gilroy-ExtraBold;
-            color: rgb(37, 37, 37);
+            max-width: calc(100% - 32px);
+            font: 36px Gilroy-ExtraBold;
+            color: rgba(255, 255, 255, 0.08) !important;
             position: absolute;
-            top: 10px;
-            left: 20px;
-            z-index: -1;
+            top: 12px;
+            left: 16px;
+            z-index: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            pointer-events: none;
             opacity: 0;
             animation: download-style5-in 0.3s 0.6s forwards;
             @keyframes download-style5-in {
