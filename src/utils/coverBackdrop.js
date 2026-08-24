@@ -65,12 +65,15 @@ export function normalizeCoverUrl(url) {
     if (!normalizedUrl) return ''
     if (normalizedUrl.startsWith('data:') || normalizedUrl.startsWith('blob:')) return normalizedUrl
 
+    // 将 HTTP 转换为 HTTPS 以避免混合内容警告
+    let secureUrl = normalizedUrl.replace(/^http:\/\//i, 'https://')
+
     try {
-        const parsedUrl = new URL(normalizedUrl)
+        const parsedUrl = new URL(secureUrl)
         removeKnownTransformParams(parsedUrl.searchParams)
         return parsedUrl.toString()
     } catch (_) {
-        return stripKnownTransforms(normalizedUrl)
+        return stripKnownTransforms(secureUrl)
     }
 }
 

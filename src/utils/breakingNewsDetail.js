@@ -24,7 +24,8 @@ const toValidResourceId = value => {
 
 const normalizeUrl = value => {
   if (typeof value !== 'string') return ''
-  return value.trim()
+  // 将 HTTP 转换为 HTTPS 以避免混合内容警告
+  return value.trim().replace(/^http:\/\//i, 'https://')
 }
 
 export const withBreakingNewsCoverParam = (url, size = 720) => {

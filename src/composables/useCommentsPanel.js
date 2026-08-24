@@ -15,7 +15,10 @@ const COMMENTS_PREFETCH_PX = 200
 const getUserName = user => (user && user.nickname) || '未知用户'
 
 const getUserAvatar = (user, size = 40) => {
-    if (user && user.avatarUrl) return `${user.avatarUrl}?param=${size}y${size}`
+    if (user && user.avatarUrl) {
+        const secureUrl = user.avatarUrl.replace(/^http:\/\//i, 'https://')
+        return `${secureUrl}?param=${size}y${size}`
+    }
     return 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
 }
 
