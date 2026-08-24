@@ -155,11 +155,11 @@
     } else if (newVal === 802) {
       statusTitle.value = '请在手机端确认登录'
       statusTitleEN.value = 'CONFIRM'
-      loging.value = 1
+      loging.value = 1  // 状态1: 隐藏二维码但不播放成功动画
     } else if (newVal === 803) {
-      statusTitle.value = '登录成功，正在跳转'
-      statusTitleEN.value = 'LOGGING...'
-      loging.value = 2
+      statusTitle.value = '登录成功'
+      statusTitleEN.value = 'SUCCESS'
+      loging.value = 3  // 状态3: 播放登录成功动画
     }
   })
 
@@ -244,12 +244,12 @@
 
 <template>
   <div class="qrcode-container" @click="refreshQRCode">
-    <div class="qrcode-border" :class="{ 'qrcode-loging-1': loging == 1, 'qrcode-loging-1 qrcode-loging-2': loging == 2 }">
-      <div class="qrcode" :class="{ 'qrcode-checking': loging == 2, 'qrcode-invalid': qrStatus == 800, 'qrcode-recover': loging == -2 }">
+    <div class="qrcode-border" :class="{ 'qrcode-loging-1': loging == 1, 'qrcode-loging-1 qrcode-loging-2': loging == 3 }">
+      <div class="qrcode" :class="{ 'qrcode-hiding': loging == 1, 'qrcode-checking': loging == 3, 'qrcode-invalid': qrStatus == 800, 'qrcode-recover': loging == -2 }">
         <img :src="qrcodeImg" alt="二维码" v-show="qrcodeImg">
         <span class="qrcode-loading" v-show="!qrcodeImg">Loading...</span>
       </div>
-      <div class="qrcode-status" :class="{ 'qrcode-checking': loging == 2, 'status-1': qrStatus == 800, 'status-2': qrStatus == 802, hide: loging == -2 }">{{ statusTitle }}</div>
+      <div class="qrcode-status" :class="{ 'qrcode-checking': loging == 3, 'status-1': qrStatus == 800, 'status-2': qrStatus == 802, 'status-3': loging == 1, hide: loging == -2 }">{{ statusTitle }}</div>
       <div class="border border1"></div>
       <div class="border border2"></div>
       <div class="border border3"></div>
@@ -259,7 +259,7 @@
       <div class="qr-line qr-line3"></div>
       <div class="qr-line qr-line4"></div>
       <div class="qrcode-text">{{ statusTitleEN }}</div>
-      <DataCheckAnimaton class="check-animation" v-show="loging == 2"></DataCheckAnimaton>
+      <DataCheckAnimaton class="check-animation" v-show="loging == 3"></DataCheckAnimaton>
     </div>
   </div>
 </template>
@@ -295,6 +295,7 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
+        transition: all 0.3s cubic-bezier(0.14, 0.91, 0.58, 1);
 
         img {
           width: 100%;
@@ -311,6 +312,13 @@
       .qrcode-checking {
         opacity: 0 !important;
         transition: 0.2s 1s !important;
+      }
+
+      .qrcode-hiding {
+        width: 22vh !important;
+        height: 22vh !important;
+        opacity: 0.3;
+        transition: all 0.3s cubic-bezier(0.14, 0.91, 0.58, 1);
       }
 
       .qrcode-invalid {
@@ -346,6 +354,11 @@
       }
 
       .status-2 {
+        background-color: var(--qrcode-status-bg);
+        animation: status 0.3s cubic-bezier(.13, .86, .51, .98) forwards;
+      }
+
+      .status-3 {
         background-color: var(--qrcode-status-bg);
         animation: status 0.3s cubic-bezier(.13, .86, .51, .98) forwards;
       }

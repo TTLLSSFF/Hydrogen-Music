@@ -34,6 +34,7 @@ const introduceDetailShowDelay = ref(false);
 const songSearchKeyword = ref('');
 const downloadSelectionMode = ref(false);
 const selectedDownloadSongs = ref([]);
+const selectionMenuExpanded = ref(false);
 
 const canGoBack = ref(false);
 const canGoForward = ref(false);
@@ -493,15 +494,17 @@ const playAllSafe = async () => {
     playAll(router.currentRoute.value.name || 'other', librarySongs.value || []);
 };
 
-//下载本歌单/专辑全部歌曲
-const downloadAll = async () => {
+//进入选择模式
+const enterSelectionMode = async () => {
     await waitCurrentPlaylistHydration();
-    if (!downloadSelectionMode.value) {
-        downloadSelectionMode.value = true;
-        selectedDownloadSongs.value = [];
-        noticeOpen('请选择要下载的歌曲', 2);
-        return;
-    }
+    downloadSelectionMode.value = true;
+    selectedDownloadSongs.value = [];
+    selectionMenuExpanded.value = true;
+    noticeOpen('请选择歌曲', 2);
+};
+
+//下载所选歌曲
+const downloadSelected = async () => {
     if (selectedDownloadSongs.value.length === 0) {
         noticeOpen('请先选择歌曲', 2);
         return;
@@ -511,6 +514,87 @@ const downloadAll = async () => {
     otherStore.downloadQualityShow = true;
     downloadSelectionMode.value = false;
     selectedDownloadSongs.value = [];
+    selectionMenuExpanded.value = false;
+};
+
+//添加到歌单
+const addSelectedToPlaylist = () => {
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    // 使用第一首歌曲触发添加到歌单功能
+    otherStore.selectedItem = selectedDownloadSongs.value[0];
+    otherStore.addPlaylistShow = true;
+};
+
+//添加到播放列表
+const addSelectedToPlayerList = async () => {
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    // 导入 addToList 和相关函数
+    const { addToList } = await import('../utils/player/lazy');
+
+    // 将所选歌曲添加到播放列表
+    try {
+        for (const song of selectedDownloadSongs.value) {
+            await addToNext(song, false);
+        }
+        noticeOpen(`已添加 ${selectedDownloadSongs.value.length} 首歌曲到播放列表`, 2);
+        downloadSelectionMode.value = false;
+        selectedDownloadSongs.value = [];
+        selectionMenuExpanded.value = false;
+    } catch (error) {
+        console.error('添加到播放列表失败:', error);
+        noticeOpen('添加失败', 2);
+    }
+};
+
+//从歌单中删除
+const deleteSelectedFromPlaylist = async () => {
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    if (!libraryInfo.value?.id) {
+        noticeOpen('当前不在歌单页面', 2);
+        return;
+    }
+
+    try {
+        const { updatePlaylist } = await import('../api/playlist');
+        const trackIds = selectedDownloadSongs.value.map(song => song.id).join(',');
+        const params = {
+            op: 'del',
+            pid: libraryInfo.value.id,
+            tracks: trackIds
+        };
+
+        const result = await updatePlaylist(params);
+        const isSuccess = !!(result && ((result.status === 200 && result.body && result.body.code === 200) || result.code === 200 || result.status === 200));
+
+        if (isSuccess) {
+            // 从当前歌曲列表中移除这些歌曲
+            selectedDownloadSongs.value.forEach(selectedSong => {
+                const songIndex = (librarySongs.value || []).findIndex((song) => song.id === selectedSong.id);
+                if (songIndex !== -1) {
+                    librarySongs.value.splice(songIndex, 1);
+                }
+            });
+
+            noticeOpen(`已删除 ${selectedDownloadSongs.value.length} 首歌曲`, 2);
+            downloadSelectionMode.value = false;
+            selectedDownloadSongs.value = [];
+            selectionMenuExpanded.value = false;
+        } else {
+            noticeOpen('删除失败', 2);
+        }
+    } catch (error) {
+        console.error('删除歌曲失败:', error);
+        noticeOpen('删除失败', 2);
+    }
 };
 
 const toggleDownloadSelection = song => {
@@ -530,6 +614,7 @@ const selectAllDownloadSongs = () => {
 const cancelDownloadSelection = () => {
     downloadSelectionMode.value = false;
     selectedDownloadSongs.value = [];
+    selectionMenuExpanded.value = false;
 };
 watch(
     () => songSearchKeyword.value,
@@ -657,25 +742,27 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                     </svg>
                                     <span>{{ libraryInfo.followed ? '已收藏' : '收藏' }}</span>
                                 </div>
-                                <div class="operation-download operation-item" v-if="!isSinger">
-                                    <svg
-                                        t="1669030443895"
-                                        class="download-icon"
-                                        viewBox="0 0 1024 1024"
-                                        version="1.1"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        p-id="10347"
-                                        width="200"
-                                        height="200"
-                                        data-v-7f63928d=""
-                                    >
-                                        <path
-                                            d="M921.6 563.2c-9.6-9.6-25.6-9.6-35.2 0L544 896l0-822.4c0-12.8-9.6-22.4-25.6-22.4s-25.6 9.6-25.6 22.4L492.8 896l-342.4-339.2c-9.6-9.6-25.6-9.6-35.2 0-9.6 9.6-9.6 22.4 0 32l384 377.6c6.4 6.4 12.8 6.4 19.2 6.4 0 0 0 0 0 0 3.2 0 3.2 0 6.4 0 0 0 0 0 3.2 0 3.2 0 6.4-3.2 9.6-6.4l380.8-371.2C931.2 588.8 931.2 572.8 921.6 563.2z"
-                                            p-id="10348"
-                                            data-v-7f63928d=""
-                                        ></path>
-                                    </svg>
-                                    <span @click="downloadAll()">{{ downloadSelectionMode ? `下载所选(${selectedDownloadSongs.length})` : '下载' }}</span>
+                                <div class="operation-selection-wrapper" v-if="!isSinger">
+                                    <div class="operation-selection operation-item" v-show="!downloadSelectionMode" @click="enterSelectionMode">
+                                        <svg
+                                            t="1735052000000"
+                                            class="selection-icon"
+                                            viewBox="0 0 1024 1024"
+                                            version="1.1"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            width="200"
+                                            height="200"
+                                        >
+                                            <path d="M810.666667 128c23.466667 0 42.666667 19.2 42.666666 42.666667v682.666666c0 23.466667-19.2 42.666667-42.666666 42.666667H213.333333c-23.466667 0-42.666667-19.2-42.666666-42.666667V170.666667c0-23.466667 19.2-42.666667 42.666666-42.666667h597.333334z m-42.666667 85.333333H256v597.333334h512V213.333333z m-128 384c23.466667 0 42.666667 19.2 42.666667 42.666667s-19.2 42.666667-42.666667 42.666667H384c-23.466667 0-42.666667-19.2-42.666667-42.666667s19.2-42.666667 42.666667-42.666667h256z m0-170.666666c23.466667 0 42.666667 19.2 42.666667 42.666666s-19.2 42.666667-42.666667 42.666667H384c-23.466667 0-42.666667-19.2-42.666667-42.666667s19.2-42.666666 42.666667-42.666666h256z m0-170.666667c23.466667 0 42.666667 19.2 42.666667 42.666667s-19.2 42.666667-42.666667 42.666666H384c-23.466667 0-42.666667-19.2-42.666667-42.666666s19.2-42.666667 42.666667-42.666667h256z"></path>
+                                        </svg>
+                                        <span>选择</span>
+                                    </div>
+                                    <div class="selection-menu" :class="{ 'selection-menu-expanded': selectionMenuExpanded && downloadSelectionMode }">
+                                        <div class="selection-menu-item" @click="downloadSelected">下载</div>
+                                        <div class="selection-menu-item" @click="addSelectedToPlaylist">添加到歌单</div>
+                                        <div class="selection-menu-item" @click="addSelectedToPlayerList">添加到播放列表</div>
+                                        <div class="selection-menu-item" @click="deleteSelectedFromPlaylist">从歌单中删除</div>
+                                    </div>
                                 </div>
                                 <div class="operation-download-select" v-if="downloadSelectionMode">
                                     <button @click="selectAllDownloadSongs()">全选</button>
@@ -790,6 +877,8 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
     --ld-overlay-border: rgba(255, 255, 255, 0.12);
     --ld-overlay-text: rgba(255, 255, 255, 0.92);
     --ld-overlay-corner: rgba(247, 247, 247, 0.9);
+    --ld-selection-bg: #000000;
+    --ld-selection-text: #ffffff;
 
     width: 100%;
     height: 100%;
@@ -947,6 +1036,146 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                             }
                             :deep(.song-filter-input .filter-input) {
                                 text-align: center;
+                            }
+                        }
+                        .operation-selection-wrapper {
+                            margin-right: 20px;
+                            display: flex;
+                            flex-direction: row;
+                            align-items: center;
+                            position: relative;
+                            gap: 0;
+                        }
+                        .operation-selection {
+                            margin-right: 0;
+                            flex: 0 0 auto;
+                            display: flex;
+                            flex-direction: row;
+                            align-items: center;
+                            position: relative;
+                            z-index: 2;
+                            opacity: 1;
+                            transition: opacity 0.15s ease;
+                            &.selection-hiding {
+                                opacity: 0;
+                            }
+                            &:hover {
+                                cursor: pointer;
+                                opacity: 0.6;
+                            }
+                            .selection-icon {
+                                width: 16px;
+                                height: 16px;
+                            }
+                            span {
+                                margin-left: 5px;
+                                font-size: 15px;
+                                color: var(--ld-text);
+                            }
+                        }
+                        .selection-menu {
+                            display: flex;
+                            flex-direction: row;
+                            align-items: center;
+                            gap: 0;
+                            max-width: 0;
+                            margin-left: 0;
+                            overflow: visible;
+                            opacity: 0;
+                            transition: max-width 0.32s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s, opacity 0.32s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s, margin-left 0.32s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s;
+                            position: relative;
+                            z-index: 1;
+                        }
+                        .selection-menu-expanded {
+                            max-width: 600px;
+                            margin-left: 0;
+                            opacity: 1;
+                        }
+                        .selection-menu:not(.selection-menu-expanded) {
+                            transition: max-width 0.5s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s, opacity 0.5s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s, margin-left 0.5s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s;
+                        }
+                        .selection-menu-item {
+                            margin-left: 15px;
+                            padding: 4px 10px;
+                            flex: 0 0 auto;
+                            font: 15px SourceHanSansCN-Bold;
+                            font-weight: bold;
+                            color: var(--ld-text);
+                            white-space: nowrap;
+                            position: relative;
+                            opacity: 0;
+                            transform: translateX(-20px);
+                            z-index: 1;
+                            overflow: hidden;
+                            transition: color 0.2s ease;
+                            &::before {
+                                content: '';
+                                width: 100%;
+                                height: 100%;
+                                position: absolute;
+                                top: 0;
+                                left: 0;
+                                background-color: var(--ld-selection-bg);
+                                transform: translateX(-101%);
+                                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
+                                z-index: -1;
+                            }
+                            &:hover {
+                                cursor: pointer;
+                                color: var(--ld-selection-text) !important;
+                                &::before {
+                                    transform: translateX(0);
+                                }
+                            }
+                        }
+                        .selection-menu-expanded .selection-menu-item {
+                            animation: selection-item-slide-in 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) forwards;
+                            &:nth-child(1) {
+                                animation-delay: 0.25s;
+                            }
+                            &:nth-child(2) {
+                                animation-delay: 0.3s;
+                            }
+                            &:nth-child(3) {
+                                animation-delay: 0.35s;
+                            }
+                            &:nth-child(4) {
+                                animation-delay: 0.4s;
+                            }
+                        }
+                        .selection-menu:not(.selection-menu-expanded) .selection-menu-item {
+                            animation: selection-item-slide-out 0.35s cubic-bezier(0.14, 0.91, 0.58, 1) forwards;
+                            &:nth-child(1) {
+                                animation-delay: 0.15s;
+                            }
+                            &:nth-child(2) {
+                                animation-delay: 0.1s;
+                            }
+                            &:nth-child(3) {
+                                animation-delay: 0.05s;
+                            }
+                            &:nth-child(4) {
+                                animation-delay: 0s;
+                            }
+                        }
+                        @keyframes selection-item-slide-in {
+                            0% {
+                                opacity: 0;
+                                transform: translateX(-20px);
+                            }
+                            100% {
+                                opacity: 1;
+                                transform: translateX(0);
+                            }
+                        }
+                        @keyframes selection-item-slide-out {
+                            0% {
+                                opacity: 1;
+                                transform: translateX(0);
+                            }
+                            100% {
+                                opacity: 0;
+                                transform: translateX(-20px);
                             }
                         }
                         .operation-download-select {
@@ -1246,6 +1475,8 @@ html.dark .library-detail,
     --ld-overlay-border: rgba(255, 255, 255, 0.18);
     --ld-overlay-text: rgba(241, 243, 245, 0.92);
     --ld-overlay-corner: rgba(241, 243, 245, 0.72);
+    --ld-selection-bg: #ffffff;
+    --ld-selection-text: #0f1114;
 }
 
 .metro-enter-active {
