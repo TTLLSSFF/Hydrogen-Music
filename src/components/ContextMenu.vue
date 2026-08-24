@@ -286,16 +286,24 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
   }
   const addToMyPlaylist = playlistTarget => {
       const playlist = normalizePlaylistTarget(playlistTarget)
+      // 支持批量添加：优先使用 selectedItems，如果不存在则使用 selectedItem
+      const items = otherStore.selectedItems && otherStore.selectedItems.length > 0
+        ? otherStore.selectedItems
+        : [otherStore.selectedItem]
+
+      const trackIds = items.map(item => item.id).join(',')
+
       let params = {
         op: 'add',
         pid: playlist.id,
-        tracks: otherStore.selectedItem.id
+        tracks: trackIds
       }
       updatePlaylist(params).then(result => {
         if(isPlaylistUpdateSuccess(result)) {
           updateCurrentPlaylistIfViewing(playlist.id).finally(() => {
             updatePlaylistCache(playlist.id)
-            noticeOpen(`已添加到${playlist.name}`, 2)
+            const count = items.length
+            noticeOpen(`已添加 ${count} 首歌曲到${playlist.name}`, 2)
           })
         }else {
           noticeOpen('添加至歌单错误', 2)

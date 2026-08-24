@@ -7,7 +7,7 @@ import { subPlaylist } from '../api/playlist';
 import { subAlbum } from '../api/album';
 import { subArtist } from '../api/artist';
 import { formatTime } from '../utils/time';
-import { playAll } from '../utils/player/lazy';
+import { playAll, addToNext } from '../utils/player/lazy';
 import { scheduleAlbumSublistCacheInvalidation, scheduleArtistSublistCacheInvalidation } from '../utils/cacheInvalidation';
 import { matchSearchText, normalizeSongFilterKeyword } from '../utils/songFilter';
 import LibrarySongList from './LibrarySongList.vue';
@@ -518,14 +518,35 @@ const downloadSelected = async () => {
 };
 
 //添加到歌单
-const addSelectedToPlaylist = () => {
+const addSelectedToPlaylist = async () => {
     if (selectedDownloadSongs.value.length === 0) {
         noticeOpen('请先选择歌曲', 2);
         return;
     }
-    // 使用第一首歌曲触发添加到歌单功能
-    otherStore.selectedItem = selectedDownloadSongs.value[0];
-    otherStore.addPlaylistShow = true;
+
+    try {
+        const { updatePlaylist } = await import('../api/playlist');
+
+        // 显示歌单选择弹窗，但保存选中的歌曲列表
+        otherStore.selectedItems = [...selectedDownloadSongs.value];
+        otherStore.addPlaylistShow = true;
+
+        // 监听弹窗关闭后退出选择模式
+        const unwatch = watch(
+            () => otherStore.addPlaylistShow,
+            (newVal) => {
+                if (!newVal) {
+                    downloadSelectionMode.value = false;
+                    selectedDownloadSongs.value = [];
+                    selectionMenuExpanded.value = false;
+                    unwatch();
+                }
+            }
+        );
+    } catch (error) {
+        console.error('添加到歌单失败:', error);
+        noticeOpen('添加失败', 2);
+    }
 };
 
 //添加到播放列表
@@ -534,10 +555,7 @@ const addSelectedToPlayerList = async () => {
         noticeOpen('请先选择歌曲', 2);
         return;
     }
-    // 导入 addToList 和相关函数
-    const { addToList } = await import('../utils/player/lazy');
 
-    // 将所选歌曲添加到播放列表
     try {
         for (const song of selectedDownloadSongs.value) {
             await addToNext(song, false);
