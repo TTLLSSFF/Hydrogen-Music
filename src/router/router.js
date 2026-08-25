@@ -41,6 +41,16 @@ const { updateLibraryDetail } = libraryStore
 const { libraryInfo } = storeToRefs(libraryStore)
 const otherStore = useOtherStore()
 const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
+//先完成路由跳转再拉详情数据，避免点击后要等网络请求才有反应
+const enterLibraryDetail = (to, from, next, routeName, options = {}) => {
+    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from)
+    next()
+    if (!needReload) return
+    updateLibraryDetail(to.params.id, routeName, options).catch(() => {
+        libraryStore.libraryChangeAnimation = false
+        noticeOpen('加载失败', 2)
+    })
+}
 const routeComponentPreloadLoaders = [
     HomePage,
     MyMusic,
@@ -122,40 +132,19 @@ const routes = [
                 path: '/mymusic/playlist/:id',
                 name: 'playlist',
                 component: LibraryDetail,
-                beforeEnter: async (to, from, next) => {
-                    const needReload = !libraryInfo.value || from.name != 'playlist' || hasDifferentLibraryId(to, from)
-                    try {
-                        if (needReload) await updateLibraryDetail(to.params.id, to.name, { deferRemaining: true })
-                    } finally {
-                        next()
-                    }
-                }
+                beforeEnter: (to, from, next) => enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true })
             },
             {
                 path: '/mymusic/album/:id',
                 name: 'album',
                 component: LibraryDetail,
-                beforeEnter: async (to, from, next) => {
-                    const needReload = !libraryInfo.value || from.name != 'album' || hasDifferentLibraryId(to, from)
-                    try {
-                        if (needReload) await updateLibraryDetail(to.params.id, to.name)
-                    } finally {
-                        next()
-                    }
-                }
+                beforeEnter: (to, from, next) => enterLibraryDetail(to, from, next, 'album')
             },
             {
                 path: '/mymusic/artist/:id',
                 name: 'artist',
                 component: LibraryDetail,
-                beforeEnter: async (to, from, next) => {
-                    const needReload = !libraryInfo.value || from.name != 'artist' || hasDifferentLibraryId(to, from)
-                    try {
-                        if (needReload) await updateLibraryDetail(to.params.id, to.name)
-                    } finally {
-                        next()
-                    }
-                }
+                beforeEnter: (to, from, next) => enterLibraryDetail(to, from, next, 'artist')
             },
             {
                 path: '/mymusic/playlist/rec',
