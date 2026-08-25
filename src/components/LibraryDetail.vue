@@ -1130,8 +1130,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         }
                         .selection-menu:not(.selection-menu-expanded) {
                             //收回时容器只负责收窄，淡出交给子项自己完成，避免透明度叠加导致闪烁
-                            //overflow:hidden 在收回时裁剪掉所有溢出容器的子项与伪元素背景，
-                            //这是右侧 1px 残影的真正来源：max-width 归零时子元素仍可画在容器之外
+                            //overflow:hidden 仅负责菜单关闭时的最终裁剪；hover-out 的背景由子项自身收尾
                             overflow: hidden;
                             transition: max-width 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.28s, opacity 0s linear 0.48s, margin-left 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.28s;
                         }
@@ -1148,36 +1147,27 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                             transform: translateX(-20px);
                             z-index: 1;
                             overflow: hidden;
-                            transition: color 0.2s ease;
-                            &::before {
-                                content: '';
-                                width: 100%;
-                                height: 100%;
-                                position: absolute;
-                                top: 0;
-                                left: 0;
-                                background-color: var(--ld-selection-bg);
-                                //用左侧为原点的scaleX代替translateX：收起时宽度为0，不存在亚像素取整残留
-                                //纯色矩形下观感与滑入一致，色块同样是从左向右展开
-                                transform: scaleX(0);
-                                transform-origin: left center;
-                                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
-                                z-index: -1;
-                            }
+                            //直接在元素上改变背景绘制区域，避免零宽 transform 伪元素仍保留合成层
+                            background-image: linear-gradient(var(--ld-selection-bg), var(--ld-selection-bg));
+                            background-position: left center;
+                            background-repeat: no-repeat;
+                            background-size: 0 100%;
+                            transition: color 0.2s ease, background-size 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
                             &:hover {
                                 cursor: pointer;
                             }
                         }
-                        //背景与反色只在展开状态下才可能出现，收回瞬间规则即失配，不存在需要收尾的动画
+                        //背景与反色只在展开状态下响应悬停
                         .selection-menu-expanded .selection-menu-item:hover {
                             color: var(--ld-selection-text) !important;
-                            &::before {
-                                transform: scaleX(1);
-                            }
+                            background-size: 100% 100%;
                         }
                         .selection-menu-expanded .selection-menu-item,
                         .selection-menu-expanded .operation-download-select {
-                            animation: selection-item-slide-in 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) both;
+                            opacity: 1;
+                            transform: none;
+                            //延迟期间使用起始帧，结束后回到静态样式并释放动画 transform 层
+                            animation: selection-item-slide-in 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) backwards;
                             &:nth-child(1) {
                                 animation-delay: 0.25s;
                             }
@@ -1194,17 +1184,14 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                 animation-delay: 0.45s;
                             }
                         }
-                        //收回时把背景整体撤出渲染：display:none 不参与合成，无论取整如何都不会留下痕迹
                         .selection-menu:not(.selection-menu-expanded) .selection-menu-item {
                             pointer-events: none;
                             color: var(--ld-text) !important;
-                            &::before {
-                                display: none;
-                            }
+                            background-image: none;
                         }
                         .selection-menu:not(.selection-menu-expanded) .selection-menu-item,
                         .selection-menu:not(.selection-menu-expanded) .operation-download-select {
-                            animation: selection-item-slide-out 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) both;
+                            animation: selection-item-slide-out 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) backwards;
                             &:nth-child(1) {
                                 animation-delay: 0.2s;
                             }
@@ -1228,7 +1215,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                             }
                             100% {
                                 opacity: 1;
-                                transform: translateX(0);
+                                transform: none;
                             }
                         }
                         @keyframes selection-item-slide-out {

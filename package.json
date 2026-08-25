@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:selection-animation": "node --experimental-websocket scripts/test-selection-animation.mjs",
     "preview": "vite preview",
     "postinstall": "node scripts/patch-ncm-api.cjs",
     "serve": "node web-server.js"
