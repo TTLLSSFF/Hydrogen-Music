@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createQQPersistedState, createQQSessionSnapshot, sanitizeQQQrImage } from '../src/utils/qqSession.mjs'
+import { createQQPersistedState, createQQSessionSnapshot, extractQQLoginPayload, sanitizeQQQrImage } from '../src/utils/qqSession.mjs'
 import { createQQPersistStorage } from '../src/utils/qqSession.mjs'
 
 test('QQ session snapshot excludes cookies and remains provider scoped', () => {
@@ -110,4 +110,19 @@ test('QQ QR image URLs never expose credential query parameters', () => {
     'https://example.test/qr.png?safe=1',
   )
   assert.equal(sanitizeQQQrImage('data:image/png;base64,AA=='), 'data:image/png;base64,AA==')
+})
+
+test('QQ login payload extraction handles adapter response envelopes', () => {
+  const payload = extractQQLoginPayload({
+    data: {
+      body: {
+        isOk: true,
+        clientSession: 'opaque-client-session',
+      },
+    },
+  })
+  assert.deepEqual(payload, {
+    isOk: true,
+    clientSession: 'opaque-client-session',
+  })
 })

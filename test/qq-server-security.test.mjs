@@ -40,9 +40,10 @@ function createContext(path, { method = 'GET', body, headers = {} } = {}) {
   }
 }
 
-test('QQ QR login keeps upstream credentials server-side and returns an opaque session id', async () => {
+test('QQ QR login returns a browser-owned opaque session while sanitizing upstream credentials', async () => {
   const persisted = []
   const middleware = createQQSecurityMiddleware({
+    exposeClientSession: true,
     getLoginQr: async () => ({
       status: 200,
       body: { img: 'data:image/png;base64,AA==', ptqrtoken: 'qr-token', qrsig: 'qr-secret' },
@@ -87,10 +88,15 @@ test('QQ QR login keeps upstream credentials server-side and returns an opaque s
 
   assert.equal(persisted.length, 1)
   assert.equal(persisted[0].cookie, 'uin=12345; qqmusic_key=server-secret')
-  assert.deepEqual(checkContext.body, {
-    isOk: true,
-    message: 'ok',
-    session: { loginUin: '12345', uin: '12345' },
+  assert.equal(checkContext.body.isOk, true)
+  assert.equal(checkContext.body.message, 'ok')
+  assert.deepEqual(checkContext.body.session, { loginUin: '12345', uin: '12345' })
+  assert.equal(typeof checkContext.body.clientSession, 'string')
+  const decoded = JSON.parse(Buffer.from(checkContext.body.clientSession, 'base64url').toString('utf8'))
+  assert.deepEqual(decoded, {
+    cookie: 'uin=12345; qqmusic_key=server-secret',
+    uin: '12345',
+    euin: 'encrypted-user-id',
   })
   assert.equal(JSON.stringify(checkContext.body).includes('server-secret'), false)
 })
@@ -209,6 +215,32 @@ test('QQ public session status exposes only a non-secret account identifier', as
 
   assert.deepEqual(context.body, { loggedIn: true, session: { loginUin: '12345', uin: '12345' } })
   assert.equal(JSON.stringify(context.body).includes('encrypted-user-id'), false)
+})
+
+test('QQ client session header authenticates status and private requests without server persistence', async () => {
+  const clientSession = Buffer.from(JSON.stringify({
+    cookie: 'uin=24680; qqmusic_key=client-secret',
+    uin: '24680',
+  }), 'utf8').toString('base64url')
+  const middleware = createQQSecurityMiddleware({
+    allowServerSession: false,
+    getSession: () => null,
+  })
+  const statusContext = createContext('/session/status', {
+    headers: { 'X-QQ-Music-Session': clientSession },
+  })
+  await middleware(statusContext, async () => assert.fail('session status must be handled privately'))
+  assert.deepEqual(statusContext.body, { loggedIn: true, session: { loginUin: '24680', uin: '24680' } })
+
+  const profileContext = createContext('/user/getUserDetail', {
+    headers: { 'X-QQ-Music-Session': clientSession },
+  })
+  await middleware(profileContext, async () => {
+    assert.equal(profileContext.request.cookie, 'uin=24680; qqmusic_key=client-secret')
+    assert.equal(profileContext.query.uin, '24680')
+    profileContext.body = { ok: true }
+  })
+  assert.deepEqual(profileContext.body, { ok: true })
 })
 
 test('QQ account identifiers normalize the login cookie uin representation', async () => {

@@ -135,6 +135,16 @@ function createOpaqueSessionId() {
   return randomBytes(24).toString('base64url')
 }
 
+function encodeQQClientSession(session) {
+  const cookie = getSingleValue(session?.cookie).trim()
+  if (!cookie) return ''
+  return Buffer.from(JSON.stringify({
+    cookie,
+    uin: session?.uin || session?.loginUin || '',
+    euin: getSingleValue(session?.euin),
+  }), 'utf8').toString('base64url')
+}
+
 function getSingleValue(value) {
   if (Array.isArray(value)) return getSingleValue(value[0])
   if (value === undefined || value === null) return ''
@@ -154,6 +164,11 @@ function normalizeQQUin(value) {
   return digits.replace(/^0+(?=\d)/, '') || '0'
 }
 
+function parseCookieUin(cookie) {
+  const match = String(cookie || '').match(/(?:^|;)\s*uin=([^;]+)/i)
+  return match ? match[1].trim() : ''
+}
+
 function hasSensitiveQQQuery(url) {
   let parsed
   try {
@@ -169,6 +184,7 @@ function hasSensitiveQQQuery(url) {
 function sanitizeQQProxyRequestHeaders(headers = {}) {
   return Object.fromEntries(Object.entries(headers).filter(([key]) => {
     const normalized = key.toLowerCase()
+    if (normalized === 'x-qq-music-session') return true
     return !SENSITIVE_REQUEST_HEADERS.has(normalized) && !isSensitiveQQKey(normalized) && !normalized.startsWith('x-forwarded-')
   }))
 }
@@ -384,6 +400,7 @@ function createQQSecurityMiddleware(options = {}) {
   const sessionIdFactory = options.sessionIdFactory || createOpaqueSessionId
   const now = options.now || Date.now
   const logSink = options.logSink
+  const allowServerSession = options.allowServerSession !== false
 
   return async function qqSecurityMiddleware(ctx, next) {
     return runWithQQSafeLogging(async () => {
@@ -456,10 +473,15 @@ function createQQSecurityMiddleware(options = {}) {
       const { status, body } = unwrapServiceResponse(await checkLoginQr(pending))
       if (body.refresh === true || status < 200 || status >= 300) sessionStore.delete(sessionId)
       if (body.isOk === true && body.session) {
+        if (options.exposeClientSession === true) body.clientSession = encodeQQClientSession(body.session)
         persistSession(body.session)
         sessionStore.delete(sessionId)
       }
-      writeJson(ctx, status, sanitizeQQResponseBody(body))
+      const safeBody = sanitizeQQResponseBody(body)
+      if (options.exposeClientSession === true && body.isOk === true && body.session?.cookie && safeBody && typeof safeBody === 'object') {
+        safeBody.clientSession = encodeQQClientSession(body.session)
+      }
+      writeJson(ctx, status, safeBody)
       return
     }
 
@@ -468,7 +490,12 @@ function createQQSecurityMiddleware(options = {}) {
         writeJson(ctx, 405, { error: 'Method not allowed' })
         return
       }
-      const session = getSession()
+      const sessionHeader = getSingleValue(ctx.headers?.['x-qq-music-session'] || ctx.headers?.['X-QQ-Music-Session']).trim()
+      let clientSession = null
+      if (sessionHeader) {
+        try { clientSession = JSON.parse(Buffer.from(sessionHeader, 'base64url').toString('utf8')) } catch (_) {}
+      }
+      const session = clientSession?.cookie ? clientSession : (allowServerSession ? getSession() : null)
       writeJson(ctx, 200, { loggedIn: Boolean(session), session: publicQQSession(session) })
       return
     }
@@ -499,15 +526,52 @@ function createQQSecurityMiddleware(options = {}) {
       return
     }
 
-    const serverSession = getSession()
-    if (serverSession?.cookie) {
-      syncQQUpstreamUserInfo(serverSession)
-      ctx.request.cookie = serverSession.cookie
+    const clientHeader = getSingleValue(ctx.headers?.['x-qq-music-session'] || ctx.headers?.['X-QQ-Music-Session']).trim()
+    let clientCookie = getSingleValue(ctx.headers?.['x-qq-music-cookie'] || ctx.headers?.['X-QQ-Music-Cookie']).trim()
+    let clientUin = ''
+    let clientEuin = ''
+    if (!clientCookie && clientHeader) {
+      try {
+        const decoded = JSON.parse(Buffer.from(clientHeader, 'base64url').toString('utf8'))
+        clientCookie = getSingleValue(decoded?.cookie).trim()
+        clientUin = getSingleValue(decoded?.uin).trim()
+        clientEuin = getSingleValue(decoded?.euin).trim()
+      } catch (_) {}
+    }
+    const serverSession = allowServerSession ? getSession() : null
+    if (ctx.headers) {
+      delete ctx.headers['x-qq-music-session']
+      delete ctx.headers['X-QQ-Music-Session']
+      delete ctx.headers['x-qq-music-cookie']
+      delete ctx.headers['X-QQ-Music-Cookie']
+    }
+    if (ctx.request?.headers) {
+      delete ctx.request.headers['x-qq-music-session']
+      delete ctx.request.headers['X-QQ-Music-Session']
+      delete ctx.request.headers['x-qq-music-cookie']
+      delete ctx.request.headers['X-QQ-Music-Cookie']
+    }
+    const sessionCookie = clientCookie || getSingleValue(serverSession?.cookie).trim()
+    if (!sessionCookie) {
+      writeJson(ctx, 401, { error: 'QQ Music session required' })
+      return
+    }
+    const activeSession = clientCookie
+      ? {
+          ...(serverSession || {}),
+          cookie: clientCookie,
+          ...(clientUin ? { uin: clientUin } : {}),
+          ...(clientEuin ? { euin: clientEuin } : {}),
+        }
+      : serverSession
+    if (activeSession?.cookie) {
+      syncQQUpstreamUserInfo(activeSession)
+      ctx.request.cookie = activeSession.cookie
       ctx.state = ctx.state || {}
-      ctx.state.requestCookie = serverSession.cookie
+      ctx.state.requestCookie = activeSession.cookie
       const needsUin = /^\/user\/(?:getuseravatar|getuserplaylists|getuserdetail|getusercollectedsonglists|getusercollectedalbums|getuserfollowsingers|getuserfollowusers|getuserfans|getuserlikedsongs)$/i.test(normalizedPath)
       if (needsUin) {
-        const uin = normalizeQQUin(serverSession.uin || serverSession.loginUin)
+        const uin = normalizeQQUin(activeSession.uin || activeSession.loginUin || clientUin || parseCookieUin(activeSession.cookie))
         if (uin) ctx.query.uin = uin
       }
     }
@@ -524,7 +588,12 @@ function createQQSecurityMiddleware(options = {}) {
 // Insert before upstream access logging, cookie parsing, static explorer, and
 // routes. This also prevents the upstream logger from ever seeing secrets in
 // the URL because those requests return here.
-app.middleware.unshift(createQQSecurityMiddleware())
+app.middleware.unshift(createQQSecurityMiddleware({
+  exposeClientSession: true,
+  persistSession: () => {},
+  clearSession: () => {},
+  allowServerSession: false,
+}))
 
 function startQQMusicApi(port = QQ_API_PORT) {
   if (server) return Promise.resolve(server)

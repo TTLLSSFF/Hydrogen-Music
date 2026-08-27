@@ -4,7 +4,7 @@ import QRCode from 'qrcode'
 import { getQQLoginQr, checkQQLoginQr } from '../api/qq'
 import { normalizeQrState } from '../utils/qqLoginState.mjs'
 import { qqAccountStore } from '../store/qqAccountStore'
-import { sanitizeQQQrImage } from '../utils/qqSession.mjs'
+import { extractQQLoginPayload, sanitizeQQQrImage } from '../utils/qqSession.mjs'
 
 const emit = defineEmits(['jumpTo', 'success'])
 const qrImage = ref('')
@@ -22,7 +22,7 @@ async function poll() {
   if (!loginSessionId) return
   try {
     const result = await checkQQLoginQr(loginSessionId)
-    const payload = result?.data || result?.body || result
+    const payload = extractQQLoginPayload(result) || result
     const code = result?.code ?? payload?.code
     status.value = payload?.isOk === true || payload?.success === true
       ? 'confirmed'
@@ -32,7 +32,11 @@ async function poll() {
     if (status.value === 'confirmed') {
       clearTimer()
       loginSessionId = ''
+      const clientSession = payload?.clientSession || result?.clientSession
+      if (!clientSession) throw new Error('QQ 登录凭证未返回，请重新扫码')
+      qqAccountStore.setSessionToken(clientSession)
       await qqAccountStore.restoreSession()
+      if (!qqAccountStore.loggedIn) throw new Error('QQ 登录状态校验失败，请重新扫码')
       emit('success', qqAccountStore.user)
       emit('jumpTo')
       return
@@ -51,7 +55,7 @@ async function load() {
   status.value = 'loading'
   try {
     const result = await getQQLoginQr()
-    const data = result?.data || result?.body || result
+    const data = extractQQLoginPayload(result) || result
     loginSessionId = String(result?.sessionId || data?.sessionId || '')
     const url = sanitizeQQQrImage(String(data?.img || data?.url || data?.qrUrl || data?.qrimg || ''))
     if (!loginSessionId || !url) throw new Error('QQ 登录二维码生成失败')

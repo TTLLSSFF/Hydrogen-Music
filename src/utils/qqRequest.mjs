@@ -25,9 +25,16 @@ export function createQQRequestConfig(config = {}) {
     url,
     method: String(config.method || 'get').toLowerCase(),
   }
+  try {
+    if (typeof localStorage !== 'undefined' && !config.headers?.['X-QQ-Music-Session']) {
+      const raw = localStorage.getItem('qqAccountStore')
+      const token = raw ? JSON.parse(raw)?.sessionToken : ''
+      if (token) safeConfig.headers = { ...(safeConfig.headers || {}), 'X-QQ-Music-Session': token }
+    }
+  } catch (_) {}
   if (config.params !== undefined) safeConfig.params = config.params
   if (config.data !== undefined) safeConfig.data = config.data
-  if (config.headers !== undefined) safeConfig.headers = config.headers
+  if (config.headers !== undefined) safeConfig.headers = { ...(safeConfig.headers || {}), ...config.headers }
   if (config.responseType !== undefined) safeConfig.responseType = config.responseType
   safeConfig.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : QQ_REQUEST_TIMEOUT_MS
   safeConfig.withCredentials = false

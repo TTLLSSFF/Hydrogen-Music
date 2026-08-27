@@ -25,6 +25,37 @@ export function sanitizeQQQrImage(value) {
   return parsed.toString()
 }
 
+/**
+ * Login endpoints may be returned directly or wrapped by an API adapter in
+ * `data`, `body`, `response`, or `result`. Locate the first object carrying
+ * QQ login fields without exposing or copying any credential material.
+ */
+export function extractQQLoginPayload(value, depth = 0, seen = new Set()) {
+  if (depth > 6 || value == null || typeof value !== 'object' || seen.has(value)) return null
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractQQLoginPayload(item, depth + 1, seen)
+      if (found) return found
+    }
+    return null
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'clientSession')
+    || Object.prototype.hasOwnProperty.call(value, 'isOk')
+    || Object.prototype.hasOwnProperty.call(value, 'sessionId')
+    || Object.prototype.hasOwnProperty.call(value, 'img')
+    || Object.prototype.hasOwnProperty.call(value, 'qrUrl')) return value
+  seen.add(value)
+  for (const key of ['data', 'body', 'response', 'result']) {
+    const found = extractQQLoginPayload(value[key], depth + 1, seen)
+    if (found) {
+      seen.delete(value)
+      return found
+    }
+  }
+  seen.delete(value)
+  return null
+}
+
 export function createQQSessionSnapshot(user, _session = {}) {
   if (!user || typeof user !== 'object') return { source: 'qq', loggedIn: false, user: null }
   const safeUser = sanitizeQQPayload(user)
@@ -95,11 +126,14 @@ export function createQQPersistedState(state = {}) {
 
   const persistedUser = Object.keys(user).length ? user : null
   const persistedVip = Object.keys(vip).length ? vip : null
-  return {
+  const persisted = {
     loggedIn: Boolean(state.loggedIn && persistedUser),
     user: persistedUser,
     vip: persistedVip,
   }
+  const sessionToken = typeof state.sessionToken === 'string' ? state.sessionToken.trim() : ''
+  if (sessionToken) persisted.sessionToken = sessionToken
+  return persisted
 }
 
 export function createPublicQQLoginSession(session = {}) {

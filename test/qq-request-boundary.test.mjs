@@ -92,3 +92,20 @@ test('QQ request rejects credentials in headers and request bodies', () => {
     /QQ request contains forbidden secret material/,
   )
 })
+
+test('QQ requests reuse only the browser-persisted opaque session token', () => {
+  const previousStorage = globalThis.localStorage
+  globalThis.localStorage = {
+    getItem(key) {
+      assert.equal(key, 'qqAccountStore')
+      return JSON.stringify({ sessionToken: 'opaque-client-session' })
+    },
+  }
+  try {
+    const config = createQQRequestConfig({ url: '/session/status' })
+    assert.deepEqual(config.headers, { 'X-QQ-Music-Session': 'opaque-client-session' })
+  } finally {
+    if (previousStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = previousStorage
+  }
+})
