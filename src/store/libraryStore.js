@@ -4,18 +4,22 @@ import { getAlbumDetail, albumDynamic } from '../api/album'
 import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
 import { getArtistMV } from '../api/mv'
 import { getSongDetail } from '../api/song'
+import { getQQSongListDetail } from '../api/qqMusic'
+import { loadQQPlaylistDetail, mergeQQPlaylistSummary } from '../utils/qqLibrary.mjs'
 import { mapSongsPlayableStatus } from "../utils/songStatus";
 import { buildAlbumSearchText, buildCloudSongSearchText, buildMVSearchText } from "../utils/songFilter";
+import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs'
 
 const PLAYLIST_PAGE_SIZE = 100
 const PLAYLIST_HYDRATION_CONCURRENCY = 4
 const PLAYLIST_OVERVIEW_COUNT_FIELDS = ['trackCount', 'size']
 
-const createPlaylistHydrationState = ({ id = null, total = 0, loaded = 0, status = 'idle' } = {}) => ({
+const createPlaylistHydrationState = ({ id = null, total = 0, loaded = 0, status = 'idle', source = 'netease' } = {}) => ({
     id,
     total,
     loaded,
     status,
+    source: normalizeMusicSource(source),
 })
 const createSearchIndexState = () => ({
     songs: {},
@@ -28,14 +32,14 @@ const cloneSearchIndexState = index => ({
     mvs: { ...(index?.mvs || {}) },
 })
 
-const getSearchEntryKey = (entry, fallbackKey = '0') => String(entry?.id ?? fallbackKey)
+const getSearchEntryKey = (entry, fallbackKey = '0') => String(getSongIdentity(entry) || entry?.id || fallbackKey)
 const isBlankValue = value => value == null || value === ''
 const normalizeOptionalId = id => isBlankValue(id) ? '' : String(id)
-const getLibraryDetailCacheKey = (id, routerName) => {
+const getLibraryDetailCacheKey = (id, routerName, source = 'netease') => {
     const normalizedName = String(routerName || '')
     const normalizedId = normalizeOptionalId(id)
     if (!normalizedName || !normalizedId) return ''
-    return `${normalizedName}:${normalizedId}`
+    return `${normalizedName}:${normalizeMusicSource(source)}:${normalizedId}`
 }
 const trimRecordMap = (records, limit, fallbackLimit) => {
     if (!records || typeof records != 'object') return {}
@@ -111,13 +115,15 @@ export const useLibraryStore = defineStore('libraryStore', {
         markPlaylistOverviewStale() {
             this.playlistOverviewVersion += 1
         },
-        updatePlaylistOverviewTrackCount(playlistId, delta) {
+        updatePlaylistOverviewTrackCount(playlistId, delta, source = '') {
             const normalizedPlaylistId = String(playlistId ?? '')
             const parsedDelta = Number(delta)
             if (!normalizedPlaylistId || !Number.isFinite(parsedDelta) || parsedDelta == 0) return
+            const normalizedSource = source ? normalizeMusicSource(source) : ''
 
             const updateItem = item => {
                 if (String(item?.id ?? '') != normalizedPlaylistId) return item
+                if (normalizedSource && normalizeMusicSource(item?.source) !== normalizedSource) return item
 
                 const nextItem = { ...item }
                 for (const key of PLAYLIST_OVERVIEW_COUNT_FIELDS) {
@@ -134,7 +140,9 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.playlistUserCreated = updateList(this.playlistUserCreated)
             this.playlistUserSub = updateList(this.playlistUserSub)
             this.libraryList = updateList(this.libraryList)
-            if (this.libraryInfo && String(this.libraryInfo.id ?? '') == normalizedPlaylistId) {
+            if (this.libraryInfo
+                && String(this.libraryInfo.id ?? '') == normalizedPlaylistId
+                && (!normalizedSource || normalizeMusicSource(this.libraryInfo.source) === normalizedSource)) {
                 this.libraryInfo = updateItem(this.libraryInfo)
             }
         },
@@ -163,6 +171,63 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.libraryChangeAnimation = false
             this.resetPlaylistHydration()
             this.resetSearchIndex()
+        },
+        clearQQScopedState() {
+            const isQQ = item => normalizeMusicSource(item?.source) === 'qq'
+            const filterQQ = list => Array.isArray(list) ? list.filter(item => !isQQ(item)) : list
+            const previousCreated = this.playlistUserCreated
+            const previousSubscribed = this.playlistUserSub
+            const previousLibraryList = this.libraryList
+            const qqWasInLibraryList = Array.isArray(previousLibraryList) && previousLibraryList.some(isQQ)
+
+            this.playlistUserCreated = filterQQ(this.playlistUserCreated)
+            this.playlistUserSub = filterQQ(this.playlistUserSub)
+            if (previousLibraryList === previousCreated) this.libraryList = this.playlistUserCreated
+            else if (previousLibraryList === previousSubscribed) this.libraryList = this.playlistUserSub
+            else this.libraryList = filterQQ(previousLibraryList)
+            this.playlistCount = this.playlistCount
+                ? {
+                    ...this.playlistCount,
+                    createdPlaylistCount: Array.isArray(this.playlistUserCreated) ? this.playlistUserCreated.length : 0,
+                    subPlaylistCount: Array.isArray(this.playlistUserSub) ? this.playlistUserSub.length : 0,
+                }
+                : this.playlistCount
+
+            const qqDetailActive = normalizeMusicSource(this.libraryInfo?.source) === 'qq'
+            const qqSongsRemoved = Array.isArray(this.librarySongs) && this.librarySongs.some(isQQ)
+            if (qqDetailActive) {
+                this.libraryInfo = null
+                this.librarySongs = null
+                this.libraryAlbum = null
+                this.libraryMV = null
+            } else if (Array.isArray(this.librarySongs)) {
+                this.librarySongs = this.librarySongs.filter(song => !isQQ(song))
+            }
+
+            if (this.playlistHydration?.source === 'qq') this.resetPlaylistHydration()
+
+            if (this.detailCache && typeof this.detailCache === 'object') {
+                const nextCache = {}
+                Object.entries(this.detailCache).forEach(([key, value]) => {
+                    if (!String(key).includes(':qq:')) nextCache[key] = value
+                })
+                this.detailCache = nextCache
+            }
+            if (this.detailScrollMemory && typeof this.detailScrollMemory === 'object') {
+                const nextScrollMemory = {}
+                Object.entries(this.detailScrollMemory).forEach(([key, value]) => {
+                    if (!/[?&]source=qq(?:&|$)/i.test(String(key))) nextScrollMemory[key] = value
+                })
+                this.detailScrollMemory = nextScrollMemory
+            }
+
+            if (qqDetailActive || qqWasInLibraryList || qqSongsRemoved) {
+                this.resetSearchIndex()
+            }
+            if (this.lastLibraryRoute && /[?&]source=qq(?:&|$)/i.test(String(this.lastLibraryRoute.fullPath || ''))) {
+                this.lastLibraryRoute = null
+                this.restoreLibraryScrollOnActivate = false
+            }
         },
         resetSearchIndex(section = null) {
             if (!section) {
@@ -246,7 +311,7 @@ export const useLibraryStore = defineStore('libraryStore', {
         trimDetailCache() {
             this.detailCache = trimRecordMap(this.detailCache, this.detailCacheLimit, 20)
         },
-        invalidateLibraryDetailCache(id = null, routerName = null) {
+        invalidateLibraryDetailCache(id = null, routerName = null, source = null) {
             if (!this.detailCache || typeof this.detailCache != 'object') {
                 this.detailCache = {}
                 return
@@ -254,11 +319,20 @@ export const useLibraryStore = defineStore('libraryStore', {
 
             const normalizedName = String(routerName || '')
             const normalizedId = normalizeOptionalId(id)
+            const normalizedSource = source == null || source === '' ? '' : normalizeMusicSource(source)
 
             if (normalizedName && normalizedId) {
-                delete this.detailCache[getLibraryDetailCacheKey(normalizedId, normalizedName)]
+                if (normalizedSource) {
+                    delete this.detailCache[getLibraryDetailCacheKey(normalizedId, normalizedName, normalizedSource)]
+                } else {
+                    Object.keys(this.detailCache).forEach(key => {
+                        if (key.startsWith(`${normalizedName}:`) && key.endsWith(`:${normalizedId}`)) delete this.detailCache[key]
+                    })
+                }
             } else if (normalizedName) {
-                const keyPrefix = `${normalizedName}:`
+                const keyPrefix = normalizedSource
+                    ? `${normalizedName}:${normalizedSource}:`
+                    : `${normalizedName}:`
                 Object.keys(this.detailCache).forEach(key => {
                     if (key.startsWith(keyPrefix)) delete this.detailCache[key]
                 })
@@ -273,15 +347,16 @@ export const useLibraryStore = defineStore('libraryStore', {
 
             this.detailCache = { ...this.detailCache }
         },
-        invalidatePlaylistDetailCache(id = null) {
-            this.invalidateLibraryDetailCache(id, 'playlist')
+        invalidatePlaylistDetailCache(id = null, source = null) {
+            this.invalidateLibraryDetailCache(id, 'playlist', source)
 
             const normalizedId = normalizeOptionalId(id)
             const hydrationId = String(this.playlistHydration?.id || '')
             if (!normalizedId || hydrationId == normalizedId) this.resetPlaylistHydration()
         },
-        cacheCurrentLibraryDetail(id, routerName) {
-            const key = getLibraryDetailCacheKey(id, routerName)
+        cacheCurrentLibraryDetail(id, routerName, source = this.libraryInfo?.source || 'netease') {
+            const normalizedSource = normalizeMusicSource(source)
+            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource)
             if (!key || !this.libraryInfo) return
             if (!this.detailCache || typeof this.detailCache != 'object') this.detailCache = {}
 
@@ -292,15 +367,17 @@ export const useLibraryStore = defineStore('libraryStore', {
                 libraryMV: this.libraryMV,
                 artistPageType: this.artistPageType,
                 playlistHydration: { ...(this.playlistHydration || createPlaylistHydrationState()) },
+                source: normalizedSource,
                 searchIndexById: cloneSearchIndexState(this.searchIndexById),
                 updatedAt: Date.now(),
             }
             this.trimDetailCache()
         },
-        restoreLibraryDetailFromCache(id, routerName) {
-            const key = getLibraryDetailCacheKey(id, routerName)
+        restoreLibraryDetailFromCache(id, routerName, source = 'netease') {
+            const normalizedSource = normalizeMusicSource(source)
+            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource)
             const cached = key ? this.detailCache?.[key] : null
-            if (!cached?.libraryInfo) return false
+            if (!cached?.libraryInfo || (cached.source && normalizeMusicSource(cached.source) !== normalizedSource)) return false
 
             cached.updatedAt = Date.now()
             this.libraryInfo = cached.libraryInfo
@@ -312,8 +389,11 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.libraryChangeAnimation = false
 
             if (routerName == 'playlist') {
-                this.playlistHydration = { ...(cached.playlistHydration || createPlaylistHydrationState()) }
-                this.resumePlaylistHydrationFromCache(id)
+                this.playlistHydration = {
+                    ...(cached.playlistHydration || createPlaylistHydrationState()),
+                    source: normalizedSource,
+                }
+                this.resumePlaylistHydrationFromCache(id, normalizedSource)
             } else {
                 this.resetPlaylistHydration()
             }
@@ -374,6 +454,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: loadedCount,
                         status: 'loading',
+                        source: this.playlistHydration?.source || 'netease',
                     })
                 }
             }
@@ -396,7 +477,8 @@ export const useLibraryStore = defineStore('libraryStore', {
             }
             this.indexLibrarySongs(songs, { append: true })
         },
-        startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks) {
+        startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, source = this.playlistHydration?.source || 'netease') {
+            const normalizedSource = normalizeMusicSource(source)
             const hydrationTask = this.hydratePlaylistRemaining(playlistId, totalTracks, token, loadedTracks)
                 .then(remainingSongs => {
                     if (this.playlistHydrationToken != token) return
@@ -406,8 +488,9 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: totalTracks,
                         status: 'completed',
+                        source: normalizedSource,
                     })
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
                 })
                 .catch(() => {
                     if (this.playlistHydrationToken != token) return
@@ -417,8 +500,9 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: loadedNow,
                         status: 'failed',
+                        source: normalizedSource,
                     })
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
                 })
                 .finally(() => {
                     if (this.playlistHydrationToken == token) this.playlistHydrationPromise = null
@@ -427,8 +511,9 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.playlistHydrationPromise = hydrationTask
             return hydrationTask
         },
-        resumePlaylistHydrationFromCache(id) {
+        resumePlaylistHydrationFromCache(id, source = this.playlistHydration?.source || 'netease') {
             const playlistId = String(id || '')
+            const normalizedSource = normalizeMusicSource(source)
             const totalTracks = Number(this.playlistHydration?.total || 0)
             const loadedTracks = Array.isArray(this.librarySongs) ? this.librarySongs.length : Number(this.playlistHydration?.loaded || 0)
             if (!playlistId || !Number.isFinite(totalTracks) || totalTracks <= 0 || loadedTracks >= totalTracks) {
@@ -437,10 +522,11 @@ export const useLibraryStore = defineStore('libraryStore', {
                     total: Math.max(totalTracks || 0, loadedTracks || 0),
                     loaded: Math.max(totalTracks || 0, loadedTracks || 0),
                     status: playlistId ? 'completed' : 'idle',
+                    source: normalizedSource,
                 })
                 this.playlistHydrationToken = null
                 this.playlistHydrationPromise = null
-                if (playlistId) this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                if (playlistId) this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
                 return
             }
 
@@ -451,28 +537,99 @@ export const useLibraryStore = defineStore('libraryStore', {
                 total: totalTracks,
                 loaded: loadedTracks,
                 status: 'loading',
+                source: normalizedSource,
             })
 
-            this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks)
-            this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+            this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, normalizedSource)
+            this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
         },
         async updateLibraryDetail(id, routerName, options = {}) {
             const { force = false } = options
-            if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName)) return
+            const source = normalizeMusicSource(options.source)
+            if (routerName === 'album' && source === 'qq') return
+            if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName, source)) return
 
             this.changeAnimation()
             this.resetSearchIndex()
             if (routerName != 'playlist') this.resetPlaylistHydration()
-            if (routerName == 'playlist') await this.updatePlaylistDetail(id, options)
+            if (routerName == 'playlist') {
+                if (source === 'qq') await this.updateQQPlaylistDetail(id)
+                else await this.updatePlaylistDetail(id, { ...options, source })
+            }
             if (routerName == 'album') await this.updateAlbumDetail(id)
             if (routerName == 'artist') await this.updateArtistDetail(id)
             this.artistPageType = 0
             this.libraryAlbum = null
             this.libraryMV = null
-            this.cacheCurrentLibraryDetail(id, routerName)
+            this.cacheCurrentLibraryDetail(id, routerName, source)
+        },
+        async updateQQPlaylistDetail(id) {
+            const playlistId = String(id || '')
+            const token = createPlaylistHydrationToken(playlistId)
+            this.playlistHydrationToken = token
+            this.playlistHydrationPromise = null
+            this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'loading', source: 'qq' })
+            const listSummary = [
+                ...(Array.isArray(this.playlistUserCreated) ? this.playlistUserCreated : []),
+                ...(Array.isArray(this.playlistUserSub) ? this.playlistUserSub : []),
+            ].find(item => normalizeMusicSource(item?.source) === 'qq' && String(item?.id ?? '') === playlistId)
+            const existingSummary = listSummary
+                || (normalizeMusicSource(this.libraryInfo?.source) === 'qq' && String(this.libraryInfo?.id ?? '') === playlistId ? this.libraryInfo : null)
+            // Never leave a previous NetEase (or another QQ) detail visible
+            // while this private QQ request is in flight or after it fails.
+            this.libraryInfo = existingSummary ? { ...existingSummary, source: 'qq', id: playlistId } : null
+            this.librarySongs = []
+            this.libraryAlbum = null
+            this.libraryMV = null
+            this.indexLibrarySongs([])
+            try {
+                const detailIds = [playlistId, ...(Array.isArray(existingSummary?.detailIds) ? existingSummary.detailIds : [])]
+                const normalized = await loadQQPlaylistDetail(
+                    detailId => getQQSongListDetail(detailId),
+                    detailIds,
+                    {
+                        isActive: () => this.playlistHydrationToken === token,
+                        fallbackSummary: existingSummary,
+                    },
+                )
+                if (normalized === false) return
+                if (this.playlistHydrationToken !== token) return
+                this.libraryInfo = normalized.playlist?.id
+                    ? normalized.playlist
+                    : { id: playlistId, source: 'qq', name: 'QQ 歌单', coverImgUrl: '' }
+                this.libraryInfo = mergeQQPlaylistSummary(existingSummary, this.libraryInfo)
+                this.libraryInfo.id = playlistId
+                this.librarySongs = normalized.songs.length > 0
+                    ? normalized.songs
+                    : (Array.isArray(existingSummary?.songs) ? existingSummary.songs : [])
+                this.indexLibrarySongs(this.librarySongs)
+                this.playlistHydration = createPlaylistHydrationState({ id: playlistId, total: this.librarySongs.length, loaded: this.librarySongs.length, status: 'completed', source: 'qq' })
+                this.libraryChangeAnimation = false
+                this.cacheCurrentLibraryDetail(id, 'playlist', 'qq')
+            } catch (error) {
+                if (this.playlistHydrationToken === token) {
+                    this.librarySongs = []
+                    this.libraryInfo = existingSummary
+                        ? { ...existingSummary, source: 'qq', id: playlistId }
+                        : { id: playlistId, source: 'qq', name: 'QQ 歌单', coverImgUrl: '' }
+                    this.indexLibrarySongs([])
+                    this.playlistHydration = createPlaylistHydrationState({
+                        id: playlistId,
+                        total: 0,
+                        loaded: 0,
+                        status: 'failed',
+                        source: 'qq',
+                    })
+                    this.playlistHydrationPromise = null
+                    this.playlistHydrationToken = null
+                    this.libraryChangeAnimation = false
+                }
+                throw error
+            }
         },
         async updatePlaylistDetail(id, options = {}) {
             const { deferRemaining = false } = options
+            const source = normalizeMusicSource(options.source)
             const playlistId = String(id || '')
             const token = createPlaylistHydrationToken(playlistId)
             this.playlistHydrationToken = token
@@ -482,6 +639,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                 total: 0,
                 loaded: 0,
                 status: 'loading',
+                source,
             })
 
             const params = {
@@ -513,9 +671,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: loadedTracks,
                         status: 'completed',
+                        source,
                     })
                     this.libraryChangeAnimation = false
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', source)
                     return
                 }
 
@@ -524,9 +683,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                     total: totalTracks,
                     loaded: loadedTracks,
                     status: 'loading',
+                    source,
                 })
 
-                const hydrationTask = this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks)
+                const hydrationTask = this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, source)
                 this.libraryChangeAnimation = false
                 if (!deferRemaining) await hydrationTask
             } catch (error) {
@@ -536,6 +696,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: 0,
                         loaded: 0,
                         status: 'failed',
+                        source,
                     })
                     this.playlistHydrationPromise = null
                     this.libraryChangeAnimation = false

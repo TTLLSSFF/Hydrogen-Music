@@ -1,13 +1,15 @@
 <script setup>
-  import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from 'vue'
+  import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import LoginByQRCode from './LoginByQRCode.vue'
   import LoginByAccount from './LoginByAccount.vue'
+  import LoginByQQQRCode from './LoginByQQQRCode.vue'
 
   const route = useRoute()
   const router = useRouter()
 
   const loginByQR = ref(null)
+  const qqLoginByQR = ref(null)
   const loginByAC = ref(null)
   const jumpPage = ref(false)
   const jumpTimer = ref(null)
@@ -16,6 +18,7 @@
   const loginMode = ref(0)
 
   const isQrMode = computed(() => loginMode.value === 0)
+  const isQQMode = computed(() => Number(route.query.mode) === 2)
 
   const syncModeFromRoute = () => {
     const queryMode = Number(route.query.mode)
@@ -31,6 +34,7 @@
   }
 
   const enterQrMode = () => {
+    if (isQQMode.value) return
     loginMode.value = 0
     loginByQR.value?.checkQR()
   }
@@ -64,7 +68,7 @@
     }
     jumpPage.value = true
     jumpTimer.value = setTimeout(() => {
-      router.push('/mymusic')
+      router.push(route.query.from === 'settings' ? '/settings' : '/mymusic')
       jumpPage.value = false
       jumpTimer.value = null
     }, 3000)
@@ -72,7 +76,9 @@
 
   watch(() => route.query.mode, () => {
     syncModeFromRoute()
-    if (isQrMode.value) {
+    if (isQQMode.value) {
+      qqLoginByQR.value?.load()
+    } else if (isQrMode.value) {
       loginByQR.value?.checkQR()
     } else {
       loginByQR.value?.clearTimer()
@@ -81,17 +87,25 @@
 
   onActivated(() => {
     syncModeFromRoute()
-    if (isQrMode.value) {
+    if (isQQMode.value) {
+      qqLoginByQR.value?.load()
+    } else if (isQrMode.value) {
       loginByQR.value?.checkQR()
     }
   })
 
+  onMounted(() => {
+    if (isQQMode.value) qqLoginByQR.value?.load()
+  })
+
   onDeactivated(() => {
     loginByQR.value?.clearTimer()
+    qqLoginByQR.value?.clearTimer()
   })
 
   onUnmounted(() => {
     loginByQR.value?.clearTimer()
+    qqLoginByQR.value?.clearTimer()
     if (jumpTimer.value) {
       clearTimeout(jumpTimer.value)
       jumpTimer.value = null
@@ -99,17 +113,24 @@
   })
 </script>
 
-<template>
+  <template>
   <div class="login-content" :class="{ jumpPage: jumpPage }">
     <div class="login-container">
-      <div class="login-header">
+      <div class="login-header" v-if="!isQQMode">
         <div class="login-icon">
           <img src="../assets/img/netease-music.png" alt="">
         </div>
         <span class="login-title">登录网易云账号</span>
       </div>
 
-      <LoginByQRCode
+      <div class="login-header" v-if="isQQMode">
+        <div class="login-icon qq-icon">QQ</div>
+        <span class="login-title">登录 QQ 音乐账号</span>
+      </div>
+
+      <LoginByQQQRCode v-if="isQQMode" ref="qqLoginByQR" class="qrcode-container" @jumpTo="jumpTo" />
+
+      <LoginByQRCode v-if="!isQQMode"
         ref="loginByQR"
         class="qrcode-container"
         :firstLoadMode="loginMode"
@@ -117,14 +138,14 @@
         @jumpTo="jumpTo"
       />
 
-      <LoginByAccount
+      <LoginByAccount v-if="!isQQMode"
         ref="loginByAC"
         class="account-container"
         v-show="!isQrMode"
         @jumpTo="jumpTo"
       />
 
-      <div class="login-other">
+      <div class="login-other" v-if="!isQQMode">
         <span class="qrcode-tip" v-show="isQrMode">打开网易云 APP 扫码登录</span>
 
         <div class="login-method" v-show="isQrMode">

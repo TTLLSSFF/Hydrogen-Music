@@ -1,14 +1,17 @@
 <script setup>
   import { useRouter } from 'vue-router';
   import { usePlayerStore } from '../store/playerStore';
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
 
   const router = useRouter()
   const playerStore = usePlayerStore()
   const props = defineProps(['listdata', 'type'])
-  const checkDetail = (id) => {
+  const checkDetail = (id, item) => {
     playerStore.forbidLastRouter = true
-    if(props.type == 'playlist') router.push('/mymusic/playlist/' + id)
-    if(props.type == 'artist') router.push('/mymusic/artist/' + id)
+    const source = normalizeMusicSource(item?.source)
+    if (source === 'qq') return
+    if(props.type == 'playlist') router.push({ path: '/mymusic/playlist/' + id, query: { source } })
+    if(props.type == 'artist' && source !== 'qq') router.push('/mymusic/artist/' + id)
     if(props.type == 'mv') {
       // MV 预览已移除
     }
@@ -19,7 +22,7 @@
   <div class="result-list">
     <div class="item-list">
         <div class="item" v-for="(item,index) in listdata">
-            <div class="item-img" :class="type == 'artist' ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id)">
+            <div class="item-img" :class="type == 'artist' ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id, item)">
                 <img v-lazy :src="(item.coverImgUrl || item.img1v1Url || item.picUrl || item.cover) + '?param=300y300'" alt="">
             </div>
             <div class="item-name" :class="{'item-name-center': type == 'artist'}">{{item.name}}</div>

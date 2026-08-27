@@ -8,6 +8,7 @@ export const useUserStore = defineStore('userStore', {
             likelist: null,
             favoritePlaylistId: null,
             favoritePlaylistName: null,
+            favoritePlaylistSource: null,
             appOptionShow: false,
             biliUser: null,
             homePage: true,
@@ -26,6 +27,7 @@ export const useUserStore = defineStore('userStore', {
             this.likelist = null
             this.favoritePlaylistId = null
             this.favoritePlaylistName = null
+            this.favoritePlaylistSource = null
             this.appOptionShow = false
         },
         clearBiliAccountState() {
@@ -36,6 +38,7 @@ export const useUserStore = defineStore('userStore', {
         },
         updateFavoritePlaylistId(playlistId) {
             this.favoritePlaylistId = playlistId
+            this.favoritePlaylistSource = playlistId ? 'netease' : null
         },
         updateFavoritePlaylistName(playlistName) {
             this.favoritePlaylistName = playlistName
@@ -43,10 +46,13 @@ export const useUserStore = defineStore('userStore', {
         updateFavoritePlaylistMeta(playlist = null) {
             this.favoritePlaylistId = playlist?.id ?? null
             this.favoritePlaylistName = playlist?.name ?? null
+            this.favoritePlaylistSource = playlist?.id
+                ? (String(playlist?.source || '').toLowerCase() === 'qq' ? 'qq' : 'netease')
+                : null
         }
     },
     persist: {
         storage: localStorage,
-        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','favoritePlaylistId','favoritePlaylistName']
+        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource']
     },
 })

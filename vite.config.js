@@ -149,8 +149,13 @@ export default defineConfig({
   server: {
     open: false,
     cors: true,
-    proxy: {
-      '/api': {
+  proxy: {
+    '/api/qq': {
+      target: 'http://127.0.0.1:3200',
+      changeOrigin: true,
+      rewrite: (path) => path.replace(/^\/api\/qq/, '')
+    },
+    '/api': {
         target: 'http://127.0.0.1:36530',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')

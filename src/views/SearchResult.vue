@@ -6,6 +6,7 @@
   import LibrarySongList from '../components/LibrarySongList.vue';
   import LibraryAlbumList from '../components/LibraryAlbumList.vue';
   import SearchResultList from '../components/SearchResultList.vue';
+  import { getSearchSource } from '../utils/providerPolicy.mjs'
   
   const otherStore = useOtherStore()
   const { getSearchInfo } = otherStore
@@ -22,6 +23,7 @@
     searchScroll.value.scrollTop = scrollTop.value
   })
   onBeforeRouteUpdate((to, from, next) => {
+      otherStore.searchSource = getSearchSource()
       getSearchInfo(to.query.keywords)
       next()
   })

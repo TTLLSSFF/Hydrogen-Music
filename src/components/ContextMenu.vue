@@ -1,5 +1,5 @@
 <script setup>
-  import { ref, watch } from 'vue'
+  import { computed, ref, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import { createPlaylist, updatePlaylist, deletePlaylist } from '../api/playlist'
   import { addToNext } from '../utils/player/lazy'
@@ -8,6 +8,13 @@
 import { useOtherStore } from '../store/otherStore';
 import { usePlayerStore } from '../store/playerStore'
 import { useUserStore } from '../store/userStore';
+ import {
+   canUseSongAction,
+   filterProviderPlaylists,
+   findProviderPlaylist,
+   isProviderPlaylist,
+ } from '../utils/providerPolicy.mjs'
+import { withCoverParam } from '../utils/coverBackdrop'
 import { getLikelist, getUserPlaylistCount, getUserPlaylist } from '../api/user'
 import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
 import { storeToRefs } from 'pinia';
@@ -16,6 +23,16 @@ const libraryStore = useLibraryStore()
 const otherStore = useOtherStore()
 const playerStore = usePlayerStore()
 const userStore = useUserStore()
+const loadedNeteasePlaylistUserId = ref('')
+const neteaseWritablePlaylists = computed(() => {
+  const accountId = String(userStore.user?.userId || '')
+  if (!accountId || loadedNeteasePlaylistUserId.value !== accountId) return []
+  return filterProviderPlaylists(libraryStore.playlistUserCreated, 'netease')
+})
+const getPlaylistCover = item => withCoverParam(
+  item?.coverImgUrl || item?.img1v1Url || item?.picUrl || item?.coverUrl,
+  150,
+)
 const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
 
   const isPrivacy = ref(false)
@@ -42,17 +59,28 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
   }
 
   const normalizePlaylistTarget = playlistTarget => {
+    if (!userStore.user?.userId) return null
+    if (playlistTarget && typeof playlistTarget == 'object' && !isProviderPlaylist(playlistTarget, 'netease')) return null
     if (playlistTarget && typeof playlistTarget == 'object') {
       return {
+        ...playlistTarget,
         id: playlistTarget.id,
+        source: 'netease',
         name: getPlaylistDisplayName(playlistTarget),
       }
     }
 
-    const matchedPlaylist = (libraryStore.playlistUserCreated || []).find(item => item.id == playlistTarget)
+    const matchedPlaylist = findProviderPlaylist(
+      neteaseWritablePlaylists.value,
+      playlistTarget,
+      'netease',
+    )
+    if (!matchedPlaylist) return null
     return {
-      id: playlistTarget,
-      name: matchedPlaylist ? getPlaylistDisplayName(matchedPlaylist) : '歌单',
+      ...matchedPlaylist,
+      id: matchedPlaylist.id,
+      source: 'netease',
+      name: getPlaylistDisplayName(matchedPlaylist),
     }
   }
 
@@ -60,21 +88,50 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
   const ensureUserPlaylistsLoaded = async () => {
     try {
       // 仅在已登录且还未加载过时拉取
-      if (!userStore.user || !userStore.user.userId) return
-      if (Array.isArray(libraryStore.playlistUserCreated) && libraryStore.playlistUserCreated.length > 0) return
+      if (!userStore.user || !userStore.user.userId) {
+        loadedNeteasePlaylistUserId.value = ''
+        return
+      }
+      const accountId = String(userStore.user.userId)
+      if (loadedNeteasePlaylistUserId.value === accountId) return
 
       const count = await getUserPlaylistCount()
-      libraryStore.updateUserPlaylistCount(count)
 
       const params = {
-        uid: userStore.user.userId,
+        uid: accountId,
         limit: 500,
         offset: 0,
         timestamp: Date.now(),
       }
       const list = await getUserPlaylist(params)
       if (list && Array.isArray(list.playlist)) {
-        libraryStore.updateUserPlaylist(list.playlist)
+        const createdCount = Number(count?.createdPlaylistCount) || 0
+        const subscribedCount = Number(count?.subPlaylistCount) || 0
+        const neteaseCreated = list.playlist.slice(0, createdCount).map(item => ({ ...item, source: 'netease' }))
+        const neteaseSubscribed = list.playlist.slice(createdCount, createdCount + subscribedCount).map(item => ({ ...item, source: 'netease' }))
+        const existingCreated = Array.isArray(libraryStore.playlistUserCreated)
+          ? libraryStore.playlistUserCreated
+          : []
+        const existingSubscribed = Array.isArray(libraryStore.playlistUserSub)
+          ? libraryStore.playlistUserSub
+          : []
+        const qqCreated = filterProviderPlaylists(existingCreated, 'qq')
+        const qqSubscribed = filterProviderPlaylists(existingSubscribed, 'qq')
+        const mergedCreated = [...neteaseCreated, ...qqCreated]
+        const mergedSubscribed = [...neteaseSubscribed, ...qqSubscribed]
+        const currentLibraryList = libraryStore.libraryList
+        const wasCreatedList = currentLibraryList === existingCreated
+        const wasSubscribedList = currentLibraryList === existingSubscribed
+        libraryStore.playlistUserCreated = mergedCreated
+        libraryStore.playlistUserSub = mergedSubscribed
+        libraryStore.playlistCount = {
+          ...(libraryStore.playlistCount || {}),
+          createdPlaylistCount: mergedCreated.length,
+          subPlaylistCount: mergedSubscribed.length,
+        }
+        if (wasCreatedList) libraryStore.libraryList = mergedCreated
+        else if (wasSubscribedList) libraryStore.libraryList = mergedSubscribed
+        loadedNeteasePlaylistUserId.value = accountId
       }
     } catch (e) {
       // 静默失败，弹窗仍可显示，后续可再次尝试
@@ -90,11 +147,26 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     { immediate: true }
   )
 
+  watch(
+    () => userStore.user?.userId,
+    () => {
+      loadedNeteasePlaylistUserId.value = ''
+    },
+  )
+
   const addToPlaylist = () => {
+    if (!canUseSongAction(otherStore.selectedItem, 'playlistMutation')) {
+      noticeOpen('QQ 音乐暂不支持歌单修改', 2)
+      return
+    }
     otherStore.addPlaylistShow = true
   }
 
   const deleteFromPlaylist = async () => {
+    if (!canUseSongAction(otherStore.selectedItem, 'playlistMutation')) {
+      noticeOpen('QQ 音乐暂不支持歌单修改', 2)
+      return
+    }
     let params = {
       op: 'del',
       pid: otherStore.selectedPlaylist.id,
@@ -223,6 +295,11 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     if(id == 2) { addToNext(otherStore.selectedItem, false); return; }
     if(id == 3) {
       const song = otherStore.selectedItem
+      if (!canUseSongAction(song, 'download')) {
+        noticeOpen('QQ 音乐暂不支持下载', 2)
+        otherStore.contextMenuShow = false
+        return
+      }
       if (!song || song.type === 'local') {
         noticeOpen('本地歌曲无需通过浏览器下载', 2)
         return
@@ -235,6 +312,11 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     }
     if(id == 11) {
       const song = otherStore.selectedItem
+      if (!canUseSongAction(song, 'album')) {
+        noticeOpen('QQ 音乐暂不支持专辑详情', 2)
+        otherStore.contextMenuShow = false
+        return
+      }
       const albumId = song?.al?.id
       if (!albumId) {
         noticeOpen('暂无专辑信息', 2)
@@ -285,11 +367,23 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     createActive.value = false
   }
   const addToMyPlaylist = playlistTarget => {
+      if (!canUseSongAction(otherStore.selectedItem, 'playlistMutation')) {
+        noticeOpen('QQ 音乐暂不支持歌单修改', 2)
+        return
+      }
       const playlist = normalizePlaylistTarget(playlistTarget)
+      if (!playlist?.id) {
+        noticeOpen('姝屽崟涓嶅彲鐢ㄧ敤', 2)
+        return
+      }
       // 支持批量添加：优先使用 selectedItems，如果不存在则使用 selectedItem
       const items = otherStore.selectedItems && otherStore.selectedItems.length > 0
         ? otherStore.selectedItems
         : [otherStore.selectedItem]
+      if (items.some(item => !canUseSongAction(item, 'playlistMutation'))) {
+        noticeOpen('QQ 音乐暂不支持歌单修改', 2)
+        return
+      }
 
       const trackIds = items.map(item => item.id).join(',')
 
@@ -348,9 +442,9 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
               <div class="create-confirm" @click="createAndAdd()">完成</div>
               <div class="create-cancel" @click="createCancel()">取消</div>
             </div>
-            <div class="list" @click="addToMyPlaylist(item)" v-show="!justNewPlaylist" v-for="(item, index) in libraryStore.playlistUserCreated">
+            <div class="list" @click="addToMyPlaylist(item)" v-show="!justNewPlaylist" v-for="(item, index) in neteaseWritablePlaylists" :key="`netease-playlist-${item.id}`">
               <div class="list-img">
-                <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl || item.coverUrl) + '?param=150y150'" alt="">
+                <img :src="getPlaylistCover(item)" alt="">
               </div>
               <span class="list-name">{{(item.name ?? item.title)}}</span>
             </div>

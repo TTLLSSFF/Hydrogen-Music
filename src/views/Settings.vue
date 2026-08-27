@@ -7,6 +7,9 @@ import { getVipInfo } from '@/api/user'
 import { isLogin } from '@/utils/authority'
 import { useUserStore } from '@/store/userStore'
 import { usePlayerStore } from '@/store/playerStore'
+import { useLibraryStore } from '@/store/libraryStore'
+import { qqAccountStore } from '@/store/qqAccountStore'
+import { clearQQPlaybackState } from '@/utils/player/lazy'
 import Selector from '../components/Selector.vue'
 import FontSelector from '../components/FontSelector.vue'
 import UpdateDialog from '../components/UpdateDialog.vue'
@@ -23,8 +26,11 @@ const { MUSIC_LEVEL_OPTIONS, normalizeSettings } = settingsSchema
 const router = useRouter()
 const userStore = useUserStore()
 const playerStore = usePlayerStore()
+const libraryStore = useLibraryStore()
 
 const vipInfo = ref(null)
+const qqLoading = ref(false)
+const qqAvatarFailed = ref(false)
 const musicLevel = ref('lossless')
 const musicLevelOptions = ref(MUSIC_LEVEL_OPTIONS.map(option => ({ ...option })))
 const lyricSize = ref(20)
@@ -107,10 +113,44 @@ onActivated(() => {
     }
 
     void loadVipInfo()
+    void qqAccountStore.restoreSession()
 
     // 设置更新事件监听器
     setupUpdateListeners()
 })
+
+const loginQQAccount = () => router.push({ path: '/login/account', query: { mode: 2, from: 'settings' } })
+const loginNeteaseAccount = () => router.push({ path: '/login/account', query: { mode: 0, from: 'settings' } })
+const qqAvatarUrl = computed(() => {
+    const value = qqAccountStore.user?.avatarUrl || qqAccountStore.user?.avatar
+    return typeof value === 'string' ? value.trim() : ''
+})
+const handleQQAvatarError = () => {
+    qqAvatarFailed.value = true
+}
+watch(qqAvatarUrl, () => {
+    qqAvatarFailed.value = false
+})
+const logoutQQAccount = async () => {
+    qqLoading.value = true
+    try {
+        await qqAccountStore.logout()
+        noticeOpen('QQ 音乐账号已退出', 2)
+    } finally {
+        libraryStore.clearQQScopedState()
+        try {
+            await clearQQPlaybackState()
+        } catch (error) {
+            console.warn('QQ playback state cleanup failed:', error)
+        }
+        const route = router.currentRoute.value
+        const routeSource = String(route?.query?.source || libraryStore.libraryInfo?.source || '').toLowerCase()
+        if (route?.name === 'playlist' && routeSource === 'qq') {
+            await router.replace({ name: 'mymusic' })
+        }
+        qqLoading.value = false
+    }
+}
 
 // 当从“首页/子页”切换到“主播放器界面”（widgetState: true -> false）时，
 // 如果当前仍处于设置路由，则自动保存设置（避免未发生路由切换导致 onBeforeRouteLeave 不触发）。
@@ -361,7 +401,28 @@ const clearFmRecent = () => {
         </div>
         <div class="settings-container">
             <h1 class="settings-title">设置</h1>
-            <div class="settings-user-info" v-if="isLogin()">
+            <div class="settings-user-info account-provider-card">
+                <div class="user" v-if="isLogin()">
+                    <div class="user-head">
+                        <img :src="userStore.user.avatarUrl + '?param=300y300'" alt="" />
+                    </div>
+                    <div class="user-info"><div class="user-name">网易云：{{ userStore.user.nickname }}</div></div>
+                </div>
+                <div class="user-provider-empty" v-else>网易云音乐：未登录</div>
+                <div class="logout" @click="isLogin() ? confirmLogout() : loginNeteaseAccount()"><span>{{ isLogin() ? '退出' : '登录' }}</span></div>
+            </div>
+            <div class="settings-user-info account-provider-card">
+                <div class="user" v-if="qqAccountStore.loggedIn">
+                    <div class="user-head qq-account-avatar">
+                        <img v-if="qqAvatarUrl && !qqAvatarFailed" :src="qqAvatarUrl" alt="" @error="handleQQAvatarError" />
+                        <span v-else>QQ</span>
+                    </div>
+                    <div class="user-info"><div class="user-name">QQ 音乐：{{ qqAccountStore.user?.nickname || qqAccountStore.user?.nick || '已登录' }}</div></div>
+                </div>
+                <div class="user-provider-empty" v-else>QQ 音乐：未登录</div>
+                <div class="logout" @click="qqAccountStore.loggedIn ? logoutQQAccount() : loginQQAccount()"><span>{{ qqAccountStore.loggedIn ? '退出' : '登录' }}</span></div>
+            </div>
+            <div class="settings-user-info" v-if="false">
                 <div class="user">
                     <div class="user-head">
                         <img :src="userStore.user.avatarUrl + '?param=300y300'" alt="" />
@@ -658,6 +719,17 @@ const clearFmRecent = () => {
                     img {
                         width: 100%;
                         height: 100%;
+                    }
+                }
+                .qq-account-avatar {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background-color: rgba(0, 0, 0, 0.08);
+                    font: 18px SourceHanSansCN-Bold;
+                    color: black;
+                    img {
+                        object-fit: cover;
                     }
                 }
                 .user-info {

@@ -29,6 +29,12 @@ import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong } from '.
 import { createDecodedAudioPlayer } from './player/webAudioGapless'
 import { runIdleTask } from './player/idleTask'
 import { createEmptyLyric, hasUsableLyricPayload } from './player/lyricPayload'
+import { preparePlayAllSongs } from './player/playAllGuard.mjs'
+import { getPlayBySource } from '../api/musicSource.js'
+import { normalizeQQPlaybackPayload } from '../api/qqMusic.js'
+import { getHeartModeBlockReason, isQQSong, isProviderPlaylist } from './providerPolicy.mjs'
+import { getSongIdentity, normalizeMusicSource } from './musicSource.mjs'
+import { createPlaybackTarget, getPlaybackTargetIdentity, isPlaybackTargetCurrent } from './player/targetIdentity.mjs'
 import { getIndexedSong, getIndexedSongOrFirst } from './songList'
 import { reportNcmPlaybackEnd, reportNcmPlaybackStart } from './ncmRecentPlayReporter'
 import {
@@ -70,8 +76,10 @@ let lastPersistedProgressSignature = ''
 let lyricLoadToken = 0
 let activeRemoteLyricFetch = null
 let pendingCurrentCloudLyricRetrySongId = ''
+let pendingCurrentCloudLyricRetryIdentity = ''
 let playbackLoadToken = 0
 let pendingPlaybackSongId = ''
+let pendingPlaybackIdentity = ''
 let pendingPlaybackAutoplay = false
 let streamRecoveryKey = ''
 let streamRecoveryAttempts = 0
@@ -129,11 +137,11 @@ function getSongDurationSeconds(song) {
     return normalizeSongDurationSeconds(song.duration)
 }
 
-function getPlaybackDurationSeconds(playbackInfo = {}, targetSongId = songId.value) {
+function getPlaybackDurationSeconds(playbackInfo = {}, targetSongId = songId.value, targetSong = null) {
     const playbackDuration = normalizeSongDurationSeconds(playbackInfo.duration)
     if (playbackDuration > 0) return playbackDuration
 
-    const currentSong = getSongByIdOrIndex(targetSongId, currentIndex.value)
+    const currentSong = targetSong || getSongByIdOrIndex(targetSongId, currentIndex.value)
     return getSongDurationSeconds(currentSong)
 }
 
@@ -179,14 +187,17 @@ function normalizePlayerSongId(value) {
     return value === undefined || value === null || value === '' ? '' : String(value)
 }
 
-function beginPendingPlayback(targetSongId, autoplay = false) {
-    const normalizedTargetSongId = normalizePlayerSongId(targetSongId)
+function beginPendingPlayback(targetSongId, autoplay = false, targetSong = null) {
+    const target = createPlaybackTarget(targetSong, targetSongId)
+    const normalizedTargetSongId = target.id
     playbackLoadToken += 1
     pendingPlaybackSongId = normalizedTargetSongId
+    pendingPlaybackIdentity = target.identity
     pendingPlaybackAutoplay = autoplay === true
     return {
         token: playbackLoadToken,
         targetSongId: normalizedTargetSongId,
+        targetIdentity: target.identity,
     }
 }
 
@@ -194,12 +205,12 @@ function isActivePendingPlayback(request) {
     if (!request) return false
     return request.token === playbackLoadToken
         && pendingPlaybackSongId === request.targetSongId
-        && normalizePlayerSongId(songId.value) === request.targetSongId
+        && isPlaybackTargetCurrent(request, getCurrentSong(), songId.value)
 }
 
 function isPendingPlaybackForCurrentSong() {
     return !!pendingPlaybackSongId
-        && pendingPlaybackSongId === normalizePlayerSongId(songId.value)
+        && isPlaybackTargetCurrent({ id: pendingPlaybackSongId, identity: pendingPlaybackIdentity }, getCurrentSong(), songId.value)
 }
 
 function requestPendingPlaybackAutoplay() {
@@ -215,36 +226,51 @@ function shouldAutoplayPendingPlayback(request, autoplay) {
 function clearPendingPlayback(request) {
     if (request && request.token !== playbackLoadToken) return
     pendingPlaybackSongId = ''
+    pendingPlaybackIdentity = ''
     pendingPlaybackAutoplay = false
 }
 
-function createLyricLoadRequest(targetSongId) {
+function createLyricLoadRequest(targetSongId, targetSong = null) {
+    const target = createPlaybackTarget(targetSong, targetSongId)
     return {
         token: ++lyricLoadToken,
-        targetSongId: normalizePlayerSongId(targetSongId),
+        targetSongId: target.id,
+        targetIdentity: target.identity,
     }
 }
 
 function isActiveLyricLoadRequest(request) {
     if (!request) return false
     return request.token === lyricLoadToken
-        && normalizePlayerSongId(songId.value) === request.targetSongId
+        && isPlaybackTargetCurrent(request, getCurrentSong(), songId.value)
 }
 
 function getActiveRemoteLyricFetchSongId() {
     return normalizePlayerSongId(activeRemoteLyricFetch?.songId)
 }
 
+function getActiveRemoteLyricFetchIdentity() {
+    return activeRemoteLyricFetch?.targetIdentity || ''
+}
+
 function shouldRetryCurrentCloudLyricAfterPending(targetSongId) {
     const normalizedTargetSongId = normalizePlayerSongId(targetSongId)
-    return !!normalizedTargetSongId
-        && pendingCurrentCloudLyricRetrySongId === normalizedTargetSongId
-        && normalizePlayerSongId(songId.value) === normalizedTargetSongId
+    if (!normalizedTargetSongId
+        || pendingCurrentCloudLyricRetrySongId !== normalizedTargetSongId
+        || !pendingCurrentCloudLyricRetryIdentity) return false
+    if (!isPlaybackTargetCurrent({ id: normalizedTargetSongId, identity: pendingCurrentCloudLyricRetryIdentity }, getCurrentSong(), songId.value)) {
+        // A provider switch with the same raw id invalidates the old retry.
+        pendingCurrentCloudLyricRetrySongId = ''
+        pendingCurrentCloudLyricRetryIdentity = ''
+        return false
+    }
+    return true
 }
 
 function consumePendingCurrentCloudLyricRetry(targetSongId) {
     if (!shouldRetryCurrentCloudLyricAfterPending(targetSongId)) return false
     pendingCurrentCloudLyricRetrySongId = ''
+    pendingCurrentCloudLyricRetryIdentity = ''
     return true
 }
 
@@ -547,6 +573,24 @@ async function resolveSongPlaybackInfo(song, options = {}) {
             : null
     }
 
+    // QQ tracks use their provider id and must never be sent through the
+    // NetEase URL/availability endpoints.
+    if (isQQSong(song)) {
+        const providerId = song.sourceId || song.songmid || song.mid || song.id
+        if (!providerId) return null
+        const response = await getPlayBySource('qq', providerId, {
+            quality: getPreferredQuality(options.quality ?? quality.value),
+        })
+        const normalized = normalizeQQPlaybackPayload(response, providerId)
+        if (!normalized?.url) return null
+        return {
+            url: normalized.url,
+            trackInfo: normalized.trackInfo || null,
+            duration: normalized.duration || getSongDurationSeconds(song),
+            source: 'qq',
+        }
+    }
+
     const playbackId = options.id ?? song.id
     if (!playbackId) return null
     const preferredQuality = getPreferredQuality(options.quality ?? quality.value)
@@ -584,6 +628,7 @@ async function resolveSongPlaybackInfo(song, options = {}) {
 }
 
 export async function resolveDownloadPlaybackInfo(song, requestedQuality, options = {}) {
+    if (isQQSong(song)) return null
     return resolveSongPlaybackInfo(song, {
         ...options,
         quality: requestedQuality,
@@ -597,9 +642,13 @@ async function playPlaybackInfo(playbackInfo, autoplay, targetSongId, options = 
         ? Math.max(0, options.resumeSeek)
         : null
 
-    if (songId.value !== targetSongId) return false
+    const targetSong = options.targetSong || null
+    const target = options.targetIdentity
+        ? { id: targetSongId, targetIdentity: options.targetIdentity }
+        : createPlaybackTarget(targetSong, targetSongId)
+    if (!isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)) return false
     play(playbackInfo.url, autoplay, resumeSeek, {
-        expectedDuration: getPlaybackDurationSeconds(playbackInfo, targetSongId),
+        expectedDuration: getPlaybackDurationSeconds(playbackInfo, targetSongId, targetSong),
         trustNativeDuration: !!playbackInfo.localPath,
         source: playbackInfo.source || playbackInfo.trackInfo?.source || 'netease',
     })
@@ -608,7 +657,18 @@ async function playPlaybackInfo(playbackInfo, autoplay, targetSongId, options = 
 
 export async function playResolvedPlaybackInfo(playbackInfo, autoplay, options = {}) {
     const targetSongId = options.targetSongId ?? songId.value
-    return playPlaybackInfo(playbackInfo, autoplay, targetSongId, options)
+    // Capture the selected song at invocation time. If a second provider uses
+    // the same raw id, later reads of the store must not make the old request
+    // appear current.
+    const targetSong = options.targetSong || getCurrentSong()
+    const target = options.targetIdentity
+        ? { id: targetSongId, targetIdentity: options.targetIdentity }
+        : createPlaybackTarget(targetSong, targetSongId)
+    return playPlaybackInfo(playbackInfo, autoplay, targetSongId, {
+        ...options,
+        targetSong,
+        targetIdentity: target.targetIdentity || target.identity,
+    })
 }
 
 export function preloadGaplessSongPlayback(song, options = {}) {
@@ -659,7 +719,7 @@ export function preloadGaplessSongPlayback(song, options = {}) {
                 try { nextHowl.unload?.() } catch (_) {}
                 return null
             }
-            nextHowl.__hmExpectedDuration = getPlaybackDurationSeconds(playbackInfo, song.id)
+            nextHowl.__hmExpectedDuration = getPlaybackDurationSeconds(playbackInfo, song.id, song)
             nextHowl.__hmTrustNativeDuration = true
             const entry = {
                 key,
@@ -694,7 +754,8 @@ function hasPrefetchedLyric(assets, song = null) {
 }
 
 function applyPrefetchedLyricForSong(song, targetSongId) {
-    if (songId.value !== targetSongId) return false
+    const target = createPlaybackTarget(song, targetSongId)
+    if (!isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)) return false
     const assets = getPrefetchedSongAssets(song)
     if (!hasPrefetchedLyric(assets, song)) return false
     lyric.value = assets.lyric
@@ -703,7 +764,8 @@ function applyPrefetchedLyricForSong(song, targetSongId) {
 }
 
 function applyPrefetchedLocalCoverForSong(song, targetSongId) {
-    if (songId.value !== targetSongId) return false
+    const target = createPlaybackTarget(song, targetSongId)
+    if (!isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)) return false
     const assets = getPrefetchedSongAssets(song)
     if (!assets?.localCover) return false
     localBase64Img.value = assets.localCover
@@ -721,13 +783,15 @@ function resetCurrentLyricState() {
 function loadLocalCoverForSong(song, targetSongId) {
     if (applyPrefetchedLocalCoverForSong(song, targetSongId)) return
 
+    const target = createPlaybackTarget(song, targetSongId)
+
     if (typeof windowApi !== 'undefined' && windowApi?.getLocalMusicImage) {
         windowApi.getLocalMusicImage(song.url).then(base64 => {
-            if (songId.value !== targetSongId) return
+            if (!isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)) return
             localBase64Img.value = base64
             try { window.dispatchEvent(new CustomEvent('mediaSession:updateArtwork')) } catch (_) {}
         }).catch(() => {
-            if (songId.value === targetSongId) localBase64Img.value = null
+            if (isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)) localBase64Img.value = null
         })
     }
 }
@@ -735,7 +799,7 @@ function loadLocalCoverForSong(song, targetSongId) {
 async function loadLocalLyricForSong(song, targetSongId) {
     if (applyPrefetchedLyricForSong(song, targetSongId)) return true
 
-    const lyricRequest = createLyricLoadRequest(targetSongId)
+    const lyricRequest = createLyricLoadRequest(targetSongId, song)
     const localLyric = await getLocalLyric(song.url)
     if (!isActiveLyricLoadRequest(lyricRequest)) return false
     lyric.value = localLyric || createEmptyLyric()
@@ -746,7 +810,7 @@ async function loadLocalLyricForSong(song, targetSongId) {
 async function loadSirenLyricForSong(song, targetSongId, lyricUrl = song?.lyricUrl) {
     if (applyPrefetchedLyricForSong(song, targetSongId)) return true
 
-    const lyricRequest = createLyricLoadRequest(targetSongId)
+    const lyricRequest = createLyricLoadRequest(targetSongId, song)
     try {
         const sirenLyric = await getSirenLyricPayload(lyricUrl)
         if (!isActiveLyricLoadRequest(lyricRequest)) return false
@@ -763,11 +827,12 @@ async function loadSirenLyricForSong(song, targetSongId, lyricUrl = song?.lyricU
 }
 
 async function loadRemoteLyricForSong(song, targetSongId, emptyFallback = false) {
-    const lyricRequest = createLyricLoadRequest(targetSongId)
+    const lyricRequest = createLyricLoadRequest(targetSongId, song)
     const normalizedTargetSongId = lyricRequest.targetSongId
     const lyricFetchPromise = getLyricWithCloudFallback(song || targetSongId)
     activeRemoteLyricFetch = {
         songId: normalizedTargetSongId,
+        targetIdentity: lyricRequest.targetIdentity,
         promise: lyricFetchPromise,
     }
     try {
@@ -789,13 +854,13 @@ async function loadRemoteLyricForSong(song, targetSongId, emptyFallback = false)
 
         if (
             consumePendingCurrentCloudLyricRetry(normalizedTargetSongId)
-            && normalizePlayerSongId(songId.value) === normalizedTargetSongId
+            && isPlaybackTargetCurrent(lyricRequest, getCurrentSong(), songId.value)
             && !hasUsableLyricPayload(lyric.value)
         ) {
             const currentSong = getCurrentSong()
             if (currentSong && isCloudDiskSong(currentSong)) {
                 setTimeout(() => {
-                    if (normalizePlayerSongId(songId.value) !== normalizedTargetSongId) return
+                    if (!isPlaybackTargetCurrent(lyricRequest, getCurrentSong(), songId.value)) return
                     if (hasUsableLyricPayload(lyric.value)) return
                     void loadRemoteLyricForSong(currentSong, songId.value, true)
                 }, 0)
@@ -1026,6 +1091,17 @@ function resolveRestoredSongSelection(restoredPayload, restoredSongs) {
     const songs = Array.isArray(restoredSongs) ? restoredSongs : []
     if (songs.length === 0) return null
 
+    const restoredIdentity = String(restoredPayload?.songIdentity || restoredPayload?.currentSongIdentity || '').trim()
+    if (restoredIdentity) {
+        const identityIndex = songs.findIndex(song => getSongIdentity(song) === restoredIdentity)
+        if (identityIndex >= 0) {
+            return {
+                index: identityIndex,
+                song: songs[identityIndex],
+            }
+        }
+    }
+
     const restoredSongId = normalizePlayerSongId(restoredPayload?.songId)
     if (restoredSongId) {
         const songIdIndex = songs.findIndex(song => normalizePlayerSongId(song?.id) === restoredSongId)
@@ -1061,26 +1137,33 @@ function resolveRestoredSongSelection(restoredPayload, restoredSongs) {
 
 function shouldApplyRestoredProgress(restoredPayload, restoredSelection) {
     if (!restoredSelection?.song) return false
+    const restoredIdentity = String(restoredPayload?.songIdentity || restoredPayload?.currentSongIdentity || '').trim()
+    if (restoredIdentity) return getSongIdentity(restoredSelection.song) === restoredIdentity
     const restoredSongId = normalizePlayerSongId(restoredPayload?.songId)
     if (!restoredSongId) return true
     return normalizePlayerSongId(restoredSelection.song.id) === restoredSongId
 }
 
 function buildPersistedPlaylistPayload() {
+    const currentSong = getCurrentSong()
+    const songIdentity = getSongIdentity(currentSong)
     return {
         songList: songList.value,
         shuffledList: shuffledList.value,
         progress: getSafeCurrentSeek(),
         songId: songId.value,
+        songIdentity,
         currentIndex: currentIndex.value,
         updatedAt: Date.now(),
     }
 }
 
 function buildPersistedProgressPayload() {
+    const songIdentity = getSongIdentity(getCurrentSong())
     return {
         progress: getSafeCurrentSeek(),
         songId: songId.value,
+        songIdentity,
         currentIndex: currentIndex.value,
     }
 }
@@ -1090,6 +1173,7 @@ function getProgressPersistSignature(payload) {
     const progressBucket = Math.floor(normalizePlaybackNumber(payload.progress))
     return [
         normalizePlayerSongId(payload.songId),
+        String(payload.songIdentity || '').trim(),
         Number.isInteger(payload.currentIndex) ? payload.currentIndex : 0,
         progressBucket,
     ].join('|')
@@ -1186,6 +1270,81 @@ function resetFailedPlaybackState() {
     syncExternalPlaybackState()
 }
 
+// QQ playback is read-only and its session is private.  When that session is
+// revoked, remove QQ entries from the in-memory and persisted queue and
+// invalidate any in-flight asset/lyric request that could rehydrate them.
+export function clearQQPlaybackState() {
+    const previousSongs = Array.isArray(songList.value) ? songList.value : []
+    const hadShuffledList = Array.isArray(shuffledList.value)
+    const previousShuffled = hadShuffledList ? shuffledList.value : []
+    const currentSong = getCurrentSong()
+    const indexedSong = Number.isInteger(currentIndex.value) && currentIndex.value >= 0
+        ? previousSongs[currentIndex.value]
+        : null
+    const currentWasQQ = isQQSong(currentSong) || isQQSong(indexedSong)
+    const currentIdentity = getSongIdentity(currentSong)
+    const hasQQQueueSong = previousSongs.some(isQQSong) || previousShuffled.some(isQQSong)
+    if (!currentWasQQ && !hasQQQueueSong) return false
+    const qqPreloadActive = isQQSong(gaplessPreload?.song)
+    const qqPendingPlayback = String(pendingPlaybackIdentity || '').startsWith('qq:')
+    const qqPendingLyric = String(activeRemoteLyricFetch?.targetIdentity || '').startsWith('qq:')
+    const filteredSongs = previousSongs.filter(song => !isQQSong(song))
+    const filteredShuffled = previousShuffled.filter(song => !isQQSong(song))
+
+    if (currentWasQQ || qqPendingPlayback) {
+        playbackLoadToken += 1
+        clearPendingPlayback()
+    }
+    if (currentWasQQ || qqPendingLyric) {
+        lyricLoadToken += 1
+        pendingCurrentCloudLyricRetrySongId = ''
+        pendingCurrentCloudLyricRetryIdentity = ''
+        activeRemoteLyricFetch = null
+    }
+    if (currentWasQQ || qqPreloadActive) clearGaplessPreload()
+    if (currentWasQQ) stopProgressSampling()
+
+    if (currentWasQQ) {
+        disposePlaybackImmediately(currentMusic.value)
+        currentMusic.value = null
+        playing.value = false
+        progress.value = 0
+        time.value = 0
+        lyric.value = null
+        songId.value = filteredSongs[0]?.id ?? null
+        currentIndex.value = filteredSongs.length > 0 ? 0 : 0
+        listInfo.value = null
+    } else if (currentIdentity) {
+        const nextIndex = filteredSongs.findIndex(song => getSongIdentity(song) === currentIdentity)
+        currentIndex.value = nextIndex >= 0 ? nextIndex : 0
+        songId.value = filteredSongs[nextIndex >= 0 ? nextIndex : 0]?.id ?? null
+    }
+
+    songList.value = filteredSongs
+    shuffledList.value = hadShuffledList ? filteredShuffled : null
+    if (filteredShuffled.length === 0) shuffleIndex.value = 0
+    else if (currentWasQQ) shuffleIndex.value = 0
+    else {
+        const nextShuffleIndex = filteredShuffled.findIndex(song => getSongIdentity(song) === currentIdentity)
+        shuffleIndex.value = nextShuffleIndex >= 0 ? nextShuffleIndex : 0
+    }
+
+    if (filteredSongs.length === 0) {
+        songList.value = []
+        shuffledList.value = []
+        songId.value = null
+        currentIndex.value = 0
+        shuffleIndex.value = 0
+        listInfo.value = null
+    }
+
+    if (currentWasQQ) resetCurrentLyricState()
+    syncWindowsTaskbarPlaybackState()
+    syncExternalPlaybackState()
+    savePlaylist()
+    return currentWasQQ || filteredSongs.length !== previousSongs.length
+}
+
 function isTransientPlaybackRequestError(error) {
     const status = Number(error?.response?.status || error?.status || error?.response?.data?.code)
     if (status === 408 || status === 429 || status >= 500) return true
@@ -1238,8 +1397,9 @@ function getStreamRecoveryOptions(song, failedPlayback) {
     }
 }
 
-function registerStreamRecoveryAttempt(targetSongId, failedSource) {
-    const nextKey = `${normalizePlayerSongId(targetSongId)}:${failedSource || 'netease'}`
+function registerStreamRecoveryAttempt(targetSongId, failedSource, targetSong = null) {
+    const targetIdentity = getPlaybackTargetIdentity(targetSong, targetSongId)
+    const nextKey = `${targetIdentity}:${failedSource || 'netease'}`
     if (streamRecoveryKey === nextKey) {
         streamRecoveryAttempts += 1
     } else {
@@ -1262,6 +1422,7 @@ async function refreshStreamAndResume(eventType, error) {
     if (!songId.value) return
 
     const targetSongId = songId.value
+    const target = createPlaybackTarget(currentSong, targetSongId)
     const targetHowl = currentMusic.value
     refreshingStream = true
     lastRefreshAttempt = now
@@ -1269,7 +1430,7 @@ async function refreshStreamAndResume(eventType, error) {
 
     const resumePosition = getSafeCurrentSeek()
     const recoveryOptions = getStreamRecoveryOptions(currentSong, targetHowl)
-    const recoveryAttempts = registerStreamRecoveryAttempt(targetSongId, recoveryOptions.failedSource)
+    const recoveryAttempts = registerStreamRecoveryAttempt(targetSongId, recoveryOptions.failedSource, currentSong)
     if (recoveryAttempts > STREAM_RECOVERY_MAX_ATTEMPTS_PER_SOURCE) {
         noticeOpen('当前播放地址持续加载失败，请尝试切换歌曲', 2)
         resetFailedPlaybackState()
@@ -1289,7 +1450,9 @@ async function refreshStreamAndResume(eventType, error) {
         const nextStreamUrl = playbackInfo?.url || ''
 
         // 防止旧歌曲的异步刷新覆盖当前已切换的新歌曲。
-        if (token !== streamRefreshToken || songId.value !== targetSongId || currentMusic.value !== targetHowl) {
+        if (token !== streamRefreshToken
+            || !isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)
+            || currentMusic.value !== targetHowl) {
             return
         }
 
@@ -1307,7 +1470,11 @@ async function refreshStreamAndResume(eventType, error) {
         }
 
         progress.value = resumePosition
-        await playPlaybackInfo(playbackInfo, true, targetSongId, { resumeSeek: resumePosition })
+        await playPlaybackInfo(playbackInfo, true, targetSongId, {
+            resumeSeek: resumePosition,
+            targetSong: currentSong,
+            targetIdentity: target.identity,
+        })
     } catch (fetchError) {
         console.error('刷新歌曲播放地址失败:', fetchError)
         noticeOpen('刷新播放地址失败，请尝试切换歌曲', 2)
@@ -1632,6 +1799,8 @@ function handlePlaybackEnded() {
     stopProgressSampling()
     if (tryStartGaplessNextFromEnd()) return
 
+    const currentList = Array.isArray(songList.value) ? songList.value : []
+
     if (isPersonalFMContext()) {
         if (playMode.value == 2) {
             const fmPlayModeEvent = new CustomEvent('fmPlayModeResponse', {
@@ -1647,8 +1816,8 @@ function handlePlaybackEnded() {
         return
     }
 
-    if (playMode.value == 0 && currentIndex.value < songList.value.length - 1) { playNext(); return }
-    if (playMode.value == 0 && currentIndex.value == songList.value.length - 1) { playing.value = false; playModeOne = true; syncExternalPlaybackState(); return }
+    if (playMode.value == 0 && currentIndex.value < currentList.length - 1) { playNext(); return }
+    if (playMode.value == 0 && currentIndex.value == currentList.length - 1) { playing.value = false; playModeOne = true; syncExternalPlaybackState(); return }
     if (playMode.value == 1) { playNext(); return }
     if (playMode.value == 3) { playNext() }
     if (playMode.value == 2) { clearLycAnimation() }
@@ -1709,17 +1878,69 @@ export function startProgress(options = {}) {
     startGaplessTransitionMonitor()
 }
 
-function findSongIndexById(id) {
-    const list = Array.isArray(songList.value) ? songList.value : []
-    const targetId = id == null ? '' : String(id)
-    if (!targetId) return -1
+function getQueueSongIdentity(song) {
+    const identity = getSongIdentity(song)
+    if (identity) return identity
+    return song?.id === undefined || song?.id === null || song?.id === '' ? '' : String(song.id)
+}
 
-    return list.findIndex(song => song && String(song.id) === targetId)
+function songMatchesRequestedId(song, id) {
+    if (!song || id === undefined || id === null || id === '') return false
+    const targetId = String(id)
+    return [song.id, song.sourceId, song.songmid, song.mid].some(value => (
+        value !== undefined && value !== null && value !== '' && String(value) === targetId
+    ))
+}
+
+function findSongIndexByIdentity(list, identity) {
+    if (!Array.isArray(list) || !identity) return -1
+    return list.findIndex(song => getQueueSongIdentity(song) === identity)
+}
+
+function findSongIndexById(id, list = songList.value) {
+    const songs = Array.isArray(list) ? list : []
+    if (id === undefined || id === null || id === '') return -1
+    return songs.findIndex(song => songMatchesRequestedId(song, id))
+}
+
+function getSongAtIndexMatchingId(list, id, index) {
+    if (!Array.isArray(list) || !Number.isInteger(index) || index < 0 || index >= list.length) return null
+    const candidate = list[index]
+    return songMatchesRequestedId(candidate, id) ? candidate : null
 }
 
 function getSongByIdOrIndex(id, index = currentIndex.value) {
     const list = Array.isArray(songList.value) ? songList.value : []
-    const resolvedIndex = findSongIndexById(id)
+    const shuffled = Array.isArray(shuffledList.value) ? shuffledList.value : []
+
+    // In shuffle mode the supplied index belongs to shuffledList. Resolve that
+    // entry first so equal NetEase/QQ raw IDs cannot select the wrong provider.
+    if (playMode.value == 3) {
+        const shuffledSong = getSongAtIndexMatchingId(shuffled, id, index)
+        if (shuffledSong) return shuffledSong
+        const currentIdentity = getQueueSongIdentity(getCurrentSong())
+        if (currentIdentity && String(id ?? '') === String(songId.value ?? '')) {
+            const currentShuffleIndex = findSongIndexByIdentity(shuffled, currentIdentity)
+            if (currentShuffleIndex >= 0) return shuffled[currentShuffleIndex]
+        }
+        const shuffledIndex = findSongIndexById(id, shuffled)
+        if (shuffledIndex >= 0) return shuffled[shuffledIndex]
+    }
+
+    // The index is authoritative when it still points at the requested song.
+    const indexedSong = getSongAtIndexMatchingId(list, id, index)
+    if (indexedSong) return indexedSong
+
+    // When a caller only has the raw ID (for example duration/asset helpers),
+    // retain the provider identity of the currently selected canonical song.
+    // This disambiguates equal IDs after a QQ/NetEase switch.
+    const currentIdentity = getQueueSongIdentity(getCurrentSong())
+    if (currentIdentity && String(id ?? '') === String(songId.value ?? '')) {
+        const currentIndexInList = findSongIndexByIdentity(list, currentIdentity)
+        if (currentIndexInList >= 0) return list[currentIndexInList]
+    }
+
+    const resolvedIndex = findSongIndexById(id, list)
     if (resolvedIndex >= 0) return list[resolvedIndex]
 
     return Number.isInteger(index) && index >= 0 && index < list.length ? list[index] : null
@@ -1727,22 +1948,46 @@ function getSongByIdOrIndex(id, index = currentIndex.value) {
 
 export function setId(id, index) {
     const list = Array.isArray(songList.value) ? songList.value : []
-    const resolvedIndex = findSongIndexById(id)
+    const shuffled = Array.isArray(shuffledList.value) ? shuffledList.value : []
+    const indexedSong = playMode.value == 3
+        ? getSongAtIndexMatchingId(shuffled, id, index)
+        : getSongAtIndexMatchingId(list, id, index)
+    const requestedSong = indexedSong
+        || (playMode.value == 3 && findSongIndexById(id, shuffled) >= 0
+            ? shuffled[findSongIndexById(id, shuffled)]
+            : null)
+        || (findSongIndexById(id, list) >= 0 ? list[findSongIndexById(id, list)] : null)
+    const requestedIdentity = getQueueSongIdentity(requestedSong)
 
     songId.value = id
 
     if (playMode.value != 3) {
-        if (Number.isInteger(index) && index >= 0 && index < list.length) {
+        if (indexedSong) {
             currentIndex.value = index
             return
         }
 
+        const resolvedIndex = findSongIndexById(id, list)
         currentIndex.value = resolvedIndex >= 0 ? resolvedIndex : 0
         return
     }
 
-    shuffleIndex.value = index
+    const resolvedShuffleIndex = indexedSong
+        ? index
+        : findSongIndexByIdentity(shuffled, requestedIdentity)
+    if (Number.isInteger(resolvedShuffleIndex) && resolvedShuffleIndex >= 0) {
+        shuffleIndex.value = resolvedShuffleIndex
+    } else if (Number.isInteger(index) && index >= 0 && index < shuffled.length) {
+        shuffleIndex.value = index
+    }
 
+    const resolvedCanonicalIndex = findSongIndexByIdentity(list, requestedIdentity)
+    if (resolvedCanonicalIndex >= 0) {
+        currentIndex.value = resolvedCanonicalIndex
+        return
+    }
+
+    const resolvedIndex = findSongIndexById(id, list)
     if (resolvedIndex >= 0) {
         currentIndex.value = resolvedIndex
         return
@@ -1849,16 +2094,16 @@ export function addSong(id, index, autoplay, isLocal) {
     stopProgressSampling()
     resetSongSwitchState()
     setId(id, index)
-    const playbackRequest = beginPendingPlayback(id, autoplay)
     clearActivePlaybackForSongSwitch()
     syncWindowsTaskbarPlaybackState()
     scheduleNextSongAssetPrefetch()
 
-    const targetSong = getSongByIdOrIndex(id, currentIndex.value)
+    const targetSong = getSongByIdOrIndex(id, index)
     if (!targetSong) {
-        clearPendingPlayback(playbackRequest)
         return
     }
+
+    const playbackRequest = beginPendingPlayback(id, autoplay, targetSong)
 
     if (targetSong.type == 'local') isLocal = true
     else isLocal = false
@@ -1957,8 +2202,11 @@ async function refreshCurrentCloudLyricAfterSync(syncedIds) {
     const currentSongId = normalizePlayerSongId(songId.value || currentSong?.id)
     if (!currentSongId || !syncedIds.has(currentSongId) || !isCloudDiskSong(currentSong)) return false
     if (hasUsableLyricPayload(lyric.value)) return false
-    if (getActiveRemoteLyricFetchSongId() === currentSongId) {
+    const currentIdentity = getPlaybackTargetIdentity(currentSong, currentSongId)
+    if (getActiveRemoteLyricFetchIdentity() === currentIdentity
+        || (!getActiveRemoteLyricFetchIdentity() && getActiveRemoteLyricFetchSongId() === currentSongId)) {
         pendingCurrentCloudLyricRetrySongId = currentSongId
+        pendingCurrentCloudLyricRetryIdentity = currentIdentity
         return false
     }
 
@@ -1986,11 +2234,16 @@ export async function syncCloudDiskSongsFromItems(cloudItems, options = {}) {
 
 export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = null) {
     const targetSongId = id
-    const playbackRequest = pendingRequest || beginPendingPlayback(targetSongId, autoplay)
+    let playbackRequest = pendingRequest
 
     try {
         const targetSong = getSongByIdOrIndex(targetSongId, index)
         if (!targetSong) return
+
+        playbackRequest = playbackRequest || beginPendingPlayback(targetSongId, autoplay, targetSong)
+        const target = createPlaybackTarget(targetSong, targetSongId)
+        const isTargetCurrent = () => isPlaybackTargetCurrent(target, getCurrentSong(), songId.value)
+        const isRequestTargetCurrent = () => isTargetCurrent() && isActivePendingPlayback(playbackRequest)
 
         updateWindowTitleDock()
 
@@ -1998,9 +2251,9 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
 
         if (isLocal) {
             const playbackInfo = await resolveSongPlaybackInfo(targetSong)
-            if (songId.value !== targetSongId) return
+            if (!isRequestTargetCurrent()) return
             if (!playbackInfo?.url) return
-            await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId)
+            await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId, { targetSong, targetIdentity: target.identity })
             clearPendingPlayback(playbackRequest)
             await hydrateSongAssets(targetSong, targetSongId, { resetLyric: false })
             return
@@ -2009,7 +2262,7 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
             clearCurrentSongLevel(targetSong)
             try {
                 const playbackInfo = await resolveSongPlaybackInfo(targetSong)
-                if (songId.value !== targetSongId) return
+                if (!isRequestTargetCurrent()) return
 
                 if (!playbackInfo?.url) {
                     noticeOpen('当前歌曲无法播放', 2)
@@ -2021,9 +2274,9 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
                     return
                 }
 
-                const playbackStarted = await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId)
+                const playbackStarted = await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId, { targetSong, targetIdentity: target.identity })
                 clearPendingPlayback(playbackRequest)
-                if (songId.value !== targetSongId) return
+                if (!isTargetCurrent()) return
 
                 if (playbackStarted) {
                     applyPlaybackInfoToCurrentSong(targetSong, playbackInfo)
@@ -2032,7 +2285,7 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
                     const sirenHowl = getCurrentHowl()
                     if (sirenHowl) {
                         sirenHowl.once('load', () => {
-                            if (songId.value !== targetSongId) return
+                            if (!isTargetCurrent()) return
                             applyPlaybackInfoToCurrentSong(targetSong, playbackInfo)
                         })
                     }
@@ -2059,7 +2312,7 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
                 quality: quality.value,
                 checkAvailability: true,
             })
-            if (songId.value !== targetSongId) return
+            if (!isRequestTargetCurrent()) return
 
             if (playbackInfo?.unavailable) {
                 handlePlaybackLoadFailure(null, {
@@ -2078,13 +2331,13 @@ export async function getSongUrl(id, index, autoplay, isLocal, pendingRequest = 
                 return
             }
 
-            await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId)
+            await playPlaybackInfo(playbackInfo, shouldAutoplayPendingPlayback(playbackRequest, autoplay), targetSongId, { targetSong, targetIdentity: target.identity })
             clearPendingPlayback(playbackRequest)
-            if (songId.value !== targetSongId) return
+            if (!isTargetCurrent()) return
             applyPlaybackInfoToCurrentSong(targetSong, playbackInfo)
             void hydrateSongAssets(targetSong, targetSongId, { resetLyric: false })
         } catch (error) {
-            if (songId.value !== targetSongId) return
+            if (!isTargetCurrent()) return
             handlePlaybackLoadFailure(error, {
                 advance: !isTransientPlaybackRequestError(error),
                 song: targetSong,
@@ -2235,6 +2488,11 @@ export async function toggleHeartMode() {
         noticeOpen('心动模式需要正在播放歌单', 2)
         return false
     }
+    const qqBlockReason = getHeartModeBlockReason(songList.value)
+    if (qqBlockReason) {
+        noticeOpen(qqBlockReason, 2)
+        return false
+    }
     const seedId = songId.value || songList.value[0].id
     const playlistId = listInfo.value.id
     try {
@@ -2263,14 +2521,32 @@ export async function toggleHeartMode() {
 }
 
 export function playAll(listType, list, listMeta = null) {
-    if (playMode.value == 3) {
-        addToList(listType, list, listMeta)
-        setShuffledList(true)
-        addSong(shuffledList.value[0].id, 0, true)
-    } else {
-        addToList(listType, list, listMeta)
-        addSong(songList.value[0].id, 0, true)
+    const songs = preparePlayAllSongs(list, normalizeQueueSongs)
+    if (songs.length === 0) {
+        noticeOpen('歌单暂无歌曲', 2)
+        return false
     }
+
+    if (playMode.value == 3) {
+        addToList(listType, songs, listMeta)
+        setShuffledList(true)
+        const firstShuffledSong = shuffledList.value?.[0]
+        if (!firstShuffledSong) {
+            noticeOpen('歌单暂无歌曲', 2)
+            return false
+        }
+        addSong(firstShuffledSong.id, 0, true)
+    } else {
+        addToList(listType, songs, listMeta)
+        const firstSong = songList.value?.[0]
+        if (!firstSong) {
+            noticeOpen('歌单暂无歌曲', 2)
+            return false
+        }
+        addSong(firstSong.id, 0, true)
+    }
+
+    return true
 }
 
 export function setShuffledList(isplayAll) {
@@ -2390,10 +2666,31 @@ export function resolveFavoritePlaylistMeta(playlists) {
 }
 
 export async function getFavoritePlaylistId() {
-    const cachedId = userStore.favoritePlaylistId
-    const cachedName = typeof userStore.favoritePlaylistName == 'string' ? userStore.favoritePlaylistName.trim() : ''
+    let cachedId = userStore.favoritePlaylistId
+    let cachedName = typeof userStore.favoritePlaylistName == 'string' ? userStore.favoritePlaylistName.trim() : ''
+    const cachedSource = String(userStore.favoritePlaylistSource || '').toLowerCase()
 
-    if (cachedId && cachedName) {
+    // The overview is provider-merged.  A stale cache from an older build may
+    // contain a QQ playlist id; never reuse that id for NetEase writes.
+    const mergedPlaylists = Array.isArray(libraryStore.playlistUserCreated)
+        ? libraryStore.playlistUserCreated
+        : []
+    const cachedQQPlaylist = cachedId && mergedPlaylists.find(playlist => (
+            String(playlist?.id ?? '') === String(cachedId)
+            && normalizeMusicSource(playlist?.source) === 'qq'
+        ))
+    const cachedNeteasePlaylist = cachedId && mergedPlaylists.find(playlist => (
+            String(playlist?.id ?? '') === String(cachedId)
+            && normalizeMusicSource(playlist?.source) === 'netease'
+        ))
+    if ((cachedSource === 'qq' && !cachedNeteasePlaylist) || (cachedQQPlaylist && !cachedNeteasePlaylist)) {
+        userStore.updateFavoritePlaylistMeta(null)
+        cachedId = null
+        cachedName = ''
+    }
+    const cacheVerifiedNetease = cachedSource === 'netease' || !!cachedNeteasePlaylist
+
+    if (cachedId && cachedName && cacheVerifiedNetease) {
         return {
             id: cachedId,
             name: cachedName,
@@ -2403,7 +2700,7 @@ export async function getFavoritePlaylistId() {
     const cachedFavoritePlaylist = resolveFavoritePlaylistMeta(libraryStore.playlistUserCreated)
     if (cachedFavoritePlaylist) return cacheFavoritePlaylistMeta(cachedFavoritePlaylist)
 
-    if (cachedId) {
+    if (cachedId && cacheVerifiedNetease) {
         return {
             id: cachedId,
             name: cachedName || DEFAULT_FAVORITE_PLAYLIST_NAME,
@@ -2430,8 +2727,8 @@ export async function getFavoritePlaylistId() {
     } catch (error) {
     }
 
-    if (cachedName) return { id: cachedId || null, name: cachedName }
-    if (cachedId) return { id: cachedId, name: DEFAULT_FAVORITE_PLAYLIST_NAME }
+    if (cachedName && cacheVerifiedNetease) return { id: cachedId || null, name: cachedName }
+    if (cachedId && cacheVerifiedNetease) return { id: cachedId, name: DEFAULT_FAVORITE_PLAYLIST_NAME }
     return null
 }
 
@@ -2444,9 +2741,9 @@ export async function getFavoritePlaylistNoticeText(like) {
 
 function applyFavoritePlaylistDetailStale(playlistId, like) {
     if (!playlistId) return
-    libraryStore.invalidatePlaylistDetailCache(playlistId)
+    libraryStore.invalidatePlaylistDetailCache(playlistId, 'netease')
     if (typeof like == 'boolean') {
-        libraryStore.updatePlaylistOverviewTrackCount(playlistId, like ? 1 : -1)
+        libraryStore.updatePlaylistOverviewTrackCount(playlistId, like ? 1 : -1, 'netease')
     }
 }
 
@@ -2538,6 +2835,27 @@ export async function likeSong(like, targetSongId = songId.value) {
         return
     }
 
+    // QQ exposes read-only playback in this client. Never send a QQ provider
+    // id to NetEase's like or playlist endpoints, including explicit targets.
+    // For the implicit player action the selected queue entry is authoritative;
+    // looking up by raw id can select a NetEase entry when the current QQ
+    // entry happens to share that id.
+    const targetSong = !isExplicitTargetSong
+        ? getCurrentSong()
+        : (songList.value || []).find(song => (
+            String(song?.id ?? '') === String(songIdValue ?? '')
+            || String(song?.sourceId ?? '') === String(songIdValue ?? '')
+        )) || (isQQSong(libraryInfo.value)
+            ? (libraryStore.librarySongs || []).find(song => (
+                String(song?.id ?? '') === String(songIdValue ?? '')
+                || String(song?.sourceId ?? '') === String(songIdValue ?? '')
+            ))
+            : null)
+    if (isQQSong(targetSong)) {
+        noticeLikeFailure('QQ 音乐暂不支持喜欢操作')
+        return false
+    }
+
     if (!userStore.user || !userStore.user.userId) {
         console.error('likeSong失败: 用户信息未加载')
         noticeLikeFailure("操作失败：用户信息未加载，请稍后重试")
@@ -2618,12 +2936,13 @@ async function updateFavoritePlaylistIfViewing() {
     if (!favoritePlaylistId) return
 
     // 检查当前是否在查看"我喜欢的音乐"歌单
-    if (libraryStore.libraryInfo && libraryStore.libraryInfo.id == favoritePlaylistId) {
+    if (isProviderPlaylist(libraryStore.libraryInfo, 'netease')
+        && libraryStore.libraryInfo.id == favoritePlaylistId) {
         try {
             schedulePlaylistCacheInvalidation()
-            libraryStore.invalidatePlaylistDetailCache(favoritePlaylistId)
+            libraryStore.invalidatePlaylistDetailCache(favoritePlaylistId, 'netease')
             // 重新获取歌单详情
-            await libraryStore.updatePlaylistDetail(favoritePlaylistId, { deferRemaining: true })
+            await libraryStore.updatePlaylistDetail(favoritePlaylistId, { deferRemaining: true, source: 'netease' })
         } catch (error) {
             console.error('更新我喜欢的音乐歌单失败:', error)
         }
@@ -2661,7 +2980,9 @@ export function addToNext(nextSong, autoplay) {
     const normalizedNextSong = normalizeQueueSong(nextSong)
     if (!normalizedNextSong || !normalizedNextSong.id) return
     if (!songList.value) songList.value = []
-    if (normalizedNextSong.id == songId.value) return
+    const nextSongIdentity = getQueueSongIdentity(normalizedNextSong)
+    const currentSongIdentity = getQueueSongIdentity(getCurrentSong())
+    if (nextSongIdentity && nextSongIdentity === currentSongIdentity) return
 
     // 修正当前索引越界/异常，避免“插入成功但自动播放失败”
     if (!Number.isInteger(currentIndex.value) || currentIndex.value < 0) currentIndex.value = 0
@@ -2669,7 +2990,7 @@ export function addToNext(nextSong, autoplay) {
         currentIndex.value = songList.value.length - 1
     }
 
-    const si = (songList.value || []).findIndex((song) => song.id === normalizedNextSong.id)
+    const si = (songList.value || []).findIndex(song => getQueueSongIdentity(song) === nextSongIdentity)
     if (si != -1) {
         songList.value.splice(si, 1)
         if (si < currentIndex.value) currentIndex.value--
@@ -2685,14 +3006,18 @@ export function addToNext(nextSong, autoplay) {
             setShuffledList()
         }
         if (!Number.isInteger(shuffleIndex.value) || shuffleIndex.value < 0) {
-            const fallbackIndex = (shuffledList.value || []).findIndex((song) => song.id === songId.value)
+            const fallbackIndex = (shuffledList.value || []).findIndex(song => (
+                getQueueSongIdentity(song) === currentSongIdentity
+            ))
             shuffleIndex.value = fallbackIndex >= 0 ? fallbackIndex : 0
         }
         if (shuffledList.value.length > 0 && shuffleIndex.value >= shuffledList.value.length) {
             shuffleIndex.value = shuffledList.value.length - 1
         }
 
-        const shufflei = (shuffledList.value || []).findIndex((song) => song.id === normalizedNextSong.id)
+        const shufflei = (shuffledList.value || []).findIndex(song => (
+            getQueueSongIdentity(song) === nextSongIdentity
+        ))
         if (shufflei != -1) {
             shuffledList.value.splice(shufflei, 1)
             if (shufflei < shuffleIndex.value) shuffleIndex.value--

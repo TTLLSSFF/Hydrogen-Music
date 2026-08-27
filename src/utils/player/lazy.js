@@ -72,5 +72,6 @@ export const likeSong = lazyPlayerExport('likeSong');
 export const addToNext = lazyPlayerExport('addToNext');
 export const addToNextLocal = lazyPlayerExport('addToNextLocal');
 export const savePlaylist = lazyPlayerExport('savePlaylist');
+export const clearQQPlaybackState = lazyPlayerExport('clearQQPlaybackState');
 export const initPlayerExternalBridge = lazyPlayerExport('initPlayerExternalBridge');
 export const resolveDownloadPlaybackInfo = lazyPlayerExport('resolveDownloadPlaybackInfo');

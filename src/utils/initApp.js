@@ -9,6 +9,7 @@ import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } f
 import { initPlayerExternalBridge, loadLastSong } from './player/lazy'
 import { applyCustomFontStyle } from './setFont'
 import settingsSchema from '../shared/settingsSchema.js'
+import { qqAccountStore } from '../store/qqAccountStore'
 
 const { normalizeSettings } = settingsSchema
 
@@ -165,6 +166,9 @@ async function runDeferredAppInit() {
     } catch (error) {
         console.error('用户信息加载失败:', error)
     } finally {
+        try {
+            await qqAccountStore.restoreSession()
+        } catch (_) {}
         restoreLastSongOnce()
     }
 

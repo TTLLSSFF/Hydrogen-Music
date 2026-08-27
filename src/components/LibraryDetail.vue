@@ -2,6 +2,8 @@
 import { ref, computed, onActivated, onDeactivated, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router';
 import { isLogin } from '../utils/authority';
+import { hasAnyMusicAccount, hasQQAccount } from '../utils/accountProviders.mjs';
+import { withCoverParam } from '../utils/coverBackdrop';
 import { noticeOpen } from '../utils/dialog';
 import { subPlaylist } from '../api/playlist';
 import { subAlbum } from '../api/album';
@@ -18,6 +20,8 @@ import { usePlayerStore } from '../store/playerStore';
 import { useLibraryStore } from '../store/libraryStore';
 import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
+import { canAccessQQMyMusic, canUseSongAction, findProviderPlaylist, isQQSong } from '../utils/providerPolicy.mjs';
+import { getSongIdentity } from '../utils/musicSource.mjs';
 
 const playerStore = usePlayerStore();
 const libraryStore = useLibraryStore();
@@ -47,6 +51,15 @@ const SCROLL_POLICY = {
 };
 const pendingScrollPolicy = ref(SCROLL_POLICY.NONE);
 const pendingTargetFullPath = ref('');
+const isCurrentNeteasePlaylistCreated = computed(() => !!findProviderPlaylist(
+    playlistUserCreated.value,
+    libraryInfo.value?.id,
+    'netease',
+));
+const getLibraryCover = info => withCoverParam(
+    info?.coverImgUrl || info?.blurPicUrl || info?.img1v1Url,
+    300,
+);
 const normalizeRouteName = routeName => {
     const normalized = String(routeName || '');
     if (!normalized) return '';
@@ -205,6 +218,7 @@ const isAlbumRoute = computed(() => currentLibraryRouteName.value == 'album');
 const isArtistTopSongRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 0);
 const isArtistAlbumRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 1);
 const isArtistMVRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 2);
+const isQQPlaylist = computed(() => isPlaylistRoute.value && isQQSong(libraryInfo.value));
 const showSongSearch = computed(() => isPlaylistRoute.value || isAlbumRoute.value || isArtistTopSongRoute.value || isArtistAlbumRoute.value || isArtistMVRoute.value);
 const normalizedSongSearchKeyword = computed(() => normalizeSongFilterKeyword(songSearchKeyword.value));
 const hasSongSearchKeyword = computed(() => normalizedSongSearchKeyword.value !== '');
@@ -249,7 +263,9 @@ const playlistHydrationTotal = computed(() => {
 const showSongSearchEmpty = computed(() => showSongSearch.value && hasSongSearchKeyword.value && currentSearchResultCount.value == 0);
 const isSongSearchLoading = computed(() => isPlaylistRoute.value && showSongSearchEmpty.value && playlistHydration.value?.status == 'loading');
 const isSongSearchFailed = computed(() => isPlaylistRoute.value && showSongSearchEmpty.value && playlistHydration.value?.status == 'failed');
-const selectedDownloadIds = computed(() => selectedDownloadSongs.value.map(song => song.id));
+// Use provider-aware keys so a QQ song and a NetEase song with the same raw ID
+// remain independently selectable.
+const selectedDownloadIds = computed(() => selectedDownloadSongs.value.map(song => getSongIdentity(song)).filter(Boolean));
 const songSearchEmptyTitle = computed(() => {
     if (isSongSearchLoading.value) return '正在加载更多歌曲...';
     if (isArtistAlbumRoute.value) return '未找到相关专辑';
@@ -318,7 +334,7 @@ onBeforeRouteLeave((to, from, next) => {
         clearPendingScrollPolicy();
     }
     if (to.name == 'mymusic') {
-        if (!isLogin()) router.push('/login');
+        if (!hasAnyMusicAccount()) router.push('/login');
         libraryInfo.value = null;
     }
     libraryTypeCheck(to.name);
@@ -331,7 +347,22 @@ onBeforeRouteUpdate(async (to, from, next) => {
     setPendingScrollPolicyForRoute(to);
 
     const normalizedToName = normalizeRouteName(to.name);
-    const detailLoadOptions = normalizedToName == 'playlist' ? { deferRemaining: true } : {};
+    const requestedSource = to.query.source || 'netease';
+    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
+        noticeOpen('请先登录 QQ 音乐', 2);
+        next({ name: 'mymusic' });
+        return;
+    }
+    if ((normalizedToName == 'album' || normalizedToName == 'artist') && String(requestedSource).toLowerCase() == 'qq') {
+        noticeOpen(`QQ 音乐暂不支持${normalizedToName == 'album' ? '专辑' : '歌手'}详情`, 2);
+        next({ name: 'mymusic' });
+        return;
+    }
+    const detailLoadOptions = normalizedToName == 'playlist'
+        ? { deferRemaining: true, source: requestedSource }
+        : normalizedToName == 'album'
+            ? { source: to.query.source || 'netease' }
+            : {};
     libraryTypeCheck(to.name);
     artistPageType.value = 0;
     libraryAlbum.value = null;
@@ -380,7 +411,8 @@ const totalTime = computed(() => {
     let total = 0;
     const songList = librarySongs.value || [];
     songList.forEach(song => {
-        total += song.dt;
+        const duration = Number(song?.dt ?? song?.duration ?? 0);
+        if (Number.isFinite(duration) && duration > 0) total += duration;
     });
     return Math.round(total / 1000 / 60);
 });
@@ -440,6 +472,10 @@ const subHandle = id => {
 };
 
 const librarySub = id => {
+    if (isQQSong(libraryInfo.value)) {
+        noticeOpen('QQ 音乐暂不支持歌单收藏', 2);
+        return;
+    }
     let params = {
         id: id,
         t: libraryInfo.value.followed ? 0 : 1,
@@ -487,6 +523,7 @@ const librarySub = id => {
 
 //查看并跳转歌手页面
 const checkArtist = artistId => {
+    if (isQQSong(libraryInfo.value)) return;
     router.push('/mymusic/artist/' + artistId);
     playerStore.forbidLastRouter = true;
 };
@@ -503,6 +540,10 @@ const playAllSafe = async () => {
 
 //进入选择模式
 const enterSelectionMode = () => {
+    if (isQQPlaylist.value) {
+        noticeOpen('QQ 音乐暂不支持下载', 2);
+        return;
+    }
     //立刻展开菜单，剩余歌曲在后台继续加载，全选时再等待
     downloadSelectionMode.value = true;
     selectedDownloadSongs.value = [];
@@ -513,6 +554,10 @@ const enterSelectionMode = () => {
 
 //下载所选歌曲
 const downloadSelected = async () => {
+    if (isQQPlaylist.value || (selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'download'))) {
+        noticeOpen('QQ 音乐暂不支持下载', 2);
+        return;
+    }
     if (selectedDownloadSongs.value.length === 0) {
         noticeOpen('请先选择歌曲', 2);
         return;
@@ -527,6 +572,10 @@ const downloadSelected = async () => {
 
 //添加到歌单
 const addSelectedToPlaylist = async () => {
+    if (isQQSong(libraryInfo.value) || (selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
+        noticeOpen('QQ 音乐暂不支持歌单修改', 2);
+        return;
+    }
     if (selectedDownloadSongs.value.length === 0) {
         noticeOpen('请先选择歌曲', 2);
         return;
@@ -580,6 +629,10 @@ const addSelectedToPlayerList = async () => {
 
 //从歌单中删除
 const deleteSelectedFromPlaylist = async () => {
+    if (isQQSong(libraryInfo.value) || (selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
+        noticeOpen('QQ 音乐暂不支持歌单修改', 2);
+        return;
+    }
     if (selectedDownloadSongs.value.length === 0) {
         noticeOpen('请先选择歌曲', 2);
         return;
@@ -604,7 +657,8 @@ const deleteSelectedFromPlaylist = async () => {
         if (isSuccess) {
             // 从当前歌曲列表中移除这些歌曲
             selectedDownloadSongs.value.forEach(selectedSong => {
-                const songIndex = (librarySongs.value || []).findIndex((song) => song.id === selectedSong.id);
+                const selectedIdentity = getSongIdentity(selectedSong);
+                const songIndex = (librarySongs.value || []).findIndex(song => getSongIdentity(song) === selectedIdentity);
                 if (songIndex !== -1) {
                     librarySongs.value.splice(songIndex, 1);
                 }
@@ -625,7 +679,9 @@ const deleteSelectedFromPlaylist = async () => {
 
 const toggleDownloadSelection = song => {
     if (!song) return;
-    const index = selectedDownloadSongs.value.findIndex(item => String(item?.id) === String(song.id));
+    const identity = getSongIdentity(song);
+    if (!identity) return;
+    const index = selectedDownloadSongs.value.findIndex(item => getSongIdentity(item) === identity);
     if (index >= 0) {
         selectedDownloadSongs.value.splice(index, 1);
         return;
@@ -636,7 +692,7 @@ const toggleDownloadSelection = song => {
 const selectAllDownloadSongs = async () => {
     //全选需要完整歌单，此处才等待剩余歌曲加载完成
     await waitCurrentPlaylistHydration();
-    selectedDownloadSongs.value = (visibleLibrarySongs.value || []).filter(song => song?.type !== 'local');
+    selectedDownloadSongs.value = (visibleLibrarySongs.value || []).filter(song => song?.type !== 'local' && !!getSongIdentity(song));
 };
 
 const cancelDownloadSelection = () => {
@@ -719,7 +775,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
         <div class="library-introduce">
             <div class="introduce">
                 <div class="introduce-img" :class="{ 'introduce-img-circle': isSinger }">
-                    <img :src="(libraryInfo.coverImgUrl || libraryInfo.blurPicUrl || libraryInfo.img1v1Url) + '?param=300y300'" alt="" />
+                    <img :src="getLibraryCover(libraryInfo)" alt="" />
                 </div>
                 <div class="introduce-info">
                     <span class="introduce-name">{{ libraryInfo.name }}</span>
@@ -735,8 +791,8 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         <span class="introduce-num" v-if="!isSinger">共{{ libraryInfo.trackCount || libraryInfo.size }}首 - {{ totalTime }}分钟</span>
                         <span class="introduce-num" v-if="isSinger">{{ libraryInfo.musicSize }}首歌 · {{ libraryInfo.albumSize }}张专辑 · {{ libraryInfo.mvSize }}个MV</span>
                         <div class="library-operation">
-                            <template v-if="isLogin()">
-                                <div class="operation-collection operation-item" v-show="(playlistUserCreated || []).findIndex(song => song.id == libraryInfo.id) == -1" @click="librarySub(libraryInfo.id)">
+                            <template v-if="isLogin() && !isQQPlaylist">
+                                <div class="operation-collection operation-item" v-show="!isCurrentNeteasePlaylistCreated" @click="librarySub(libraryInfo.id)">
                                     <svg
                                         v-show="!libraryInfo.followed"
                                         t="1669112450805"
@@ -865,7 +921,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :songlist="visibleLibrarySongs"
                         :queue-songlist="hasSongSearchKeyword ? librarySongs : null"
                         :source-indexes="visibleLibrarySourceIndexes"
-                        :download-selection-mode="downloadSelectionMode"
+                        :download-selection-mode="!isQQPlaylist && downloadSelectionMode"
                         :selected-download-ids="selectedDownloadIds"
                         @toggle-download-selection="toggleDownloadSelection"
                         class="library-content"

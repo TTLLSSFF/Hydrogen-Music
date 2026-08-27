@@ -41,7 +41,7 @@ function normalizeArtist(artist) {
 function normalizeAlbum(album) {
     if (!album || typeof album !== 'object') return null
 
-    const normalized = pickDefined(album, ['id', 'name', 'picUrl', 'blurPicUrl', 'cover', 'coverUrl'])
+    const normalized = pickDefined(album, ['id', 'mid', 'pmid', 'albumMid', 'name', 'picUrl', 'blurPicUrl', 'cover', 'coverUrl'])
     if (!normalized.picUrl && normalized.coverUrl) normalized.picUrl = normalized.coverUrl
     return Object.keys(normalized).length > 0 ? normalized : null
 }
@@ -114,6 +114,7 @@ export function normalizeQueueSong(song) {
         'mvCoverUrl',
         'albumCid',
         'albumId',
+        'albumMid',
         'albumName',
         'artist',
         'artistsName',

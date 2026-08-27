@@ -8,8 +8,14 @@ const os = require('os')
 const { pipeline } = require('stream')
 
 const API_PORT = 36530
+const QQ_API_PORT = Number(process.env.QQ_API_PORT || 3200)
 const WEB_PORT = process.env.PORT || 30000
 const DIST_DIR = path.join(__dirname, 'dist')
+const {
+  hasSensitiveQQQuery,
+  sanitizeQQProxyRequestHeaders,
+  sanitizeQQProxyResponseHeaders,
+} = require('./server/qqMusicApi.cjs')
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -29,9 +35,45 @@ const mimeTypes = {
   '.eot': 'application/vnd.ms-fontobject',
 }
 
-function serveStatic(req, res) {
-  let urlPath = req.url.split('?')[0]
-  let filePath = path.join(DIST_DIR, urlPath === '/' ? 'index.html' : urlPath)
+function resolveStaticPath(requestUrl, distDir = DIST_DIR) {
+  const rawPath = String(requestUrl || '').split('?')[0]
+  let decodedPath
+  try {
+    decodedPath = decodeURIComponent(rawPath)
+    // Decode repeatedly so double-encoded traversal cannot evade containment.
+    for (let i = 0; i < 2 && /%[0-9a-f]{2}/i.test(decodedPath); i += 1) {
+      const next = decodeURIComponent(decodedPath)
+      if (next === decodedPath) break
+      decodedPath = next
+    }
+  } catch (_) {
+    return null
+  }
+
+  if (
+    !decodedPath.startsWith('/') ||
+    decodedPath.startsWith('//') ||
+    /^\/[a-z]:[\\/]/i.test(decodedPath) ||
+    decodedPath.includes('\\') ||
+    decodedPath.split('/').includes('..') ||
+    /[\u0000-\u001f\u007f]/.test(decodedPath)
+  ) return null
+  const rootPath = path.resolve(distDir)
+  const safePath = decodedPath === '/' ? '/index.html' : decodedPath
+  const candidate = path.resolve(rootPath, `.${safePath}`)
+  const relative = path.relative(rootPath, candidate)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null
+  return candidate
+}
+
+function serveStatic(req, res, distDir = DIST_DIR) {
+  const urlPath = req.url.split('?')[0]
+  const filePath = resolveStaticPath(req.url, distDir)
+  if (!filePath) {
+    res.writeHead(404)
+    res.end('Not found')
+    return
+  }
   const ext = path.extname(filePath).toLowerCase()
   const contentType = mimeTypes[ext] || 'application/octet-stream'
 
@@ -39,7 +81,8 @@ function serveStatic(req, res) {
     if (err) {
       if (err.code === 'ENOENT') {
         // SPA 路由回退到 index.html
-        fs.readFile(path.join(DIST_DIR, 'index.html'), (err2, content2) => {
+        const fallbackPath = resolveStaticPath('/index.html', distDir)
+        fs.readFile(fallbackPath, (err2, content2) => {
           if (err2) {
             res.writeHead(404)
             res.end('Not found')
@@ -49,7 +92,7 @@ function serveStatic(req, res) {
           }
         })
       } else {
-        console.error('Static file error:', err)
+        console.error('Static file error')
         res.writeHead(500)
         res.end('Server error')
       }
@@ -170,13 +213,21 @@ function proxyDownload(req, res) {
 
 function proxyToApi(req, res) {
   const [rawPath, query] = req.url.split('?')
-  const targetPath = rawPath.replace(/^\/api/, '') || '/'
+  const isQQ = /^\/api\/qq(?:\/|$)/i.test(rawPath)
+  const targetPath = (isQQ ? rawPath.replace(/^\/api\/qq/i, '') : rawPath.replace(/^\/api/, '')) || '/'
+  const targetPort = isQQ ? QQ_API_PORT : API_PORT
+  if (isQQ && hasSensitiveQQQuery(req.url)) {
+    res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({ error: 'QQ credentials are server-managed and cannot be supplied in the URL' }))
+    return
+  }
+  const forwardedHeaders = isQQ ? sanitizeQQProxyRequestHeaders(req.headers) : { ...req.headers }
   const options = {
     hostname: '127.0.0.1',
-    port: API_PORT,
+    port: targetPort,
     path: targetPath + (query ? '?' + query : ''),
     method: req.method,
-    headers: { ...req.headers, host: `127.0.0.1:${API_PORT}` },
+    headers: { ...forwardedHeaders, host: `127.0.0.1:${targetPort}` },
   }
 
   const proxyReq = http.request(options, (proxyRes) => {
@@ -184,7 +235,8 @@ function proxyToApi(req, res) {
       proxyRes.destroy()
       return
     }
-    res.writeHead(proxyRes.statusCode, proxyRes.headers)
+    const responseHeaders = isQQ ? sanitizeQQProxyResponseHeaders(proxyRes.headers) : proxyRes.headers
+    res.writeHead(proxyRes.statusCode, responseHeaders)
     pipeToResponse(proxyRes, res)
   })
 
@@ -234,17 +286,21 @@ function proxyToSiren(req, res) {
   })
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url.startsWith('/api/') || req.url === '/api') {
-    proxyToApi(req, res)
-  } else if (req.url.startsWith('/siren-api/') || req.url === '/siren-api') {
-    proxyToSiren(req, res)
-  } else if (req.url.startsWith('/download-proxy?')) {
-    proxyDownload(req, res)
-  } else {
-    serveStatic(req, res)
-  }
-})
+function createWebServer({ distDir = DIST_DIR } = {}) {
+  return http.createServer((req, res) => {
+    if (req.url.startsWith('/api/') || req.url === '/api') {
+      proxyToApi(req, res)
+    } else if (req.url.startsWith('/siren-api/') || req.url === '/siren-api') {
+      proxyToSiren(req, res)
+    } else if (req.url.startsWith('/download-proxy?')) {
+      proxyDownload(req, res)
+    } else {
+      serveStatic(req, res, distDir)
+    }
+  })
+}
+
+const server = createWebServer()
 
 async function ensureXeapiPublicKey() {
   const keyPath = path.resolve(os.tmpdir(), 'xeapi_public_key')
@@ -283,10 +339,17 @@ async function startNeteaseMusicApi() {
   })
 }
 
-;(async () => {
+async function startQQMusicApi() {
+  const { startQQMusicApi: start } = require('./server/qqMusicApi.cjs')
+  await start(QQ_API_PORT)
+}
+
+async function startWebServer() {
   try {
     await startNeteaseMusicApi()
     console.log(`NetEase Cloud Music API Enhanced started on port ${API_PORT}`)
+    await startQQMusicApi()
+    console.log(`QQ Music API started on port ${QQ_API_PORT}`)
   } catch (error) {
     console.error('Failed to start NetEase Cloud Music API:', error)
     process.exit(1)
@@ -296,4 +359,10 @@ async function startNeteaseMusicApi() {
     console.log(`Hydrogen Music web server listening on port ${WEB_PORT}`)
     console.log(`Open http://localhost:${WEB_PORT} in your browser`)
   })
-})()
+}
+
+if (require.main === module) {
+  startWebServer()
+}
+
+module.exports = { createWebServer, serveStatic, startWebServer, resolveStaticPath, server }

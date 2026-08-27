@@ -7,6 +7,8 @@ import { useUserStore } from '../store/userStore'
 import { useLibraryStore } from '../store/libraryStore'
 import { storeToRefs } from 'pinia'
 import { useOtherStore } from '../store/otherStore'
+import { hasAnyMusicAccount, hasQQAccount } from '../utils/accountProviders.mjs'
+import { canAccessQQMyMusic, getSearchSource } from '../utils/providerPolicy.mjs'
 
 function createRouteLoader(loader) {
     let promise = null
@@ -39,11 +41,11 @@ const userStore = useUserStore()
 const libraryStore = useLibraryStore()
 const { updateLibraryDetail } = libraryStore
 const { libraryInfo } = storeToRefs(libraryStore)
-const otherStore = useOtherStore()
 const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
+const hasDifferentLibrarySource = (to, from) => String(to?.query?.source || 'netease') != String(from?.query?.source || 'netease')
 //先完成路由跳转再拉详情数据，避免点击后要等网络请求才有反应
 const enterLibraryDetail = (to, from, next, routeName, options = {}) => {
-    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from)
+    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from) || hasDifferentLibrarySource(to, from)
     next()
     if (!needReload) return
     updateLibraryDetail(to.params.id, routeName, options).catch(() => {
@@ -132,19 +134,41 @@ const routes = [
                 path: '/mymusic/playlist/:id',
                 name: 'playlist',
                 component: LibraryDetail,
-                beforeEnter: (to, from, next) => enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true })
+                beforeEnter: (to, from, next) => {
+                    const source = String(to.query.source || 'netease').toLowerCase()
+                    if (!canAccessQQMyMusic(source, hasQQAccount())) {
+                        noticeOpen('请先登录 QQ 音乐', 2)
+                        next({ name: 'mymusic' })
+                        return
+                    }
+                    enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true, source })
+                }
             },
             {
                 path: '/mymusic/album/:id',
                 name: 'album',
                 component: LibraryDetail,
-                beforeEnter: (to, from, next) => enterLibraryDetail(to, from, next, 'album')
+                beforeEnter: (to, from, next) => {
+                    if (String(to.query.source || '').toLowerCase() === 'qq') {
+                        noticeOpen('QQ 音乐暂不支持专辑详情', 2)
+                        next({ name: 'mymusic' })
+                        return
+                    }
+                    enterLibraryDetail(to, from, next, 'album', { source: 'netease' })
+                }
             },
             {
                 path: '/mymusic/artist/:id',
                 name: 'artist',
                 component: LibraryDetail,
-                beforeEnter: (to, from, next) => enterLibraryDetail(to, from, next, 'artist')
+                beforeEnter: (to, from, next) => {
+                    if (String(to.query.source || '').toLowerCase() === 'qq') {
+                        noticeOpen('QQ 音乐暂不支持歌手详情', 2)
+                        next({ name: 'mymusic' })
+                        return
+                    }
+                    enterLibraryDetail(to, from, next, 'artist', { source: 'netease' })
+                }
             },
             {
                 path: '/mymusic/playlist/rec',
@@ -154,8 +178,8 @@ const routes = [
                     if(isLogin()) {
                         next()
                     } else {
-                        noticeOpen("请先登录", 2)
-                        next({name: 'login'})
+                        noticeOpen(hasQQAccount() ? 'QQ 音乐不提供每日推荐' : '请先登录网易云音乐', 2)
+                        next({name: hasQQAccount() ? 'mymusic' : 'login'})
                     }
                 }
             },
@@ -166,7 +190,7 @@ const routes = [
             },
         ],
         beforeEnter: (to, from, next) => {
-            if(isLogin()) next()
+            if(hasAnyMusicAccount()) next()
             else if((from.name == 'homepage' || from.name == 'search') && to.fullPath != '/mymusic') next()
             else next({name: 'login'})
         },
@@ -199,7 +223,9 @@ const routes = [
         name: 'search',
         component: SearchResult,
         beforeEnter: (to, from, next) => {
-            otherStore.getSearchInfo(to.query.keywords)
+            const searchStore = useOtherStore()
+            searchStore.searchSource = getSearchSource()
+            searchStore.getSearchInfo(to.query.keywords)
             next()
         }
     },

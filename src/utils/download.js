@@ -1,6 +1,7 @@
 import { getPreferredQuality } from './quality'
 import { resolveDownloadPlaybackInfo } from './player/lazy'
 import { getSongDisplayName } from './songName'
+import { isQQSong } from './providerPolicy.mjs'
 
 const DOWNLOAD_PUSH_DELAY_MS = 650
 
@@ -76,6 +77,12 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
         if (song?.type === 'local') {
             result.skipped += 1
             result.failures.push({ song, reason: 'local' })
+            onProgress?.({ ...result, index, song, status: 'skipped' })
+            continue
+        }
+        if (isQQSong(song)) {
+            result.skipped += 1
+            result.failures.push({ song, reason: 'qq' })
             onProgress?.({ ...result, index, song, status: 'skipped' })
             continue
         }

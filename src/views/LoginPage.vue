@@ -22,6 +22,14 @@
         </div>
       </div>
 
+      <div class="mode-type mode-qq" @click="modeSelect(2)">
+        <div class="type-img qq-icon">QQ</div>
+        <div class="type-info">
+          <span class="type-title">QQ 音乐</span>
+          <span class="type-subtitle">使用 QQ 音乐扫码登录</span>
+        </div>
+      </div>
+
       <!-- <svg t="1669178768166" v-if="false" class="mode-line" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1997" width="200" height="200"><path d="M617.92 516.096l272 272-101.824 101.824-272-272-272 272-101.856-101.824 272-272-275.008-275.04L241.056 139.2l275.04 275.04 275.04-275.04 101.824 101.824-275.04 275.04z" p-id="1998"></path></svg>
 
       <div class="mode-type mode-local" @click="modeSelect(1)" v-if="false">

@@ -8,6 +8,7 @@ import { noticeOpen } from '../utils/dialog'
 import { getCommentScrollPosition, setCommentScrollPosition, getLastCommentTargetKey, setLastCommentTargetKey } from '../utils/commentScrollMemory'
 import { getIndexedSongOrFirst } from '../utils/songList'
 import { formatCommentTime } from '../utils/commentFormat'
+import { canUseSongAction } from '../utils/providerPolicy.mjs'
 
 const FLOOR_REPLY_LIMIT = 5
 const COMMENTS_PREFETCH_PX = 200
@@ -52,7 +53,7 @@ export function useCommentsPanel({ emit } = {}) {
     const musicCommentId = computed(() => {
         if (isDj.value) return null
         const cur = currentTrack.value
-        if (cur?.source === 'siren') return null
+        if (cur?.source === 'siren' || !canUseSongAction(cur, 'comment')) return null
         const curId = cur && (cur.id || cur.songId || cur.musicId)
         return curId || songId.value || null
     })

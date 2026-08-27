@@ -7,12 +7,14 @@
   import { usePlayerStore } from '../store/playerStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { storeToRefs } from 'pinia'
+  import { hasAnyMusicAccount } from '../utils/accountProviders.mjs'
   const router = useRouter()
   const libraryStore = useLibraryStore()
   const { listType1, listType2, libraryInfo, lastLibraryRoute, libraryChangeAnimation } = storeToRefs(libraryStore)
   const userStore = useUserStore()
   const { user } = storeToRefs(userStore)
   const playerStore = usePlayerStore()
+  const hasMusicAccount = computed(() => hasAnyMusicAccount())
   const shouldShowNone = computed(() => {
     const isMyMusicRoot = router.currentRoute.value.fullPath == '/mymusic'
     const hasRestorableLibraryRoute = !!lastLibraryRoute.value && (lastLibraryRoute.value.name == 'playlist' || lastLibraryRoute.value.name == 'album' || lastLibraryRoute.value.name == 'artist')
@@ -24,11 +26,11 @@
 
 <template>
   <div class="my-music" :class="{'my-music-full': !playerStore.songList}">
-    <div class="music-library" v-if="user">
+    <div class="music-library" v-if="hasMusicAccount">
       <LibraryType class="library-type"></LibraryType>
       <LibraryList v-show="listType1 != 2 && listType1 != 3" class="library-list"></LibraryList>
     </div>
-      <div class="library-view" :class="{'library-view-nologin': !user}">
+      <div class="library-view" :class="{'library-view-nologin': !hasMusicAccount}">
         <router-view v-slot="{ Component }">
           <keep-alive :include="['LibraryDetail','LibrarySongList','LibraryAlbumList','LibraryMVList']">
             <Transition name="fade">

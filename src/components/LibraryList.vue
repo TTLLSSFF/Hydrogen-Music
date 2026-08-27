@@ -5,6 +5,8 @@
   import { usePlayerStore } from '../store/playerStore';
   import { useOtherStore } from '../store/otherStore';
   import { storeToRefs } from 'pinia'
+  import { withCoverParam } from '../utils/coverBackdrop'
+  import { isQQSong } from '../utils/providerPolicy.mjs'
   const libraryStore = useLibraryStore()
   const { libraryList, libraryInfo, listType1, listType2, lastLibraryRoute, restoreLibraryScrollOnActivate } = storeToRefs(libraryStore)
   const playerStore = usePlayerStore()
@@ -23,7 +25,7 @@
   const currentSelected = ref(null)
   const router = useRouter()
   const showDetail = async (selectedId, item) => {
-    if(listType1.value == 0) router.push('/mymusic/playlist/' + item.id)
+    if(listType1.value == 0) router.push({ path: '/mymusic/playlist/' + item.id, query: { source: item?.source || 'netease' } })
     if(listType1.value == 1 && listType2.value == 0) router.push('/mymusic/album/' + item.id)
     if(listType1.value == 1 && listType2.value == 1) router.push('/mymusic/artist/' + item.id)
     if(listType1.value == 1 && listType2.value == 2) {
@@ -71,6 +73,7 @@
   })
   const openMenu = (e, item) => {
     if(listType1.value != 0 || listType2.value != 0) return
+    if (isQQSong(item)) return
     otherStore.contextMenuShow = true
     otherStore.selectedItem = item
     otherStore.menuTree = otherStore.tree3
@@ -94,13 +97,24 @@
       menuList.style.top = clientY + 'Px'
     }
   }
+  const getLibraryCover = item => withCoverParam(
+    item?.coverImgUrl || item?.img1v1Url || item?.picUrl || item?.coverUrl,
+    128,
+  )
+  const isSelectedItem = item => {
+    const route = router.currentRoute.value
+    const routeId = String(route?.params?.id || route?.fullPath?.split('/')[3] || '')
+    const routeSource = String(route?.query?.source || 'netease').toLowerCase()
+    const itemSource = String(item?.source || 'netease').toLowerCase()
+    return String(item?.id || '') === routeId && itemSource === routeSource && listType2.value != 2
+  }
 </script>
 
 <template>
   <div id="libraryListScroll" class="library-list">
-    <div class="list-item" :class="{'list-item-selected': item.id == router.currentRoute.value.fullPath.split('/')[3] && listType2 != 2}" v-for="(item, index) in libraryList" @click="showDetail(index, item)" @contextmenu.prevent.stop="openMenu($event,item)">
+    <div class="list-item" :class="{'list-item-selected': isSelectedItem(item)}" v-for="(item, index) in libraryList" @click="showDetail(index, item)" @contextmenu.prevent.stop="openMenu($event,item)">
         <div class="item-img">
-            <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl || item.coverUrl) + '?param=128y128'" alt="">
+            <img :src="getLibraryCover(item)" alt="">
         </div>
         <div class="item-other">
             <span class="item-name">{{(item.name ?? item.title)}}</span>

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { search } from '../api/other';
+import { getSearchSource } from '../utils/providerPolicy.mjs'
 import { mapSongsPlayableStatus } from '../utils/songStatus';
 import { noticeOpen } from '../utils/dialog';
 
@@ -99,6 +100,10 @@ export const useOtherStore = defineStore('otherStore', {
                 name: '显示专辑'
             }
           ],
+          treeQQ: [
+            { id: 1, name: '\u64ad\u653e' },
+            { id: 2, name: '\u4e0b\u4e00\u9996\u64ad\u653e' },
+          ],
           tree6: [
             {
                 id: 10,
@@ -122,6 +127,7 @@ export const useOtherStore = defineStore('otherStore', {
           searchRequestToken: 0,
           toUpdate: false,
           newVersion: null,
+          searchSource: 'netease',
         }
     },
     actions: {
@@ -134,6 +140,7 @@ export const useOtherStore = defineStore('otherStore', {
         async getSearchInfo(keywords) {
             const requestToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
             this.searchRequestToken = requestToken
+            this.searchSource = getSearchSource()
 
             const requestConfigs = [
                 { type: 1, key: 'searchSongs' },

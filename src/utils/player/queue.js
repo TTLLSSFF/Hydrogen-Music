@@ -1,3 +1,5 @@
+import { getSongIdentity } from '../musicSource.mjs'
+
 export function getRandomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1) + min)
 }
@@ -8,7 +10,7 @@ export function createShuffledList(songList, {
     currentSong = null,
     randomInt = getRandomInt,
 } = {}) {
-    const shuffledSongs = songList.slice()
+    const shuffledSongs = Array.isArray(songList) ? songList.slice() : []
 
     for (let i = 0; i < shuffledSongs.length; i++) {
         const j = randomInt(0, i)
@@ -18,10 +20,20 @@ export function createShuffledList(songList, {
     }
 
     if (!isPlayAll) {
-        const currentSongIndex = (shuffledSongs || []).findIndex((song) => song && song.id === currentSongId)
-        if (currentSong) {
+        const currentIdentity = currentSong
+            ? getSongIdentity(currentSong)
+            : (typeof currentSongId === 'string' && /^(?:qq|netease):/.test(currentSongId)
+                ? currentSongId
+                : '')
+        const currentSongIndex = (shuffledSongs || []).findIndex((song) => {
+            if (!song) return false
+            if (currentIdentity) return getSongIdentity(song) === currentIdentity
+            return String(song.id) === String(currentSongId)
+        })
+        const selectedCurrentSong = currentSong || (currentSongIndex >= 0 ? shuffledSongs[currentSongIndex] : null)
+        if (selectedCurrentSong) {
             if (currentSongIndex >= 0) shuffledSongs.splice(currentSongIndex, 1)
-            shuffledSongs.unshift(currentSong)
+            shuffledSongs.unshift(selectedCurrentSong)
         }
     }
 

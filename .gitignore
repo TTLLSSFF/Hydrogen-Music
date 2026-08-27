@@ -9,6 +9,7 @@ lerna-debug.log*
 
 
 dist-ssr
+.qq-music-session/
 
 # Editor directories and files
 node_modules/*

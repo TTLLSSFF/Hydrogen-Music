@@ -1,3 +1,5 @@
+import { filterProviderPlaylists } from './providerPolicy.mjs'
+
 export const DEFAULT_FAVORITE_PLAYLIST_NAME = '我喜欢的音乐'
 
 export function normalizeFavoritePlaylistMeta(playlist) {
@@ -17,7 +19,7 @@ export function normalizeFavoritePlaylistMeta(playlist) {
 }
 
 export function resolveFavoritePlaylistMeta(playlists, userId = null) {
-    const playlistList = Array.isArray(playlists) ? playlists : []
+    const playlistList = filterProviderPlaylists(playlists, 'netease')
     if (playlistList.length == 0) return null
 
     const ownedPlaylists = playlistList.filter(playlist => !userId || playlist?.creator?.userId === userId)

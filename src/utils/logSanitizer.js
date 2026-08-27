@@ -1,3 +1,5 @@
+import { isQQSecretKey, sanitizeQQPayload } from './qqSecurity.mjs'
+
 const BASE64_LOG_MIN_LENGTH = 2048
 const IMAGE_DATA_URL_PATTERN = /^data:image\/[^;,]+;base64,/i
 const INLINE_IMAGE_DATA_URL_PATTERN = /data:image\/[^;,\s]+;base64,[A-Za-z0-9+/]+={0,2}/gi
@@ -33,7 +35,7 @@ function sanitizeString(value) {
         match => `[omitted base64 data: ${match.length} chars]`,
     )
 
-    return sanitized === text ? value : sanitized
+    return sanitizeQQPayload(sanitized === text ? value : sanitized)
 }
 
 function isPlainObject(value) {
@@ -42,19 +44,26 @@ function isPlainObject(value) {
     return proto === Object.prototype || proto === null
 }
 
-function sanitizeLogValue(value, seen = new WeakSet()) {
+export function sanitizeLogValue(value, seen = new WeakSet()) {
     if (typeof value === 'string') return sanitizeString(value)
     if (!value || typeof value !== 'object') return value
-    if (value instanceof Error) return value
+    if (value instanceof Error) {
+        return {
+            name: value.name,
+            message: sanitizeString(value.message),
+            ...(value.stack ? { stack: sanitizeString(value.stack) } : {}),
+        }
+    }
     if (seen.has(value)) return '[Circular]'
 
     seen.add(value)
     if (Array.isArray(value)) return value.map(item => sanitizeLogValue(item, seen))
     if (!isPlainObject(value)) return value
 
-    return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, sanitizeLogValue(item, seen)]),
-    )
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        isQQSecretKey(key) ? '[REDACTED]' : sanitizeLogValue(item, seen),
+    ]))
 }
 
 function sanitizeLogArgs(args) {

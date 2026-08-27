@@ -10,6 +10,7 @@ import { readCommentCountCache, writeCommentCountCache } from '../utils/commentC
 import { buildCoverBackdropCandidates } from '../utils/coverBackdrop';
 import { getIndexedSongOrFirst } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
+import { canUseSongAction } from '../utils/providerPolicy.mjs'
 const playerStore = usePlayerStore();
 const Comments = defineAsyncComponent(() => import('../components/Comments.vue'));
 
@@ -72,7 +73,7 @@ const commentCountRequestSerial = ref(0);
 
 const commentTarget = computed(() => {
     const track = currentTrack.value;
-    if (!track || track.type === 'local' || track.source === 'siren') return null;
+    if (!track || track.type === 'local' || track.source === 'siren' || !canUseSongAction(track, 'comment')) return null;
 
     if (isDj.value) {
         const programId = track && (track.programId || track.programID || track.programid);
@@ -174,7 +175,7 @@ const commentPanelKey = computed(() => {
 
 watch(currentTrack, (song) => {
     try {
-        if (song && (song.type === 'local' || song.source === 'siren') && rightPanelMode.value === 1) {
+        if (song && (song.type === 'local' || song.source === 'siren' || !canUseSongAction(song, 'comment')) && rightPanelMode.value === 1) {
             rightPanelMode.value = 0;
         }
     } catch (_) {}
@@ -215,7 +216,7 @@ watch(currentTrack, (song) => {
             <Transition name="panel-switch" mode="out-in">
                 <ProgramIntro v-if="rightPanelMode === 0 && isDj" key="program-intro" />
                 <Lyric class="lyric-container" v-else-if="rightPanelMode === 0" :key="`lyric-${lyricKey}`"></Lyric>
-                <Comments class="comments-container" v-else-if="rightPanelMode === 1" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
+                <Comments class="comments-container" v-else-if="rightPanelMode === 1 && currentTrack && canUseSongAction(currentTrack, 'comment')" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
             </Transition>
         </div>
     </div>

@@ -15,6 +15,7 @@ import { noticeOpen } from '../utils/dialog';
 import { getSongDisplayName } from '../utils/songName';
 import { getIndexedSong } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
+import { isQQSong } from '../utils/providerPolicy.mjs'
 const PlayList = defineAsyncComponent(() => import('./PlayList.vue'));
 
 // 定义 props 和 emit
@@ -142,8 +143,9 @@ const currentSongArtists = computed(() => Array.isArray(currentSong.value?.ar) ?
 const isCurrentSirenSong = computed(() => currentSong.value?.source === 'siren');
 const currentSongDisplayName = computed(() => getSongDisplayName(currentSong.value, '加载中...', showSongTranslation.value));
 const showRemoteCurrentSong = computed(() => !!currentSong.value && currentSong.value.type !== 'local');
-const showOnlineCurrentSongActions = computed(() => !isDjMode.value && showRemoteCurrentSong.value && !isCurrentSirenSong.value);
-const showCommentPanelAction = computed(() => showRemoteCurrentSong.value && !isCurrentSirenSong.value);
+const isCurrentQQSong = computed(() => isQQSong(currentSong.value));
+const showOnlineCurrentSongActions = computed(() => !isDjMode.value && showRemoteCurrentSong.value && !isCurrentSirenSong.value && !isCurrentQQSong.value);
+const showCommentPanelAction = computed(() => showRemoteCurrentSong.value && !isCurrentSirenSong.value && !isCurrentQQSong.value);
 
 const currentSongCoverUrl = computed(() => {
     return withCoverParam(getSongCoverUrl(currentSong.value), 1024);
@@ -196,6 +198,10 @@ const hasRomaLyric = computed(() => {
 const toAlbum = () => {
     const song = currentSong.value;
     if (!song) return;
+    if (isQQSong(song)) {
+        noticeOpen('QQ 音乐暂不支持专辑详情', 2);
+        return;
+    }
     // 电台节目：打开“收藏-电台”的大右侧详情界面
     if (isDjMode.value) {
         const rid = (listInfo.value && listInfo.value.id) || null;
@@ -209,10 +215,12 @@ const toAlbum = () => {
     }
     // 普通歌曲：仍然跳转专辑
     if (song.type != 'local') {
-        const targetPath = song.source === 'siren'
-            ? '/siren/album/' + song.al.id
-            : '/mymusic/album/' + song.al.id
-        router.push(targetPath);
+        const albumId = song.al?.mid || song.al?.id || song.albumMid || song.albumId
+        if (!albumId) return
+        const target = song.source === 'siren'
+            ? { path: '/siren/album/' + albumId }
+            : { path: '/mymusic/album/' + albumId, query: isQQSong(song) ? { source: 'qq' } : {} }
+        router.push(target);
         widgetState.value = true;
         lyricShow.value = false;
         playlistWidgetShow.value = false;
@@ -222,6 +230,10 @@ const toAlbum = () => {
 
 const download = () => {
     const song = currentSong.value;
+    if (isQQSong(song)) {
+        noticeOpen('QQ 音乐暂不支持下载', 2);
+        return;
+    }
     if (song && song.type != 'local') {
         otherStore.downloadItems = [song];
         otherStore.downloadTitle = '下载当前歌曲';
@@ -232,7 +244,7 @@ const download = () => {
 const checkArtist = artistId => {
     const song = currentSong.value;
     // 电台模式下禁止点击作者
-    if (isDjMode.value || isCurrentSirenSong.value || !artistId) return;
+    if (isDjMode.value || isCurrentSirenSong.value || isQQSong(song) || !artistId) return;
     if (song && song.type != 'local') {
         router.push('/mymusic/artist/' + artistId);
         widgetState.value = true;
@@ -243,7 +255,7 @@ const checkArtist = artistId => {
 };
 const addToPlaylist = () => {
     const song = currentSong.value;
-    if (song && song.type !== 'local' && song.source !== 'siren') {
+    if (song && song.type !== 'local' && song.source !== 'siren' && !isQQSong(song)) {
         otherStore.selectedItem = song;
         otherStore.addPlaylistShow = true;
     }
@@ -646,7 +658,7 @@ const toggleDjSub = async isSubscribe => {
                 </template>
                 <!-- 下载：本地歌曲不显示 -->
                 <svg
-                    v-if="showRemoteCurrentSong"
+                    v-if="showOnlineCurrentSongActions"
                     t="1669445939818"
                     @click="download()"
                     class="icon"
@@ -677,7 +689,7 @@ const toggleDjSub = async isSubscribe => {
                 </svg>
                 <!-- 显示专辑：本地歌曲不显示图标 -->
                 <svg
-                    v-if="showRemoteCurrentSong"
+                    v-if="showOnlineCurrentSongActions"
                     t="1668785761323"
                     @click="toAlbum()"
                     class="icon"

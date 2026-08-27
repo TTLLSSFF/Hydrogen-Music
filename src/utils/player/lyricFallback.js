@@ -1,10 +1,13 @@
 import { search as searchMusic } from '../../api/other'
 import { getLyric } from '../../api/song'
+import { getLyricBySource } from '../../api/musicSource.js'
+import { normalizeQQLyricPayload } from '../../api/qqMusic.js'
 import { getCloudLyric } from '../../api/cloud'
 import pinia from '../../store/pinia'
 import { useCloudStore } from '../../store/cloudStore'
 import { useUserStore } from '../../store/userStore'
 import { createUnavailableLyric, hasUsableLyricPayload, isPlaceholderLyricPayload, normalizeLyricPayload, splitCombinedCloudLyricPayload } from './lyricPayload'
+import { normalizeMusicSource } from '../musicSource.mjs'
 
 const CLOUD_LYRIC_SEARCH_LIMIT = 8
 const CLOUD_LYRIC_DURATION_TOLERANCE_MS = 8000
@@ -514,6 +517,17 @@ async function getCloudLyricFallback(song) {
 
 export async function getLyricWithCloudFallback(songOrId) {
     const song = resolveCloudDiskSong(songOrId)
+    if (normalizeMusicSource(song?.source) === 'qq') {
+        const providerId = song.sourceId || song.songmid || song.mid || song.id
+        if (!providerId) return createUnavailableLyric()
+        try {
+            const response = await getLyricBySource('qq', providerId)
+            const normalized = normalizeQQLyricPayload(response?.data || response?.body || response)
+            return hasUsableLyricPayload(normalized) ? normalized : createUnavailableLyric()
+        } catch (_) {
+            return createUnavailableLyric()
+        }
+    }
     const lyricId = song ? song.id : songOrId
     const cloudSongId = getCloudDiskSongId(song)
     const hasCloudContext = !!cloudSongId

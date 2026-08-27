@@ -8,11 +8,17 @@
   import { getDjSubList } from '../api/dj'
   import { useLibraryStore } from '../store/libraryStore'
   import { storeToRefs } from 'pinia'
+  import { qqAccountStore } from '../store/qqAccountStore'
+  import { getQQPlaylists, getQQCollectedPlaylists, getQQLikedSongs } from '../api/qq'
+  import { normalizeQQLikedPlaylist } from '../api/qqMusic'
+  import { loadQQPlaylistPages as loadQQPlaylistPagesData, mergeQQPlaylistLists } from '../utils/qqLibrary.mjs'
+  import { isLogin } from '../utils/authority'
+  import { getMusicAccountId, isMusicAccountRequestCurrent } from '../utils/accountIdentity.mjs'
 
   const userStore = useUserStore()
   const { user } = storeToRefs(userStore)
   const libraryStore = useLibraryStore()
-  const { changeLibraryList, updateUserPlaylistCount, updateUserPlaylist } = libraryStore
+  const { changeLibraryList } = libraryStore
   const { libraryList, libraryListAlbum, libraryListAritist, listType1, listType2, playlistOverviewVersion } = storeToRefs(libraryStore)
 
   const typeTracker = ref(0)
@@ -25,12 +31,59 @@
   let libraryRequestToken = 0
 
   function getCurrentUserId() {
-    const userId = user.value?.userId
-    return userId == null || userId === '' ? null : String(userId)
+    const neteaseId = user.value?.userId == null || user.value?.userId === '' ? '' : String(user.value.userId)
+    const qqId = qqAccountStore.user?.uin || qqAccountStore.user?.id || ''
+    if (!neteaseId && !qqId) return null
+    return `${neteaseId}:${qqId}`
   }
 
-  function isLibraryRequestActive(requestToken, requestUserId) {
-    return requestToken === libraryRequestToken && getCurrentUserId() === requestUserId
+  async function loadQQPlaylist(requestToken, requestUserId, subscribed = false) {
+    try {
+      return await loadQQPlaylistPagesData(
+        params => subscribed
+          ? getQQCollectedPlaylists({ uin: requestUserId, ...params })
+          : getQQPlaylists({ uin: requestUserId, ...params }),
+        {
+          subscribed,
+          limit: subscribed ? 20 : 500,
+          isActive: () => isLibraryRequestActive(requestToken, requestUserId, 'qq'),
+        },
+      )
+    } catch (error) {
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      console.warn('QQ playlist load failed:', error?.message || error)
+      return []
+    }
+  }
+
+  async function loadQQLikedPlaylist(requestToken, requestUserId) {
+    try {
+      const likedResponse = await getQQLikedSongs({ uin: requestUserId, limit: 1, offset: 0 })
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      return normalizeQQLikedPlaylist(likedResponse)
+    } catch (error) {
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      console.warn('QQ liked playlist load failed:', error?.message || error)
+      return null
+    }
+  }
+
+  function isLibraryRequestActive(requestToken, requestUserId, provider = '') {
+    if (requestToken !== libraryRequestToken) return false
+
+    if (!provider) {
+      return isMusicAccountRequestCurrent(requestUserId, getCurrentUserId())
+    }
+
+    const requestedId = getMusicAccountId(requestUserId, provider)
+    if (!requestedId) return false
+
+    const neteaseId = user.value?.userId == null || user.value?.userId === '' ? '' : String(user.value.userId)
+    const qqId = qqAccountStore.user?.uin || qqAccountStore.user?.id || ''
+    if (provider === 'qq') return qqAccountStore.loggedIn === true && String(qqId) === requestedId
+    if (provider === 'netease') return isLogin() && neteaseId === requestedId
+
+    return isMusicAccountRequestCurrent(requestUserId, getCurrentUserId())
   }
 
   function clearAccountLibraryLists() {
@@ -41,8 +94,7 @@
 
   async function loadUserPlaylist(requestToken, requestUserId) {
     if (!requestUserId) {
-      clearAccountLibraryLists()
-      return false
+      return { created: [], subscribed: [] }
     }
 
     const params = {
@@ -54,22 +106,21 @@
 
     try {
       const listCount = await getUserPlaylistCount()
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
-
-      updateUserPlaylistCount(listCount)
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
       const list = await getUserPlaylist(params)
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
-
-      updateUserPlaylist(Array.isArray(list?.playlist) ? list.playlist : [])
-      lastHandledPlaylistOverviewVersion.value = playlistOverviewVersion.value
-      lastLoadedUserId.value = requestUserId
-      return true
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
+      const playlists = Array.isArray(list?.playlist) ? list.playlist : []
+      const createdCount = Number(listCount?.createdPlaylistCount) || 0
+      const subscribedCount = Number(listCount?.subPlaylistCount) || 0
+      return {
+        created: playlists.slice(0, createdCount),
+        subscribed: playlists.slice(createdCount, createdCount + subscribedCount),
+      }
     } catch (error) {
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
       console.error('加载用户歌单失败:', error)
-      clearAccountLibraryLists()
-      return false
+      return { created: [], subscribed: [] }
     }
   }
 
@@ -84,13 +135,13 @@
 
     try {
       while (true) {
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
         const result = await getUserSubAlbum({
           limit: SUB_ALBUM_PAGE_SIZE,
           offset,
         })
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
         const currentPageAlbums = Array.isArray(result?.data) ? result.data : []
         const totalCount = Number(result?.count)
@@ -105,7 +156,7 @@
         if (Number.isFinite(totalCount) && totalCount >= 0 && albums.length >= totalCount) break
       }
 
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
       libraryList.value = albums
       listType2.value = 0
@@ -113,7 +164,7 @@
       lastLoadedUserId.value = requestUserId
       return true
     } catch (error) {
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
       console.error('加载收藏专辑失败:', error)
       clearAccountLibraryLists()
       return false
@@ -130,23 +181,40 @@
     }
 
     if (option.value == 0) {
-      const loaded = await loadUserPlaylist(requestToken, requestUserId)
-      if (!loaded || !isLibraryRequestActive(requestToken, requestUserId)) return false
+      const qqUserId = String(qqAccountStore.user?.uin || qqAccountStore.user?.id || '')
+      const [neteaseResult, qqCreated, qqSubscribed, qqLiked] = await Promise.all([
+        isLogin() ? loadUserPlaylist(requestToken, user.value?.userId) : Promise.resolve({ created: [], subscribed: [] }),
+        qqAccountStore.loggedIn ? loadQQPlaylist(requestToken, qqUserId, false) : Promise.resolve([]),
+        qqAccountStore.loggedIn ? loadQQPlaylist(requestToken, qqUserId, true) : Promise.resolve([]),
+        qqAccountStore.loggedIn ? loadQQLikedPlaylist(requestToken, qqUserId) : Promise.resolve(null),
+      ])
+      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      const qqLists = mergeQQPlaylistLists(qqCreated, qqSubscribed, qqLiked)
+      const created = [...(neteaseResult?.created || []), ...qqLists.created]
+      const subscribed = [...(neteaseResult?.subscribed || []), ...qqLists.subscribed]
+      libraryStore.playlistUserCreated = created
+      libraryStore.playlistUserSub = subscribed
+      libraryStore.playlistCount = { createdPlaylistCount: created.length, subPlaylistCount: subscribed.length }
+      libraryList.value = typeOne.value == 0 ? created : subscribed
       listType2.value = typeOne.value == 0 ? 0 : 1
+      libraryListAlbum.value = null
+      libraryListAritist.value = null
+      lastLoadedUserId.value = requestUserId
+      lastHandledPlaylistOverviewVersion.value = playlistOverviewVersion.value
       changeLibraryList(typeOne.value == 0 ? 0 : 1)
     } else if (option.value == 1 && typeTwo.value == 0) {
       const loaded = await loadAllUserSubAlbums(requestToken, requestUserId)
-      if (!loaded || !isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!loaded || !isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
     } else if (option.value == 1 && typeTwo.value == 1) {
       try {
         const result = await getUserSubArtists()
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
         libraryList.value = Array.isArray(result?.data) ? result.data : []
         listType2.value = 1
         libraryListAritist.value = libraryList.value
         lastLoadedUserId.value = requestUserId
       } catch (error) {
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
         console.error('加载收藏歌手失败:', error)
         clearAccountLibraryLists()
         return false
@@ -154,13 +222,13 @@
     } else if (option.value == 1 && typeTwo.value == 2) {
       try {
         const result = await getUserSubMV()
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
         const list = Array.isArray(result?.data) ? result.data.map(item => ({ ...item, id: item?.vid })) : []
         libraryList.value = list
         listType2.value = 2
         lastLoadedUserId.value = requestUserId
       } catch (error) {
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
         console.error('加载收藏 MV 失败:', error)
         clearAccountLibraryLists()
         return false
@@ -168,12 +236,12 @@
     } else if (option.value == 1 && typeTwo.value == 3) {
       try {
         const result = await getDjSubList({ limit: 50, offset: 0 })
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
         libraryList.value = result?.djRadios || result?.data || result?.radios || []
         listType2.value = 3
         lastLoadedUserId.value = requestUserId
       } catch (error) {
-        if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+        if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
         console.error('加载收藏电台失败:', error)
         clearAccountLibraryLists()
         return false
@@ -202,7 +270,7 @@
   }
 
   watch(
-    () => user.value?.userId ?? null,
+    () => `${user.value?.userId || ''}:${qqAccountStore.loggedIn ? qqAccountStore.user?.uin || qqAccountStore.user?.id || 'qq' : ''}`,
     (nextUserId, previousUserId) => {
       if (nextUserId === previousUserId) return
       lastLoadedUserId.value = null

@@ -1,5 +1,6 @@
 import { getCookie, isLogin } from './authority'
 import { isSirenSong } from './siren'
+import { isNeteaseReportableSong } from './musicSource.mjs'
 
 const AUTH_COOKIE_KEYS = ['MUSIC_U', 'MUSIC_A_T', 'MUSIC_R_T', '__csrf']
 const MIN_REPORT_SECONDS = 3
@@ -29,10 +30,13 @@ function normalizeSourceId(value) {
 
 function isReportableNcmSong(song) {
     if (!song || typeof song !== 'object') return false
+    if (!isNeteaseReportableSong(song)) return false
     if (song.type === 'local') return false
     if (isSirenSong(song)) return false
     return !!normalizeSongId(song.id)
 }
+
+export { isReportableNcmSong }
 
 function buildAuthCookieString() {
     return AUTH_COOKIE_KEYS.map(key => {

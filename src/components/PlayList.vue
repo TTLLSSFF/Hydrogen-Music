@@ -9,10 +9,27 @@
   import { getSongDisplayName } from '../utils/songName'
   import { getIndexedSong } from '../utils/songList'
   import { shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
+  import { canUseSongAction } from '../utils/providerPolicy.mjs'
+  import { getSongIdentity } from '../utils/musicSource.mjs'
   const router = useRouter()
   const playerStore = usePlayerStore()
   const { playing, progress, playMode, currentMusic, currentIndex, listInfo, songList, shuffledList, shuffleIndex, songId, widgetState, playlistWidgetShow, lyricShow, showSongTranslation } = storeToRefs(playerStore)
   const currentSong = computed(() => getIndexedSong(songList.value, currentIndex.value))
+  const isCurrentSong = song => {
+    const current = currentSong.value
+    return !!song && !!current && getSongIdentity(song) === getSongIdentity(current)
+  }
+  const playlistItems = computed(() => {
+    const songs = Array.isArray(songList.value) ? songList.value : []
+    return songs.map((song, index) => ({
+      song,
+      index,
+      // A provider identity is not enough when the same track appears twice
+      // in a queue; include the queue position to keep virtual-scroller keys
+      // unique without falling back to a raw cross-provider id.
+      key: `${getSongIdentity(song) || 'playlist'}:${index}`,
+    }))
+  })
 
   const clearPlaylist = () => {
     playlistWidgetShow.value = false
@@ -38,17 +55,21 @@
     }, 300);
   }
 
-  const checkArtist = (artistId) => {
-    if(!artistId) return
-    if(currentSong.value && currentSong.value.type != 'local') {
+  const checkArtist = (song, artistId) => {
+    if(!artistId || !canUseSongAction(song, 'artist')) return
+    if(song && song.type != 'local') {
       router.push('/mymusic/artist/' + artistId)
       playerStore.forbidLastRouter = true
       if(!widgetState.value) {widgetState.value = true;playlistWidgetShow.value = false;lyricShow.value = false}
     }
   }
 
-  const play = async (id, index) => {
-    await addSong(id, index, true)
+  const play = async (song, index) => {
+    if (!song) return
+    const shuffleIndex = playMode.value == 3 && Array.isArray(shuffledList.value)
+      ? shuffledList.value.findIndex(item => getSongIdentity(item) === getSongIdentity(song))
+      : -1
+    await addSong(song.id, shuffleIndex >= 0 ? shuffleIndex : index, true)
   }
 
   const delCurrentSong = async (index, id) => {
@@ -112,24 +133,24 @@
       <div class="line"></div>
       <RecycleScroller
         class="playlist-widget-item"
-        :items="songList.slice(0, songList.length + 1)"
+        :items="playlistItems"
         :item-size="36"
-        key-field="id"
-        v-slot="{ item, index }"
+        key-field="key"
+        v-slot="{ item }"
       >
-        <div class="list-item" :class="{'list-item-playing': songId == item.id, 'list-item-disabled': shouldBlockRestrictedPlayback(item) }" @dblclick="play(item.id, index)">
+        <div class="list-item" :class="{'list-item-playing': isCurrentSong(item.song), 'list-item-disabled': shouldBlockRestrictedPlayback(item.song) }" @dblclick="play(item.song, item.index)">
           <div class="item-info">
-            <div class="playing-eq" v-show="(songId == item.id)" :class="{ 'is-paused': !playing }" aria-hidden="true">
+            <div class="playing-eq" v-show="isCurrentSong(item.song)" :class="{ 'is-paused': !playing }" aria-hidden="true">
               <span class="bar"></span>
               <span class="bar"></span>
               <span class="bar"></span>
               <span class="bar"></span>
             </div>
-            <span class="item-name">{{getSongDisplayName(item, '', showSongTranslation)}}</span>
+            <span class="item-name">{{getSongDisplayName(item.song, '', showSongTranslation)}}</span>
             <span class="item-separator"> - </span>
-            <span class="item-author" @dblclick.stop @click="checkArtist(singer.id)" v-for="(singer, index) in item.ar">{{singer.name}}{{index == item.ar.length -1 ? '' : '/'}}</span>
+            <span class="item-author" @dblclick.stop @click="checkArtist(item.song, singer.id)" v-for="(singer, index) in item.song.ar">{{singer.name}}{{index == item.song.ar.length -1 ? '' : '/'}}</span>
           </div>
-          <svg t="1670569532229" @dblclick.stop @click="delCurrentSong(index, item.id)" class="item-delete" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2597" width="200" height="200"><path d="M558.933333 529.066667l285.866667 285.866666-29.866667 29.866667-285.866666-285.866667-285.866667 285.866667-29.866667-29.866667 285.866667-285.866666L213.333333 243.2l29.866667-29.866667 285.866667 285.866667L814.933333 213.333333l29.866667 29.866667-285.866667 285.866667z" fill="#444444" p-id="2598"></path></svg>
+          <svg t="1670569532229" @dblclick.stop @click="delCurrentSong(item.index, item.song.id)" class="item-delete" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2597" width="200" height="200"><path d="M558.933333 529.066667l285.866667 285.866666-29.866667 29.866667-285.866666-285.866667-285.866667 285.866667-29.866667-29.866667 285.866667-285.866666L213.333333 243.2l29.866667-29.866667 285.866667 285.866667L814.933333 213.333333l29.866667 29.866667-285.866667 285.866667z" fill="#444444" p-id="2598"></path></svg>
         </div>
       </RecycleScroller>
     </div>

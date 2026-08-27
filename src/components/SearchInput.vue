@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { noticeOpen } from '../utils/dialog'
 import { usePlayerStore } from '../store/playerStore'
 import { searchHotDetail, searchSuggest, searchSuggestPc } from '../api/other'
+import { getSearchSource } from '../utils/providerPolicy.mjs'
 
 const DEFAULT_ASSIST_LIMIT = 8
 const MIN_ASSIST_LIMIT = 1
@@ -425,7 +426,7 @@ const searchInfo = (keyword = searchKeyword.value, byAssist = false) => {
     const value = JTrim(keyword)
     if (value != '') {
         searchKeyword.value = value
-        router.push({ name: 'search', query: { keywords: value } }).catch(() => {})
+        router.push({ name: 'search', query: { keywords: value, source: getSearchSource() } }).catch(() => {})
 
         if (byAssist && searchInput.value) searchInput.value.blur()
 

@@ -13,13 +13,15 @@ import { storeToRefs } from 'pinia'
 import { noticeOpen } from '../utils/dialog'
 import { getSongDisplayName } from '../utils/songName'
 import { getRestrictedPlaybackFailureMessage, shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
+import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
+import { getSongIdentity } from '../utils/musicSource.mjs'
 
 const router = useRouter()
 const userStore = useUserStore()
 const libraryStore = useLibraryStore()
 const { libraryInfo } = storeToRefs(libraryStore)
 const playerStore = usePlayerStore()
-const { songId, playMode, playing, showSongTranslation } = storeToRefs(playerStore)
+const { songId, currentIndex, songList, shuffledList, playMode, playing, showSongTranslation } = storeToRefs(playerStore)
 const otherStore = useOtherStore()
 const props = defineProps({
     songlist: {
@@ -122,7 +124,17 @@ const isSongDisabled = song => {
     return shouldBlockRestrictedPlayback(song)
 }
 const selectedDownloadIdSet = computed(() => new Set((props.selectedDownloadIds || []).map(id => String(id))))
-const isDownloadSelected = song => selectedDownloadIdSet.value.has(String(song?.id ?? ''))
+const isDownloadSelected = song => {
+    const identity = getSongIdentity(song)
+    return !!identity && selectedDownloadIdSet.value.has(identity)
+}
+const isCurrentSong = song => {
+    const current = Array.isArray(songList.value) ? songList.value[currentIndex.value] : null
+    if (song && current) return getSongIdentity(song) === getSongIdentity(current)
+    // Without a canonical queue entry there is no provider information in
+    // the raw store id; only retain the legacy fallback for unscoped songs.
+    return !!song && !song.source && String(songId.value ?? '') === String(song.id ?? '')
+}
 
 watch(scrollerItems, scheduleRecycleScrollerRefresh, { flush: 'post' })
 
@@ -130,8 +142,8 @@ onMounted(refreshListRuntimeState)
 
 onActivated(refreshListRuntimeState)
 
-const checkArtist = artistId => {
-    if (!props.artistRouteEnabled || !artistId) return
+const checkArtist = (song, artistId) => {
+    if (!props.artistRouteEnabled || !artistId || !canUseSongAction(song, 'artist')) return
     router.push('/mymusic/artist/' + artistId)
     playerStore.forbidLastRouter = true
 }
@@ -150,14 +162,26 @@ const play = async (song, index) => {
         await libraryStore.waitForPlaylistHydration(libraryInfo.value.id)
     }
     const targetQueueSongs = queueSongs.value || []
-    const targetIndex = (targetQueueSongs || []).findIndex(item => item?.id == song.id)
+    const targetIdentity = getSongIdentity(song)
+    const targetIndex = (targetQueueSongs || []).findIndex(item => getSongIdentity(item) === targetIdentity)
     await addToList(props.queueListType || router.currentRoute.value.name, targetQueueSongs, props.queueMeta || null)
+    if (playMode.value == 3) {
+        // addToList replaces the canonical queue, so any previous shuffled
+        // indexes belong to a different list. Rebuild first, then resolve the
+        // clicked song by provider identity instead of passing its canonical
+        // index into the shuffled queue.
+        await setShuffledList()
+        const shuffledIndex = Array.isArray(shuffledList.value)
+            ? shuffledList.value.findIndex(item => getSongIdentity(item) === targetIdentity)
+            : -1
+        await addSong(song.id, shuffledIndex >= 0 ? shuffledIndex : 0, true)
+        return
+    }
     await addSong(song.id, targetIndex >= 0 ? targetIndex : index, true)
-    if (playMode.value == 3) await setShuffledList()
 }
 
 const togglePlay = async (song, index) => {
-    if (songId.value === song.id) {
+    if (isCurrentSong(song)) {
         if (playing.value) {
             await pauseMusic()
         } else {
@@ -178,10 +202,13 @@ const openMenu = (e, item) => {
     otherStore.selectedItem = item
     otherStore.selectedPlaylist = libraryInfo.value
 
-    if (props.contextMenuMode === 'siren' || item?.source === 'siren') {
+    if (isQQSong(item)) {
+        otherStore.selectedPlaylist = null
+        otherStore.menuTree = otherStore.treeQQ
+    } else if (props.contextMenuMode === 'siren' || item?.source === 'siren') {
         otherStore.selectedPlaylist = null
         otherStore.menuTree = otherStore.tree5
-    } else if (otherStore.selectedPlaylist && otherStore.selectedPlaylist.creator && otherStore.selectedPlaylist.creator.userId == userStore.user.userId) {
+    } else if (otherStore.selectedPlaylist && otherStore.selectedPlaylist.creator && otherStore.selectedPlaylist.creator.userId == userStore.user?.userId) {
         otherStore.menuTree = otherStore.tree1
     } else {
         otherStore.menuTree = otherStore.tree2
@@ -213,7 +240,7 @@ const openMenu = (e, item) => {
         <RecycleScroller ref="recycleScroller" v-if="props.songlist" id="libraryScroll" class="library-song-list" :items="scrollerItems" :item-size="42" key-field="rowKey" v-slot="{ item }">
             <div
                 class="list-item"
-                :class="{ 'list-item-playing': songId == item.song.id, 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly, 'list-item-download-mode': props.downloadSelectionMode, 'list-item-download-selected': isDownloadSelected(item.song) }"
+                :class="{ 'list-item-playing': isCurrentSong(item.song), 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly, 'list-item-download-mode': props.downloadSelectionMode, 'list-item-download-selected': isDownloadSelected(item.song) }"
                 @mouseenter="hoverRowKey = item.rowKey"
                 @mouseleave="hoverRowKey = null"
                 @click="handleRowClick(item.song)"
@@ -226,10 +253,10 @@ const openMenu = (e, item) => {
                             class="item-play-btn"
                             :class="{ 'state-visible': hoverRowKey === item.rowKey }"
                             @click.stop="togglePlay(item.song, item.sourceIndex)"
-                            :aria-label="songId === item.song.id && playing ? '暂停' : '播放'"
+                            :aria-label="isCurrentSong(item.song) && playing ? '暂停' : '播放'"
                             :tabindex="hoverRowKey === item.rowKey ? 0 : -1"
                         >
-                            <svg v-if="songId === item.song.id && playing" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                            <svg v-if="isCurrentSong(item.song) && playing" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
                                 <rect x="256" y="200" width="160" height="624" rx="32" fill="currentColor" />
                                 <rect x="608" y="200" width="160" height="624" rx="32" fill="currentColor" />
                             </svg>
@@ -240,13 +267,13 @@ const openMenu = (e, item) => {
                                 ></path>
                             </svg>
                         </button>
-                        <div class="playing-eq" :class="{ 'is-paused': !playing, 'state-visible': hoverRowKey !== item.rowKey && songId == item.song.id }" aria-hidden="true">
+                        <div class="playing-eq" :class="{ 'is-paused': !playing, 'state-visible': hoverRowKey !== item.rowKey && isCurrentSong(item.song) }" aria-hidden="true">
                             <span class="bar"></span>
                             <span class="bar"></span>
                             <span class="bar"></span>
                             <span class="bar"></span>
                         </div>
-                        <div class="item-num" :class="{ 'state-visible': hoverRowKey !== item.rowKey && songId != item.song.id }">{{ item.sourceIndex + 1 }}</div>
+                        <div class="item-num" :class="{ 'state-visible': hoverRowKey !== item.rowKey && !isCurrentSong(item.song) }">{{ item.sourceIndex + 1 }}</div>
                     </div>
                     <span class="item-name">
                         <span class="item-name-text">{{ getSongDisplayName(item.song, '', showSongTranslation) }}</span>
@@ -255,7 +282,7 @@ const openMenu = (e, item) => {
                 </div>
                 <div class="item-other">
                     <div class="item-author" v-if="item.song.ar">
-                        <span class="item-singer" @click="checkArtist(singer.id)" v-for="(singer, index) in item.song.ar">{{ singer.name }}{{ index == item.song.ar.length - 1 ? '' : '/' }}</span>
+                        <span class="item-singer" @click="checkArtist(item.song, singer.id)" v-for="(singer, index) in item.song.ar">{{ singer.name }}{{ index == item.song.ar.length - 1 ? '' : '/' }}</span>
                     </div>
                         <span class="item-time">{{ songTime(item.song.dt || item.song.duration) || '--:--' }}</span>
                 </div>
