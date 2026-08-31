@@ -578,8 +578,15 @@ async function resolveSongPlaybackInfo(song, options = {}) {
     if (isQQSong(song)) {
         const providerId = song.sourceId || song.songmid || song.mid || song.id
         if (!providerId) return null
+        const mediaId = song.mediaId
+            || song.media_mid
+            || song.mediaMid
+            || song.strMediaMid
+            || song.file?.media_mid
+            || song.file?.mediaMid
         const response = await getPlayBySource('qq', providerId, {
             quality: getPreferredQuality(options.quality ?? quality.value),
+            ...(mediaId ? { mediaId: String(mediaId) } : {}),
         })
         const normalized = normalizeQQPlaybackPayload(response, providerId)
         if (!normalized?.url) return null

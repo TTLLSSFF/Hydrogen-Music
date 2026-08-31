@@ -89,6 +89,11 @@ export function normalizeQueueSong(song) {
         'musicId',
         'source',
         'sourceId',
+        'mediaId',
+        'media_id',
+        'mediaMid',
+        'media_mid',
+        'strMediaMid',
         'cid',
         'name',
         'localName',
@@ -135,6 +140,12 @@ export function normalizeQueueSong(song) {
     assignIfMissing(normalized, 'dt', nestedSong?.dt ?? nestedSong?.duration)
     assignIfMissing(normalized, 'duration', nestedSong?.duration ?? nestedSong?.dt)
     assignIfMissing(normalized, 'fee', nestedSong?.fee)
+    assignIfMissing(normalized, 'mediaId', nestedSong?.mediaId
+        ?? nestedSong?.media_mid
+        ?? nestedSong?.mediaMid
+        ?? nestedSong?.strMediaMid
+        ?? nestedSong?.file?.media_mid
+        ?? nestedSong?.file?.mediaMid)
 
     const artists = cloneArray(song.ar, normalizeArtist)
     const fallbackArtists = cloneArray(song.artists || nestedSong?.ar || nestedSong?.artists, normalizeArtist)

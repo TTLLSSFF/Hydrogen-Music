@@ -540,10 +540,6 @@ const playAllSafe = async () => {
 
 //进入选择模式
 const enterSelectionMode = () => {
-    if (isQQPlaylist.value) {
-        noticeOpen('QQ 音乐暂不支持下载', 2);
-        return;
-    }
     //立刻展开菜单，剩余歌曲在后台继续加载，全选时再等待
     downloadSelectionMode.value = true;
     selectedDownloadSongs.value = [];
@@ -791,8 +787,8 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         <span class="introduce-num" v-if="!isSinger">共{{ libraryInfo.trackCount || libraryInfo.size }}首 - {{ totalTime }}分钟</span>
                         <span class="introduce-num" v-if="isSinger">{{ libraryInfo.musicSize }}首歌 · {{ libraryInfo.albumSize }}张专辑 · {{ libraryInfo.mvSize }}个MV</span>
                         <div class="library-operation">
-                            <template v-if="isLogin() && !isQQPlaylist">
-                                <div class="operation-collection operation-item" v-show="!isCurrentNeteasePlaylistCreated" @click="librarySub(libraryInfo.id)">
+                            <template v-if="isQQPlaylist ? hasQQAccount() : isLogin()">
+                                <div class="operation-collection operation-item" v-if="isLogin() && !isQQPlaylist" v-show="!isCurrentNeteasePlaylistCreated" @click="librarySub(libraryInfo.id)">
                                     <svg
                                         v-show="!libraryInfo.followed"
                                         t="1669112450805"
@@ -826,7 +822,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                     </svg>
                                     <span>{{ libraryInfo.followed ? '已收藏' : '收藏' }}</span>
                                 </div>
-                                <div class="operation-selection-wrapper" v-if="!isSinger" :class="{ 'selection-active': downloadSelectionMode }">
+                                <div class="operation-selection-wrapper" v-if="!isSinger || artistPageType == 0" :class="{ 'selection-active': downloadSelectionMode }">
                                     <div class="operation-selection operation-item" @click="enterSelectionMode">
                                         <svg
                                             t="1735052000000"
@@ -842,10 +838,10 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                         <span>选择</span>
                                     </div>
                                     <div class="selection-menu" :class="{ 'selection-menu-expanded': selectionMenuExpanded && downloadSelectionMode }">
-                                        <div class="selection-menu-item" @click="downloadSelected">下载</div>
-                                        <div class="selection-menu-item" @click="addSelectedToPlaylist">添加到歌单</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist" @click="downloadSelected">下载</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist" @click="addSelectedToPlaylist">添加到歌单</div>
                                         <div class="selection-menu-item" @click="addSelectedToPlayerList">添加到播放列表</div>
-                                        <div class="selection-menu-item" @click="deleteSelectedFromPlaylist">从歌单中删除</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist" @click="deleteSelectedFromPlaylist">从歌单中删除</div>
                                         <div class="operation-download-select">
                                             <button @click="selectAllDownloadSongs()">全选</button>
                                             <button @click="cancelDownloadSelection()">取消</button>
@@ -921,7 +917,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :songlist="visibleLibrarySongs"
                         :queue-songlist="hasSongSearchKeyword ? librarySongs : null"
                         :source-indexes="visibleLibrarySourceIndexes"
-                        :download-selection-mode="!isQQPlaylist && downloadSelectionMode"
+                        :download-selection-mode="downloadSelectionMode"
                         :selected-download-ids="selectedDownloadIds"
                         @toggle-download-selection="toggleDownloadSelection"
                         class="library-content"

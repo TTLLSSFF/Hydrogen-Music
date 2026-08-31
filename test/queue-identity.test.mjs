@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createShuffledList } from '../src/utils/player/queue.js'
+import { normalizeQueueSong } from '../src/utils/player/queueSong.js'
 import { getSongIdentity } from '../src/utils/musicSource.mjs'
 import { createPlaybackTarget, isPlaybackTargetCurrent } from '../src/utils/player/targetIdentity.mjs'
 
@@ -38,4 +39,15 @@ test('shuffle accepts a provider-qualified currentSongId when no song object is 
   })
 
   assert.equal(getSongIdentity(shuffled[0]), 'qq:qq-mid')
+})
+
+test('queue normalization preserves QQ mediaId required for VIP playback URLs', () => {
+  const song = normalizeQueueSong({
+    id: 'qq-mid',
+    source: 'qq',
+    sourceId: 'qq-mid',
+    mediaId: 'qq-media-mid',
+    name: 'QQ VIP song',
+  })
+  assert.equal(song.mediaId, 'qq-media-mid')
 })

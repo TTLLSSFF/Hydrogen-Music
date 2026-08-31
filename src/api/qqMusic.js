@@ -39,6 +39,71 @@ const firstPositiveQQValue = (...values) => values.find(value => {
   return Number.isFinite(parsed) && parsed > 0
 })
 const normalizeQQId = value => isPresentQQValue(value) ? String(value) : ''
+const normalizeQQBooleanFlag = value => {
+  if (value === true) return true
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0
+  if (typeof value === 'string') {
+    const normalized = value.trim()
+    if (/^(?:true|yes)$/i.test(normalized)) return true
+    const numeric = Number(normalized)
+    return Number.isFinite(numeric) && numeric > 0
+  }
+  return false
+}
+
+function readQQVipOnly(value) {
+  if (!value || typeof value !== 'object') return false
+  if (normalizeQQBooleanFlag(value.vipOnly) || normalizeQQBooleanFlag(value.vip)) return true
+  if (normalizeQQBooleanFlag(value.pay_play) || normalizeQQBooleanFlag(value.payPlay)) return true
+  if (value.vip && typeof value.vip === 'object' && (
+    normalizeQQBooleanFlag(value.vip.isVip)
+    || normalizeQQBooleanFlag(value.vip.is_vip)
+    || normalizeQQBooleanFlag(value.vip.level)
+  )) return true
+  const pay = [
+    value.pay,
+    value.payInfo,
+    value.payinfo,
+    value.payment,
+    value.songInfo?.pay,
+    value.song_info?.pay,
+  ]
+    .find(item => item && typeof item === 'object')
+  if (!pay) return false
+  // QQ song payloads use pay_play/payPlay to indicate that a member
+  // entitlement is required for full playback.
+  return [
+    pay.pay_play,
+    pay.payPlay,
+    pay.play,
+  ].some(normalizeQQBooleanFlag)
+}
+
+function readQQMediaId(value) {
+  const file = value?.file && typeof value.file === 'object' ? value.file : {}
+  const nestedFile = value?.songInfo?.file || value?.song_info?.file
+  const fallbackFile = nestedFile && typeof nestedFile === 'object' ? nestedFile : {}
+  return firstQQValue(
+    value?.mediaId,
+    value?.media_id,
+    value?.mediaMid,
+    value?.media_mid,
+    value?.strMediaMid,
+    value?.str_media_mid,
+    file.mediaId,
+    file.media_id,
+    file.mediaMid,
+    file.media_mid,
+    file.strMediaMid,
+    file.str_media_mid,
+    fallbackFile.mediaId,
+    fallbackFile.media_id,
+    fallbackFile.mediaMid,
+    fallbackFile.media_mid,
+    fallbackFile.strMediaMid,
+    fallbackFile.str_media_mid,
+  )
+}
 const parseQQTrackCount = value => {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
@@ -277,6 +342,42 @@ export function normalizeQQPlaybackPayload(payload, songmid = '') {
 export function normalizeQQLyricPayload(payload) {
   const body = unwrapQQResponse(payload)
   const source = body?.data && typeof body.data === 'object' ? body.data : body
+  // The QQ endpoints have used a few different names for the translated and
+  // romanised tracks over time.  The public package currently forwards the
+  // upstream object as-is, so keep the adapter tolerant of both the legacy
+  // `trans`/`roma` fields and newer aliases such as `transLyric`/`translrc`.
+  // Values may also be wrapped as `{ lyric: ... }` (or nested under `data`).
+  const readQQLyricField = (root, aliases) => {
+    const roots = Array.isArray(root) ? root : [root]
+    const queue = roots.map(value => ({ value, depth: 0 }))
+    const seen = new Set()
+    while (queue.length > 0) {
+      const { value, depth } = queue.shift()
+      if (!value || typeof value !== 'object' || seen.has(value) || depth > 6) continue
+      seen.add(value)
+
+      for (const alias of aliases) {
+        const candidate = value[alias]
+        if (typeof candidate === 'string' && candidate) return candidate
+        if (candidate && typeof candidate === 'object') {
+          for (const key of ['lyric', 'text', 'content', 'value']) {
+            const text = candidate[key]
+            if (typeof text === 'string' && text) return text
+          }
+        }
+      }
+
+      // Restrict traversal to response containers.  This still handles
+      // `{ response: { data: ... } }` while avoiding accidental matches in
+      // unrelated song metadata objects.
+      for (const key of ['data', 'body', 'response', 'result', 'payload', 'req_0']) {
+        const nested = value[key]
+        if (nested && typeof nested === 'object') queue.push({ value: nested, depth: depth + 1 })
+      }
+    }
+    return ''
+  }
+
   const decode = value => {
     if (typeof value !== 'string' || !value) return value || ''
     const compact = value.replace(/\s+/g, '')
@@ -290,16 +391,37 @@ export function normalizeQQLyricPayload(payload) {
     } catch (_) {}
     return value
   }
-  const original = decode(source?.lyric || source?.lrc?.lyric || source?.lrc || '')
-  const translated = decode(source?.trans || source?.tlyric?.lyric || source?.tlyric || '')
-  const romanized = decode(source?.roma || source?.romalrc?.lyric || source?.romalrc || '')
+  // Prefer the normalized `data` object but retain the outer body as a
+  // fallback: older package versions occasionally put translation beside
+  // `data` while leaving the original lyric at the response root.
+  const lyricRoots = source === body ? source : [source, body]
+  const original = decode(readQQLyricField(lyricRoots, [
+    'lyric', 'lrc', 'qrc', 'originalLyric', 'original', 'lyricText', 'lrcText',
+  ]))
+  const translated = decode(readQQLyricField(lyricRoots, [
+    'trans', 'tlyric', 'trans_tlyric', 'transLyric', 'translrc', 'translation',
+    'translatedLyric', 'translateLyric', 'transLyricText', 'translationLyric',
+    'translrcText',
+  ]))
+  const romanized = decode(readQQLyricField(lyricRoots, [
+    'roma', 'romalrc', 'romaLyric', 'romanizedLyric', 'romanLyric', 'romaLyricText',
+  ]))
   const normalized = {
     ...source,
     lrc: { lyric: typeof original === 'string' ? original : '' },
     hmLyricSource: 'qq',
   }
-  if (translated) normalized.tlyric = { lyric: typeof translated === 'string' ? translated : '' }
-  if (romanized) normalized.romalrc = { lyric: typeof romanized === 'string' ? romanized : '' }
+  if (translated) {
+    normalized.tlyric = { lyric: typeof translated === 'string' ? translated : '' }
+    // Preserve a canonical `translrc` alias for callers that consume QQ's
+    // native field name, while the shared lyric runtime continues to read
+    // `tlyric`.
+    normalized.translrc = { lyric: normalized.tlyric.lyric }
+  }
+  if (romanized) {
+    normalized.romalrc = { lyric: typeof romanized === 'string' ? romanized : '' }
+    normalized.roma = normalized.romalrc.lyric
+  }
   return normalized
 }
 
@@ -458,6 +580,8 @@ export function normalizeQQSong(song = {}) {
   ) || ''
   const songName = firstQQValue(value.songname, value.songName, value.song_name, value.name, value.title) || ''
   const songId = firstQQValue(value.id, value.songId, value.song_id, mid)
+  const mediaId = readQQMediaId(value)
+  const vipOnly = readQQVipOnly(value)
   return {
     ...value,
     id: songId,
@@ -472,6 +596,8 @@ export function normalizeQQSong(song = {}) {
     albumId: firstQQValue(album.id, album.albumid, album.album_id, value.albumid, value.albumId, value.album_id, ''),
     albumMid,
     coverUrl: String(coverUrl),
+    vipOnly,
+    ...(mediaId ? { mediaId: String(mediaId) } : {}),
     ...(duration > 0 ? { dt: duration, duration } : {}),
   }
 }

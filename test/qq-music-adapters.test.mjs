@@ -179,6 +179,26 @@ test('QQ song normalization keeps scalar singer, song-level cover, and clock dur
   assert.equal(song.dt, 225000)
 })
 
+test('QQ song normalization maps pay metadata to vipOnly and mediaId', () => {
+  const song = normalizeQQSong({
+    songmid: 'vip-mid',
+    songname: 'VIP song',
+    pay: { pay_play: 1, pay_down: 1 },
+    file: { media_mid: 'media-mid' },
+  })
+  assert.equal(song.vipOnly, true)
+  assert.equal(song.mediaId, 'media-mid')
+})
+
+test('QQ song normalization does not mark free tracks as vipOnly', () => {
+  const song = normalizeQQSong({
+    songmid: 'free-mid',
+    songname: 'Free song',
+    pay: { pay_play: 0, pay_down: 0 },
+  })
+  assert.equal(song.vipOnly, false)
+})
+
 test('QQ lyric adapter exposes the shared lrc/tlyric shape', () => {
   const lyric = normalizeQQLyricPayload({
     response: { lyric: '[00:01.00]hello', trans: '[00:01.00]你好' },
@@ -192,6 +212,59 @@ test('QQ lyric adapter decodes the upstream base64 lyric field', () => {
   const encoded = Buffer.from('[00:01.00]hello', 'utf8').toString('base64')
   const lyric = normalizeQQLyricPayload({ response: { lyric: encoded } })
   assert.equal(lyric.lrc.lyric, '[00:01.00]hello')
+})
+
+test('QQ lyric adapter maps package translation aliases from nested payloads', () => {
+  const encodedTranslation = Buffer.from('[00:01.00]你好', 'utf8').toString('base64')
+  const lyric = normalizeQQLyricPayload({
+    response: {
+      data: {
+        lyric: '[00:01.00]hello',
+        transLyric: { lyric: encodedTranslation },
+        romaLyric: '[00:01.00]ni hao',
+      },
+    },
+  })
+
+  assert.equal(lyric.lrc.lyric, '[00:01.00]hello')
+  assert.equal(lyric.tlyric.lyric, '[00:01.00]你好')
+  assert.equal(lyric.translrc.lyric, '[00:01.00]你好')
+  assert.equal(lyric.romalrc.lyric, '[00:01.00]ni hao')
+  assert.equal(lyric.roma, '[00:01.00]ni hao')
+})
+
+test('QQ lyric adapter accepts trans_tlyric and translation text aliases', () => {
+  const fromTransTlyric = normalizeQQLyricPayload({
+    body: {
+      lyric: '[00:00.00]original',
+      trans_tlyric: '[00:00.00]translated',
+    },
+  })
+  assert.equal(fromTransTlyric.tlyric.lyric, '[00:00.00]translated')
+
+  const fromTranslation = normalizeQQLyricPayload({
+    data: {
+      lyric: '[00:00.00]original',
+      translation: { text: '[00:00.00]translated' },
+    },
+  })
+  assert.equal(fromTranslation.tlyric.lyric, '[00:00.00]translated')
+})
+
+test('QQ lyric adapter handles the package MusicU req_0.data envelope', () => {
+  const lyric = normalizeQQLyricPayload({
+    req_0: {
+      data: {
+        lyric: Buffer.from('[00:00.00]original', 'utf8').toString('base64'),
+        trans: Buffer.from('[00:00.00]translated', 'utf8').toString('base64'),
+        roma: Buffer.from('[00:00.00]original (romanized)', 'utf8').toString('base64'),
+      },
+    },
+  })
+
+  assert.equal(lyric.lrc.lyric, '[00:00.00]original')
+  assert.equal(lyric.tlyric.lyric, '[00:00.00]translated')
+  assert.equal(lyric.romalrc.lyric, '[00:00.00]original (romanized)')
 })
 
 test('QQ playback adapter unwraps nested playUrl maps', () => {
