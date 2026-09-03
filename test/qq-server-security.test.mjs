@@ -294,6 +294,21 @@ test('QQ security middleware injects the server cookie and strips credentials fr
   assert.equal(JSON.stringify(context.body).includes('server-secret'), false)
 })
 
+test('QQ playback aliases the QR login qm_keyst credential for the upstream VIP vkey service', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=12345; qm_keyst=vip-secret' }),
+  })
+  const context = createContext('/getMusicPlay?songmid=vip-mid')
+
+  await middleware(context, async () => {
+    assert.match(context.request.cookie, /(?:^|;\s*)qm_keyst=vip-secret(?:;|$)/)
+    assert.match(context.request.cookie, /(?:^|;\s*)qqmusic_key=vip-secret(?:;|$)/)
+    context.body = { data: { playUrl: { 'vip-mid': { url: 'https://example.test/vip.mp3' } } } }
+  })
+
+  assert.equal(JSON.stringify(context.body).includes('vip-secret'), false)
+})
+
 test('QQ profile, avatar, liked songs and playlists receive the server-side uin', async () => {
   const middleware = createQQSecurityMiddleware({
     getSession: () => ({ cookie: 'uin=24680', uin: '24680' }),

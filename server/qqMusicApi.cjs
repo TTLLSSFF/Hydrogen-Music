@@ -169,6 +169,21 @@ function parseCookieUin(cookie) {
   return match ? match[1].trim() : ''
 }
 
+function getQQCookieValue(cookie, name) {
+  const escapedName = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return String(cookie || '').match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]*)`, 'i'))?.[1]?.trim() || ''
+}
+
+// QR login currently returns qm_keyst on some accounts, while the installed
+// upstream vkey service still reads qqmusic_key. Keep the credential entirely
+// inside the server boundary and add the compatible alias only for upstream use.
+function normalizeQQUpstreamCookie(cookie) {
+  const normalized = getSingleValue(cookie).trim()
+  if (!normalized || getQQCookieValue(normalized, 'qqmusic_key')) return normalized
+  const qmKeyst = getQQCookieValue(normalized, 'qm_keyst')
+  return qmKeyst ? `${normalized}; qqmusic_key=${qmKeyst}` : normalized
+}
+
 function hasSensitiveQQQuery(url) {
   let parsed
   try {
@@ -551,7 +566,7 @@ function createQQSecurityMiddleware(options = {}) {
       delete ctx.request.headers['x-qq-music-cookie']
       delete ctx.request.headers['X-QQ-Music-Cookie']
     }
-    const sessionCookie = clientCookie || getSingleValue(serverSession?.cookie).trim()
+    const sessionCookie = normalizeQQUpstreamCookie(clientCookie || getSingleValue(serverSession?.cookie).trim())
     if (!sessionCookie) {
       writeJson(ctx, 401, { error: 'QQ Music session required' })
       return
@@ -559,11 +574,14 @@ function createQQSecurityMiddleware(options = {}) {
     const activeSession = clientCookie
       ? {
           ...(serverSession || {}),
-          cookie: clientCookie,
+          cookie: sessionCookie,
           ...(clientUin ? { uin: clientUin } : {}),
           ...(clientEuin ? { euin: clientEuin } : {}),
         }
-      : serverSession
+      : {
+          ...(serverSession || {}),
+          cookie: sessionCookie,
+        }
     if (activeSession?.cookie) {
       syncQQUpstreamUserInfo(activeSession)
       ctx.request.cookie = activeSession.cookie

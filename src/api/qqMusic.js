@@ -51,6 +51,32 @@ const normalizeQQBooleanFlag = value => {
   return false
 }
 
+const QQ_PLAYBACK_QUALITY_MAP = Object.freeze({
+  standard: '128',
+  higher: '320',
+  exhigh: '320',
+  lossless: 'flac',
+  hires: 'flac',
+  jyeffect: 'flac',
+  sky: 'flac',
+  dolby: 'flac',
+  jymaster: 'flac',
+})
+
+export function normalizeQQPlaybackQuality(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (QQ_PLAYBACK_QUALITY_MAP[normalized]) return QQ_PLAYBACK_QUALITY_MAP[normalized]
+  if (['m4a', '128', '320', 'ape', 'flac'].includes(normalized)) return normalized
+  return '128'
+}
+
+function getQQPlaybackQualityCandidates(value) {
+  const preferred = normalizeQQPlaybackQuality(value)
+  if (preferred === 'flac' || preferred === 'ape') return [preferred, '320', '128']
+  if (preferred === '320') return ['320', '128']
+  return [preferred]
+}
+
 function readQQVipOnly(value) {
   if (!value || typeof value !== 'object') return false
   if (normalizeQQBooleanFlag(value.vipOnly) || normalizeQQBooleanFlag(value.vip)) return true
@@ -288,8 +314,24 @@ export function normalizeQQPlaylistDetail(payload, fallbackId = '') {
   }
 }
 
-export function getQQMusicPlay(songmid, params = {}) {
-  return qqRequest({ url: '/getMusicPlay', method: 'get', params: { songmid, ...params } })
+export async function getQQMusicPlay(songmid, params = {}) {
+  const qualityCandidates = getQQPlaybackQualityCandidates(params.quality)
+  let lastResponse = null
+
+  for (const candidate of qualityCandidates) {
+    lastResponse = await qqRequest({
+      url: '/getMusicPlay',
+      method: 'get',
+      params: {
+        songmid,
+        ...params,
+        quality: candidate,
+      },
+    })
+    if (normalizeQQPlaybackPayload(lastResponse, songmid)?.url) return lastResponse
+  }
+
+  return lastResponse
 }
 
 export function getQQLyric(songmid, params = {}) {

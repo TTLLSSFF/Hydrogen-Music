@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   extractQQPlaylists,
   getQQAlbumInfo,
+  getQQMusicPlay,
   getQQMv,
   getQQMvPlay,
   getQQSongListDetail,
@@ -276,6 +277,55 @@ test('QQ playback adapter unwraps nested playUrl maps', () => {
     trackInfo: null,
     duration: 0,
   })
+})
+
+test('QQ playback request translates the shared lossless quality and keeps mediaId', async () => {
+  const originalFetch = globalThis.fetch
+  let requestUrl = ''
+  globalThis.fetch = async url => {
+    requestUrl = String(url)
+    return {
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { playUrl: { 'song-mid': { url: 'https://example.test/lossless.flac' } } } }),
+    }
+  }
+
+  try {
+    await getQQMusicPlay('song-mid', { quality: 'lossless', mediaId: 'media-mid' })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  const request = new URL(requestUrl, 'http://localhost')
+  assert.equal(request.searchParams.get('quality'), 'flac')
+  assert.equal(request.searchParams.get('mediaId'), 'media-mid')
+})
+
+test('QQ playback request falls back from unavailable lossless to playable member quality', async () => {
+  const originalFetch = globalThis.fetch
+  const requestedQualities = []
+  globalThis.fetch = async url => {
+    const request = new URL(String(url), 'http://localhost')
+    const requestQuality = request.searchParams.get('quality')
+    requestedQualities.push(requestQuality)
+    const urlByQuality = requestQuality === '320' ? 'https://example.test/vip-320.mp3' : ''
+    return {
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { playUrl: { 'vip-mid': { url: urlByQuality } } } }),
+    }
+  }
+
+  let result
+  try {
+    result = await getQQMusicPlay('vip-mid', { quality: 'lossless', mediaId: 'vip-media-mid' })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  assert.deepEqual(requestedQualities, ['flac', '320'])
+  assert.equal(normalizeQQPlaybackPayload(result, 'vip-mid')?.url, 'https://example.test/vip-320.mp3')
 })
 
 test('QQ profile and collection playlist summaries keep their real fields', () => {
