@@ -34,6 +34,7 @@ import { getPlayBySource } from '../api/musicSource.js'
 import { normalizeQQPlaybackPayload } from '../api/qqMusic.js'
 import { getHeartModeBlockReason, isQQSong, isProviderPlaylist } from './providerPolicy.mjs'
 import { getSongIdentity, normalizeMusicSource } from './musicSource.mjs'
+import { shouldClosePlaylistOnExternalClick } from './player/playlistRuntime.mjs'
 import { createPlaybackTarget, getPlaybackTargetIdentity, isPlaybackTargetCurrent } from './player/targetIdentity.mjs'
 import { getIndexedSong, getIndexedSongOrFirst } from './songList'
 import { reportNcmPlaybackEnd, reportNcmPlaybackStart } from './ncmRecentPlayReporter'
@@ -3090,23 +3091,19 @@ export function initPlayerExternalBridge() {
             const target = event?.target
             if (playlistWidgetShow.value) {
                 const playlistWidget = document.getElementsByClassName('playlist-widget')[0]
+                const playlistWidgetPlayer = document.getElementsByClassName('playlist-widget-player')[0]
                 const musicControl = document.getElementsByClassName('music-control')[0]
                 const musicOther = document.getElementsByClassName('music-other')[0]
-                const playlistWidgetPlayer = document.getElementsByClassName('playlist-widget-player')[0]
                 const songControl = document.getElementsByClassName('song-control')[0]
                 const contextMenu = document.getElementsByClassName('contextMune')[0]
                 const isItemDelete = target?.className?.baseVal == 'item-delete'
 
-                if (
-                    playlistWidget && musicControl && musicOther && playlistWidgetPlayer && songControl && contextMenu
-                    && playlistWidget.contains(target) == false
-                    && musicControl.contains(target) == false
-                    && musicOther.contains(target) == false
-                    && playlistWidgetPlayer.contains(target) == false
-                    && songControl.contains(target) == false
-                    && contextMenu.contains(target) == false
-                    && !isItemDelete
-                ) {
+                if (shouldClosePlaylistOnExternalClick(target, {
+                    playlistElements: [playlistWidget, playlistWidgetPlayer].filter(Boolean),
+                    controlElements: [musicControl, musicOther, songControl].filter(Boolean),
+                    contextMenuElements: [contextMenu].filter(Boolean),
+                    isItemDelete,
+                })) {
                     playlistWidgetShow.value = false
                 }
             }

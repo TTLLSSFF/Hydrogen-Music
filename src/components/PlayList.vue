@@ -11,6 +11,7 @@
   import { shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
   import { canUseSongAction } from '../utils/providerPolicy.mjs'
   import { getSongIdentity } from '../utils/musicSource.mjs'
+  import { getPlaylistItemKey } from '../utils/player/playlistRuntime.mjs'
   const router = useRouter()
   const playerStore = usePlayerStore()
   const { playing, progress, playMode, currentMusic, currentIndex, listInfo, songList, shuffledList, shuffleIndex, songId, widgetState, playlistWidgetShow, lyricShow, showSongTranslation } = storeToRefs(playerStore)
@@ -27,7 +28,7 @@
       // A provider identity is not enough when the same track appears twice
       // in a queue; include the queue position to keep virtual-scroller keys
       // unique without falling back to a raw cross-provider id.
-      key: `${getSongIdentity(song) || 'playlist'}:${index}`,
+      key: getPlaylistItemKey(song, index),
     }))
   })
 

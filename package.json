@@ -12,6 +12,7 @@
     "build": "vite build",
     "test": "node --test test/*.test.mjs",
     "test:selection-animation": "node --experimental-websocket scripts/test-selection-animation.mjs",
+    "test:player-open-performance": "node --experimental-websocket scripts/test-player-open-performance.mjs",
     "preview": "vite preview",
     "postinstall": "node scripts/patch-ncm-api.cjs",
     "serve": "node web-server.js"

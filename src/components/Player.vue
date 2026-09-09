@@ -16,6 +16,7 @@ import { getSongDisplayName } from '../utils/songName';
 import { getIndexedSong } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
 import { isQQSong } from '../utils/providerPolicy.mjs'
+import { getActivePlaylistSurface } from '../utils/player/playlistRuntime.mjs'
 const PlayList = defineAsyncComponent(() => import('./PlayList.vue'));
 
 // 定义 props 和 emit
@@ -91,6 +92,7 @@ const {
     showSongTranslation,
 } = storeToRefs(playerStore);
 const playlistWidgetLoaded = ref(false);
+const isActivePlaylistSurface = computed(() => getActivePlaylistSurface(widgetState.value) === 'player');
 
 const sliderDuration = computed(() => {
     const currentTime = Number(time.value);
@@ -173,7 +175,7 @@ watch(djRid, () => {
 });
 watch(playlistWidgetShow, shown => {
     if (shown) playlistWidgetLoaded.value = true;
-});
+}, { immediate: true });
 
 const checkIsLike = computed(() => id => {
     return Array.isArray(userStore.likelist) && userStore.likelist.includes(id);
@@ -831,7 +833,7 @@ const toggleDjSub = async isSubscribe => {
             </div>
         </div>
 
-        <PlayList v-if="playlistWidgetLoaded" class="playlist-widget-player" :class="{ 'playlist-widget-open': playlistWidgetShow }"></PlayList>
+        <PlayList v-if="playlistWidgetLoaded && isActivePlaylistSurface" class="playlist-widget-player" :class="{ 'playlist-widget-open': playlistWidgetShow }"></PlayList>
 
         <span class="border border1"></span>
         <span class="border border2"></span>
