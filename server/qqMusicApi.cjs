@@ -401,13 +401,70 @@ function pruneExpiredQrSessions(store, now) {
   }
 }
 
+// ptqrlogin is a stateless poll: it reports the current scan state and is safe
+// to repeat. The upstream resolver only distinguishes "login success" from
+// "not scanned" and collapses the "scanned, waiting for confirm" state, so the
+// 802 waiting UI can never appear. Probe the endpoint directly to surface that
+// intermediate state, and only delegate to the upstream resolver once a login is
+// confirmed so its proven session-exchange flow is reused unchanged.
+const QQ_PTQR_LOGIN_URL = 'https://ssl.ptlogin2.qq.com/ptqrlogin?u1=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump&ptqrtoken=___TOKEN___&ptredirect=0&h=1&t=1&g=1&from_ui=1&ptlang=2052&action=0-0-1711022193435&js_ver=23111510&js_type=1&login_sig=du-YS1h8*0GqVqcrru0pXkpwVg2DYw-DtbFulJ62IgPf6vfiJe*4ONVrYc5hMUNE&pt_uistyle=40&aid=716027609&daid=383&pt_3rd_aid=100497308&&o1vId=3674fc47871e9c407d8838690b355408&pt_js_version=v1.48.1'
+
+// Map a raw ptqrlogin body to the public 8xx status the UI understands.
+function parsePtqloginStatus(text) {
+  const body = String(text || '')
+  if (body.includes('登录成功')) return 803
+  if (body.includes('已失效')) return 800
+  const match = body.match(/ptuiCB\(\s*['"]?(\d+)/i)
+  if (match && match[1] === '65') return 802 // scanned, waiting for phone confirm
+  if (match && (match[1] === '80' || match[1] === '85')) return 800 // expired / cancelled
+  return 801
+}
+
+async function probeQQLoginQrStatus({ ptqrtoken, qrsig }) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+  try {
+    const response = await fetch(
+      QQ_PTQR_LOGIN_URL.replace('___TOKEN___', encodeURIComponent(ptqrtoken)),
+      { headers: { Cookie: `qrsig=${qrsig}` }, signal: controller.signal },
+    )
+    return parsePtqloginStatus(await response.text())
+  } catch (_) {
+    return 801
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Default QR check that surfaces the 802 "scanned, waiting for confirm" state.
+// The 803 success path still delegates to the upstream resolver so the cookie /
+// session exchange is reused untouched; everything else returns a lightweight,
+// credential-free body that carries the 8xx code for the client.
+async function checkQQLoginQrWithStatus({ ptqrtoken, qrsig }) {
+  const code = await probeQQLoginQrStatus({ ptqrtoken, qrsig })
+  if (code === 803) {
+    const { status, body } = unwrapServiceResponse(await qqServices.checkQQLoginQr({
+      method: 'get',
+      option: {},
+      params: { ptqrtoken, qrsig },
+    }))
+    if (body && typeof body === 'object') body.code = 803
+    return { status, body }
+  }
+  return {
+    status: 200,
+    body: {
+      isOk: false,
+      refresh: code === 800,
+      code,
+      message: code === 800 ? '二维码已失效' : code === 802 ? '已扫码，等待确认' : '未扫描二维码',
+    },
+  }
+}
+
 function createQQSecurityMiddleware(options = {}) {
   const getLoginQr = options.getLoginQr || (async () => qqServices.getQQLoginQr({}))
-  const checkLoginQr = options.checkLoginQr || (async ({ ptqrtoken, qrsig }) => qqServices.checkQQLoginQr({
-    method: 'get',
-    option: {},
-    params: { ptqrtoken, qrsig },
-  }))
+  const checkLoginQr = options.checkLoginQr || checkQQLoginQrWithStatus
   const persistSession = options.persistSession || persistQQLoginSession
   const clearSession = options.clearSession || clearQQLoginSession
   const getSession = options.getSession || getQQLoginSession
@@ -642,6 +699,7 @@ module.exports = {
   sanitizeQQProxyResponseHeaders,
   sanitizeQQResponseBody,
   sanitizeQQLoginQrBody,
+  parsePtqloginStatus,
   normalizeQQUin,
   normalizeQQPath,
   isQQPathAllowed,

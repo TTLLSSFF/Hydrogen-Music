@@ -14,6 +14,7 @@ const {
   sanitizeQQProxyRequestHeaders,
   sanitizeQQProxyResponseHeaders,
   sanitizeQQLoginQrBody,
+  parsePtqloginStatus,
   normalizeQQUin,
   isQQPathAllowed,
   startQQMusicApi,
@@ -99,6 +100,16 @@ test('QQ QR login returns a browser-owned opaque session while sanitizing upstre
     euin: 'encrypted-user-id',
   })
   assert.equal(JSON.stringify(checkContext.body).includes('server-secret'), false)
+})
+
+test('ptqrlogin poll body maps to the public 8xx QR status', () => {
+  assert.equal(parsePtqloginStatus("ptuiCB('0', '', '', '');"), 801)
+  assert.equal(parsePtqloginStatus("ptuiCB('65', '', '', 'scanned');"), 802)
+  assert.equal(parsePtqloginStatus("ptuiCB('85', '', '', '');"), 800)
+  assert.equal(parsePtqloginStatus("ptuiCB('80', '', '', '');"), 800)
+  assert.equal(parsePtqloginStatus('login_jump 登录成功'), 803)
+  assert.equal(parsePtqloginStatus('ptqrlogin 已失效'), 800)
+  assert.equal(parsePtqloginStatus(''), 801)
 })
 
 test('QQ QR responses drop credential-bearing image URLs', () => {
