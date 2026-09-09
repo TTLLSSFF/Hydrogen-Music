@@ -104,9 +104,9 @@ test('QQ QR login returns a browser-owned opaque session while sanitizing upstre
 
 test('ptqrlogin poll body maps to the public 8xx QR status', () => {
   assert.equal(parsePtqloginStatus("ptuiCB('0', '', '', '');"), 801)
-  assert.equal(parsePtqloginStatus("ptuiCB('65', '', '', 'scanned');"), 802)
-  assert.equal(parsePtqloginStatus("ptuiCB('66', '', '', '未扫码');"), 801)
-  assert.equal(parsePtqloginStatus("ptuiCB('67', '', '', 'expired');"), 800)
+  assert.equal(parsePtqloginStatus("ptuiCB('65', '', '', 'expired');"), 800)
+  assert.equal(parsePtqloginStatus("ptuiCB('66', '', '', '二维码未失效。');"), 801)
+  assert.equal(parsePtqloginStatus("ptuiCB('67', '0', '', '0', '二维码认证中。', '');"), 802)
   assert.equal(parsePtqloginStatus("ptuiCB('85', '', '', '');"), 800)
   assert.equal(parsePtqloginStatus("ptuiCB('80', '', '', '');"), 800)
   assert.equal(parsePtqloginStatus('login_jump 登录成功'), 803)

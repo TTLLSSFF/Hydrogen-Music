@@ -410,13 +410,16 @@ function pruneExpiredQrSessions(store, now) {
 const QQ_PTQR_LOGIN_URL = 'https://ssl.ptlogin2.qq.com/ptqrlogin?u1=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump&ptqrtoken=___TOKEN___&ptredirect=0&h=1&t=1&g=1&from_ui=1&ptlang=2052&action=0-0-1711022193435&js_ver=23111510&js_type=1&login_sig=du-YS1h8*0GqVqcrru0pXkpwVg2DYw-DtbFulJ62IgPf6vfiJe*4ONVrYc5hMUNE&pt_uistyle=40&aid=716027609&daid=383&pt_3rd_aid=100497308&&o1vId=3674fc47871e9c407d8838690b355408&pt_js_version=v1.48.1'
 
 // Map a raw ptqrlogin body to the public 8xx status the UI understands.
+// 实测（2026-09）：未扫码返回 66「二维码未失效。」；扫码后未确认返回
+// 67「二维码认证中。」；确认成功后返回 0「登录成功！」。故 67 对应 802，
+// 65/80/85 与「已失效」文本对应 800。
 function parsePtqloginStatus(text) {
   const body = String(text || '')
   if (body.includes('登录成功')) return 803
   if (body.includes('已失效')) return 800
   const match = body.match(/ptuiCB\(\s*['"]?(\d+)/i)
-  if (match && match[1] === '65') return 802 // scanned, waiting for phone confirm
-  if (match && (match[1] === '67' || match[1] === '80' || match[1] === '85')) return 800 // expired / cancelled
+  if (match && match[1] === '67') return 802 // scanned, waiting for phone confirm
+  if (match && (match[1] === '65' || match[1] === '80' || match[1] === '85')) return 800 // expired / cancelled
   return 801
 }
 
