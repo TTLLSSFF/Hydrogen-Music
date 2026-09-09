@@ -1078,13 +1078,39 @@ function startInterludeProgressSync() {
     );
 }
 
-// Resize 触发同步：容器尺寸改变后重新测量与同步
+// Resize 触发同步：容器尺寸改变后重新测量与同步。
+// 打开播放页等宽高连续变化的动画期间，容器尺寸会逐帧变化；若每次 ResizeObserver
+// 回调都立即执行全量测量（querySelectorAll + offsetTop + scrollTop），会在主线程
+// 反复强制整段歌词布局，与开场动画竞争造成掉帧。这里先等尺寸连续稳定后再做一次
+// 最终同步，避免与动画争抢主线程。
 let lyricResizeObserver = null;
 let resizeRaf = 0;
+let resizeSettleFrame = 0;
+let lastResizeSizeKey = null;
+const readResizeSizeKey = () => {
+    const scrollEl = getLyricScrollElement();
+    if (!scrollEl) return null;
+    return `${scrollEl.clientWidth}x${scrollEl.clientHeight}x${scrollEl.scrollHeight}`;
+};
+const settleResizeLayout = async () => {
+    const sizeKey = readResizeSizeKey();
+    if (sizeKey === null) return;
+    if (lastResizeSizeKey !== null && sizeKey === lastResizeSizeKey) {
+        // 尺寸已连续两帧一致：动画或缩放结束，执行一次最终同步
+        lastResizeSizeKey = null;
+        await applyLyricLayout({ syncBehavior: 'auto' });
+        return;
+    }
+    lastResizeSizeKey = sizeKey;
+    cancelAnimationFrame(resizeSettleFrame);
+    resizeSettleFrame = requestAnimationFrame(() => {
+        void settleResizeLayout();
+    });
+};
 const scheduleLayout = () => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(async () => {
-        await applyLyricLayout({ syncBehavior: 'auto' });
+    resizeRaf = requestAnimationFrame(() => {
+        settleResizeLayout();
     });
 };
 
@@ -1209,6 +1235,9 @@ onUnmounted(() => {
     clearManualScrollReleaseTimer();
     cancelLyricScrollAnimation();
     stopInterludeProgressSync();
+    cancelAnimationFrame(resizeSettleFrame);
+    resizeSettleFrame = 0;
+    lastResizeSizeKey = null;
     if (lyricWheelHandler && lyricScroll.value) {
         lyricScroll.value.removeEventListener('wheel', lyricWheelHandler);
         lyricWheelHandler = null;
