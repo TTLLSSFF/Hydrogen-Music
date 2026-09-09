@@ -34,7 +34,10 @@ import { getPlayBySource } from '../api/musicSource.js'
 import { normalizeQQPlaybackPayload } from '../api/qqMusic.js'
 import { getHeartModeBlockReason, isQQSong, isProviderPlaylist } from './providerPolicy.mjs'
 import { getSongIdentity, normalizeMusicSource } from './musicSource.mjs'
-import { shouldClosePlaylistOnExternalClick } from './player/playlistRuntime.mjs'
+import {
+  shouldClosePlaylistOnExternalClick,
+  invalidatePlaylistItems,
+} from './player/playlistRuntime.mjs'
 import { createPlaybackTarget, getPlaybackTargetIdentity, isPlaybackTargetCurrent } from './player/targetIdentity.mjs'
 import { getIndexedSong, getIndexedSongOrFirst } from './songList'
 import { reportNcmPlaybackEnd, reportNcmPlaybackStart } from './ncmRecentPlayReporter'
@@ -3001,12 +3004,14 @@ export function addToNext(nextSong, autoplay) {
     const si = (songList.value || []).findIndex(song => getQueueSongIdentity(song) === nextSongIdentity)
     if (si != -1) {
         songList.value.splice(si, 1)
+        invalidatePlaylistItems(songList.value)
         if (si < currentIndex.value) currentIndex.value--
     }
     let songInsertIndex = currentIndex.value + 1
     if (songInsertIndex < 0) songInsertIndex = 0
     if (songInsertIndex > songList.value.length) songInsertIndex = songList.value.length
     songList.value.splice(songInsertIndex, 0, normalizedNextSong)
+    invalidatePlaylistItems(songList.value)
 
     let shuffledInsertIndex = 0
     if (playMode.value == 3) {

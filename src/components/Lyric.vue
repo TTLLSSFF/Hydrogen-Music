@@ -1120,14 +1120,16 @@ const scheduleLayout = () => {
 };
 
 // 打开播放页时 right-panel 宽度逐帧变化，歌词首现（reveal）若立即进入布局采样会
-// 与开场动画争抢主线程。与 settle 同理：等容器尺寸连续两帧一致后再开始全量测量，
-// 动画结束（或终止不了时超时）才放开。token 失效（切歌/关闭歌词）会提前退出。
+// 与开场动画争抢主线程。这里只以「高度 + 滚动高度」判稳：播放页打开动画只改变
+// 容器宽度，高度从挂载起即为最终值，因此 reveal 可立即开始，不必等宽度动画结束
+// （等待宽度稳定会让歌词出现明显晚于左侧专辑图展开）。token 失效会提前退出。
 const waitForLyricSizeStable = async (token, maxAttempts = 90) => {
     let previousSizeKey = null;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (!isLyricRevealTokenActive(token)) return false;
-        const sizeKey = readResizeSizeKey();
-        if (sizeKey === null) return true;
+        const scrollEl = getLyricScrollElement();
+        if (!scrollEl) return true;
+        const sizeKey = `${scrollEl.clientHeight}x${scrollEl.scrollHeight}`;
         if (previousSizeKey !== null && sizeKey === previousSizeKey) return true;
         previousSizeKey = sizeKey;
         await waitForNextFrame();

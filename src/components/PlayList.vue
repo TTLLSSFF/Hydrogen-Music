@@ -11,7 +11,7 @@
   import { shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
   import { canUseSongAction } from '../utils/providerPolicy.mjs'
   import { getSongIdentity } from '../utils/musicSource.mjs'
-  import { getPlaylistItemKey } from '../utils/player/playlistRuntime.mjs'
+  import { getPlaylistItemKey, getPlaylistItems, invalidatePlaylistItems } from '../utils/player/playlistRuntime.mjs'
   const router = useRouter()
   const playerStore = usePlayerStore()
   const { playing, progress, playMode, currentMusic, currentIndex, listInfo, songList, shuffledList, shuffleIndex, songId, widgetState, playlistWidgetShow, lyricShow, showSongTranslation } = storeToRefs(playerStore)
@@ -22,14 +22,7 @@
   }
   const playlistItems = computed(() => {
     const songs = Array.isArray(songList.value) ? songList.value : []
-    return songs.map((song, index) => ({
-      song,
-      index,
-      // A provider identity is not enough when the same track appears twice
-      // in a queue; include the queue position to keep virtual-scroller keys
-      // unique without falling back to a raw cross-provider id.
-      key: getPlaylistItemKey(song, index),
-    }))
+    return getPlaylistItems(songs)
   })
 
   const clearPlaylist = () => {
@@ -77,6 +70,7 @@
     //·删除的是当前播放歌曲之前的
     if(index < currentIndex.value) {
       songList.value.splice(index, 1)
+      invalidatePlaylistItems(songList.value)
       currentIndex.value--
       if(playMode.value == 3) await setShuffledList()
       return
@@ -84,6 +78,7 @@
     //·删除的是当前播放歌曲之后的
     if(index > currentIndex.value) {
       songList.value.splice(index, 1)
+      invalidatePlaylistItems(songList.value)
       if(playMode.value == 3) await setShuffledList()
       return
     }
@@ -100,6 +95,7 @@
         id = songList.value[curIndex].id
         await addSong(id, curIndex, playing.value)
         songList.value.splice(index, 1)
+        invalidatePlaylistItems(songList.value)
         if(playMode.value == 3) await setShuffledList()
       } else {
       //·如果不是最后一首
@@ -107,6 +103,7 @@
         id = songList.value[curIndex].id
         await addSong(id, curIndex, playing.value)
         songList.value.splice(index, 1)
+        invalidatePlaylistItems(songList.value)
         currentIndex.value--
         if(playMode.value == 3) await setShuffledList()
       }
