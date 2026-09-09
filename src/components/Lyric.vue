@@ -773,6 +773,11 @@ const prepareLyricReveal = async () => {
     await setDefaultStyle();
     if (!isLyricRevealTokenActive(token) || !showLyricArea.value) return;
 
+    // 等容器尺寸稳定再采样：播放页打开动画期间 right-panel 逐帧变化，
+    // 若直接进入稳定采样会与开场动画反复竞争（造成打开瞬间掉帧）。
+    await waitForLyricSizeStable(token);
+    if (!isLyricRevealTokenActive(token) || !showLyricArea.value) return;
+
     await waitForStableLyricLayout(token);
     if (!isLyricRevealTokenActive(token) || !showLyricArea.value) return;
 
@@ -1112,6 +1117,22 @@ const scheduleLayout = () => {
     resizeRaf = requestAnimationFrame(() => {
         settleResizeLayout();
     });
+};
+
+// 打开播放页时 right-panel 宽度逐帧变化，歌词首现（reveal）若立即进入布局采样会
+// 与开场动画争抢主线程。与 settle 同理：等容器尺寸连续两帧一致后再开始全量测量，
+// 动画结束（或终止不了时超时）才放开。token 失效（切歌/关闭歌词）会提前退出。
+const waitForLyricSizeStable = async (token, maxAttempts = 90) => {
+    let previousSizeKey = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (!isLyricRevealTokenActive(token)) return false;
+        const sizeKey = readResizeSizeKey();
+        if (sizeKey === null) return true;
+        if (previousSizeKey !== null && sizeKey === previousSizeKey) return true;
+        previousSizeKey = sizeKey;
+        await waitForNextFrame();
+    }
+    return true;
 };
 
 // 仅在类型变化时做常规重算（显示/隐藏由可见性观察处理）
