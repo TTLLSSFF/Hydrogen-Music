@@ -416,7 +416,7 @@ function parsePtqloginStatus(text) {
   if (body.includes('已失效')) return 800
   const match = body.match(/ptuiCB\(\s*['"]?(\d+)/i)
   if (match && match[1] === '65') return 802 // scanned, waiting for phone confirm
-  if (match && (match[1] === '80' || match[1] === '85')) return 800 // expired / cancelled
+  if (match && (match[1] === '67' || match[1] === '80' || match[1] === '85')) return 800 // expired / cancelled
   return 801
 }
 
