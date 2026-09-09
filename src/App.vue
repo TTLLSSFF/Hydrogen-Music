@@ -7,7 +7,7 @@ import MusicWidget from './components/MusicWidget.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
 import { initKeyboardShortcuts, destroyKeyboardShortcuts } from './utils/keyboardShortcuts';
 
-import { usePlayerStore } from './store/playerStore';
+import { usePlayerStore, initPlayerPersistence } from './store/playerStore';
 import { useOtherStore } from './store/otherStore';
 
 const MusicPlayer = defineAsyncComponent(() => import('./views/MusicPlayer.vue'));
@@ -38,6 +38,7 @@ const preventBrowserContextMenu = e => {
 
 onMounted(() => {
     initLyricRuntime();
+    initPlayerPersistence();
     document.addEventListener('contextmenu', preventBrowserContextMenu);
     initKeyboardShortcuts();
 });

@@ -1,4 +1,6 @@
 import { defineStore } from "pinia";
+import { watch } from "vue";
+import pinia from "./pinia";
 
 function readInitialProgress() {
     try {
@@ -78,34 +80,59 @@ function createDedupedLocalStorage() {
 
 const playerPersistStorage = createDedupedLocalStorage()
 
+// 播放器持久化字段（对应旧 pinia-plugin-persistedstate 的 pick 清单，结构保持不变：
+// 同一 key「playerStore」下只存这些字段，不含巨大队列以免拖垮序列化性能）。
+const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur']
+
+function readPersistedPlayerState() {
+    try {
+        if (typeof localStorage === 'undefined') return {}
+        const raw = playerPersistStorage.getItem('playerStore')
+        if (!raw) return {}
+        const parsed = JSON.parse(raw)
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch (_) {
+        return {}
+    }
+}
+
+function toPositiveInteger(value, fallback = 0) {
+    return Number.isInteger(value) && value >= 0 ? value : fallback
+}
+
+function toBoolean(value, fallback = false) {
+    return typeof value === 'boolean' ? value : fallback
+}
+
 export const usePlayerStore = defineStore('playerStore', {
     state: () => {
+        const persisted = readPersistedPlayerState()
         return {
             widgetState: true,//是否开启widget
             currentMusic: null,//播放列表的索引
             playing: false,//是否正在播放
             progress: readInitialProgress(),//进度条
-            volume: 0.3,//音量
+            volume: normalizePersistedVolume(persisted.volume),//音量
             // volumeBeforeMuted: 0,//静音前音量
-            playMode: 0,//0为顺序播放，1为列表循环，2为单曲循环，3为随机播放
-            listInfo: null,
+            playMode: [0,1,2,3].includes(Number(persisted.playMode)) ? Number(persisted.playMode) : 0,//0为顺序播放，1为列表循环，2为单曲循环，3为随机播放
+            listInfo: persisted.listInfo && typeof persisted.listInfo === 'object' && !Array.isArray(persisted.listInfo) ? persisted.listInfo : null,
             songList: null,//播放列表
             shuffledList: null,//随机播放列表
-            shuffleIndex: 0,//随机播放列表的索引
-            songId: null,
-            currentIndex: 0,
-            time: 0, //歌曲总时长
-            quality: null,
+            shuffleIndex: toPositiveInteger(persisted.shuffleIndex),//随机播放列表的索引
+            songId: typeof persisted.songId === 'string' && persisted.songId ? persisted.songId : null,
+            currentIndex: toPositiveInteger(persisted.currentIndex),
+            time: Number.isFinite(Number(persisted.time)) && Number(persisted.time) > 0 ? Number(persisted.time) : 0, //歌曲总时长
+            quality: typeof persisted.quality === 'string' && persisted.quality ? persisted.quality : null,
             playlistWidgetShow: false,
             playerChangeSong: false, //player页面切换歌曲更换歌名动画,
             lyric: null,
             lyricsObjArr: null,
             currentLyricIndex: -1, // 当前歌词索引，用于桌面歌词同步
-            lyricLineOffsets: {}, // 按歌曲保存的逐行歌词时间偏移
+            lyricLineOffsets: persisted.lyricLineOffsets && typeof persisted.lyricLineOffsets === 'object' && !Array.isArray(persisted.lyricLineOffsets) ? persisted.lyricLineOffsets : {}, // 按歌曲保存的逐行歌词时间偏移
             lyricSize: null,
             tlyricSize: null,
             rlyricSize: null,
-            lyricType: ['original'],
+            lyricType: Array.isArray(persisted.lyricType) ? persisted.lyricType : ['original'],
             lyricInterludeTime: null, //歌词间奏等待时间
             searchAssistLimit: 8, //搜索下拉面板显示数量
             lyricShow: false, //歌词是否显示
@@ -114,17 +141,65 @@ export const usePlayerStore = defineStore('playerStore', {
             localBase64Img: null, //如果是本地歌曲，获取封面
             forbidLastRouter: false, //在主动跳转router时禁用回到上次离开的路由的地址功能
             playerShow: true,
-            lyricBlur: false,
-            showSongTranslation: true, // 歌曲名是否显示翻译（原名 (翻译)）
-            gaplessPlayback: false, // 是否预缓冲下一首以减少切歌空隙
+            lyricBlur: toBoolean(persisted.lyricBlur, false),
+            showSongTranslation: toBoolean(persisted.showSongTranslation, true), // 歌曲名是否显示翻译（原名 (翻译)）
+            gaplessPlayback: toBoolean(persisted.gaplessPlayback, false), // 是否预缓冲下一首以减少切歌空隙
             isDesktopLyricOpen: false, // 桌面歌词是否打开
-            coverBlur: false, // 播放页使用封面模糊背景
+            coverBlur: toBoolean(persisted.coverBlur, false), // 播放页使用封面模糊背景
         }
     },
     actions: {
     },
-    persist: {
-        storage: playerPersistStorage,
-        pick: ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur']
-    },
 })
+
+let playerPersistenceStarted = false
+let playerPersistenceRaf = 0
+
+// 播放器队列（songList/shuffledList/lyricsObjArr 等）体积可能非常大，不能对整个
+// playerStore 深度订阅：打开播放页切换 widgetState 会触发一次深度遍历，队列越大
+// 阻塞越明显（实测 15000 首时单次深遍历约 130ms，抢走开场动画的首帧）。
+// 这里改为只浅 watch 少量持久化字段：状态恢复在校验 state 初值时同步完成，
+// 写入仅在这些字段变化时执行，与旧的 pinia-plugin-persistedstate 行为等价。
+export function initPlayerPersistence() {
+    if (playerPersistenceStarted) return
+    playerPersistenceStarted = true
+
+    const store = usePlayerStore(pinia)
+    const scheduleWrite = () => {
+        if (typeof requestAnimationFrame === 'function') {
+            cancelAnimationFrame(playerPersistenceRaf)
+            playerPersistenceRaf = requestAnimationFrame(() => writePersistedPlayerState())
+        } else {
+            setTimeout(() => writePersistedPlayerState(), 0)
+        }
+    }
+    const writePersistedPlayerState = () => {
+        playerPersistStorage.setItem('playerStore', JSON.stringify({
+            volume: store.volume,
+            playMode: store.playMode,
+            shuffleIndex: store.shuffleIndex,
+            listInfo: store.listInfo,
+            songId: store.songId,
+            currentIndex: store.currentIndex,
+            time: store.time,
+            quality: store.quality,
+            lyricType: store.lyricType,
+            lyricLineOffsets: store.lyricLineOffsets,
+            lyricBlur: store.lyricBlur,
+            showSongTranslation: store.showSongTranslation,
+            gaplessPlayback: store.gaplessPlayback,
+            coverBlur: store.coverBlur,
+        }))
+    }
+    watch(
+        () => PERSISTED_PLAYER_FIELDS.map(field => store[field]),
+        scheduleWrite,
+        { flush: 'post' }
+    )
+    // listInfo 是歌单元数据（体积小但内部会更新），单独深 watch 保持与旧行为一致
+    watch(
+        () => store.listInfo,
+        scheduleWrite,
+        { deep: true, flush: 'post' }
+    )
+}
