@@ -566,6 +566,65 @@ export function getQQTopLists() {
   return qqRequest({ url: '/getTopLists', method: 'get' })
 }
 
+export function getQQTopListDetail(topId, params = {}) {
+  if (!topId) throw new TypeError('QQ top list id is required')
+  return qqRequest({ url: '/getTopListDetail', method: 'get', params: { topId, ...params } })
+}
+
+/**
+ * 归一化 QQ 榜单详情（服务端 /getTopListDetail 返回 `response.req_1.data`，
+ * 与依赖包 getRanks 控制器同款包络）。歌曲数组可能嵌套在内层 `data`，
+ * 且每项可能再包装一层 `songInfo`（GetDetail 常见形状），先把 songInfo 字段
+ * 展开进顶层再交给 normalizeQQSong，否则歌曲 mid 会丢失。
+ */
+export function normalizeQQTopListDetail(payload, fallbackId = '') {
+  const body = unwrapQQResponse(payload)
+  const songData = body?.req_1?.data && typeof body.req_1.data === 'object' ? body.req_1.data : {}
+  let rawSongs = []
+  const inner = songData?.data && typeof songData.data === 'object' ? songData.data : {}
+  const songKeys = ['songInfoList', 'song_info_list', 'songList', 'song_list', 'list']
+  const foundArray = songKeys
+    .map(key => inner?.[key])
+    .concat(songKeys.map(key => songData?.[key]))
+    .find(list => Array.isArray(list))
+  if (Array.isArray(foundArray)) rawSongs = foundArray
+
+  const name = firstQQValue(songData?.title, songData?.data?.title, songData?.subTitle) || ''
+  const cover = firstQQValue(
+    songData?.banner,
+    songData?.cover,
+    songData?.headPicUrl,
+    songData?.data?.banner,
+  ) || ''
+  const metaCover = firstQQValue(songData?.picUrl, songData?.picurl, cover) || ''
+  const trackCount = firstPositiveQQValue(
+    songData?.songNum,
+    songData?.total,
+    songData?.data?.songNum,
+  ) ?? 0
+
+  const songs = rawSongs.map(item => {
+    const songInfo = item?.songInfo && typeof item.songInfo === 'object' ? item.songInfo : null
+    return normalizeQQSong(songInfo ? { ...item, ...songInfo } : item)
+  })
+  const playlist = {
+    id: String(firstQQValue(songData?.topId, fallbackId) || ''),
+    source: 'qq',
+    name: String(name),
+    coverImgUrl: String(cover),
+    picUrl: String(metaCover),
+    blurPicUrl: String(cover),
+    trackCount,
+    size: trackCount,
+    followed: false,
+  }
+  if (playlist.trackCount <= 0 && songs.length > 0) {
+    playlist.trackCount = songs.length
+    playlist.size = songs.length
+  }
+  return { playlist, songs }
+}
+
 function readQQField(payload, key) {
   const body = unwrapQQResponse(payload)
   return body?.[key] || null
