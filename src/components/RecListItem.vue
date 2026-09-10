@@ -95,7 +95,15 @@
   }
 
   const checkDetail = (id) => {
-    // QQ 榜单详情路由尚未开放，阻断跳转避免误入网易云榜单
+    if (loadedQQSource && recType.value == 3) {
+      router.push({
+        path: `/mymusic/playlist/${id}`,
+        query: { source: 'qq', type: 'toplist' },
+      })
+      playerStore.forbidLastRouter = true
+      return
+    }
+    // QQ banner/video 等其它入口仍不开放详情跳转
     if (loadedQQSource) return
     libraryStore.libraryInfo = null
     if(props.recType == 0) router.push('/mymusic/playlist/' + id)

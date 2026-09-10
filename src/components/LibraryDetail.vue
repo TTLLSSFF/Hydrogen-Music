@@ -348,14 +348,16 @@ onBeforeRouteUpdate(async (to, from, next) => {
     setPendingScrollPolicyForRoute(to);
 
     const normalizedToName = normalizeRouteName(to.name);
-    const requestedSource = to.query.source || 'netease';
-    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
+    const requestedSource = String(to.query.source || 'netease').toLowerCase();
+    const requestedType = String(to.query.type || '').toLowerCase();
+    const isQQTopList = requestedSource === 'qq' && requestedType === 'toplist';
+    if (normalizedToName == 'playlist' && !isQQTopList && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
         noticeOpen('请先登录 QQ 音乐', 2);
         next({ name: 'mymusic' });
         return;
     }
     const detailLoadOptions = normalizedToName == 'playlist'
-        ? { deferRemaining: true, source: requestedSource }
+        ? { deferRemaining: true, source: requestedSource, type: requestedType }
         : normalizedToName == 'album'
             ? { source: to.query.source || 'netease' }
             : normalizedToName == 'artist'

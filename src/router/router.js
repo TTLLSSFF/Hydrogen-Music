@@ -43,9 +43,10 @@ const { updateLibraryDetail } = libraryStore
 const { libraryInfo } = storeToRefs(libraryStore)
 const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
 const hasDifferentLibrarySource = (to, from) => String(to?.query?.source || 'netease') != String(from?.query?.source || 'netease')
+const hasDifferentLibraryType = (to, from) => String(to?.query?.type || '') != String(from?.query?.type || '')
 //先完成路由跳转再拉详情数据，避免点击后要等网络请求才有反应
 const enterLibraryDetail = (to, from, next, routeName, options = {}) => {
-    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from) || hasDifferentLibrarySource(to, from)
+    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from) || hasDifferentLibrarySource(to, from) || hasDifferentLibraryType(to, from)
     next()
     if (!needReload) return
     updateLibraryDetail(to.params.id, routeName, options).catch(() => {
@@ -136,12 +137,14 @@ const routes = [
                 component: LibraryDetail,
                 beforeEnter: (to, from, next) => {
                     const source = String(to.query.source || 'netease').toLowerCase()
-                    if (!canAccessQQMyMusic(source, hasQQAccount())) {
+                    const type = String(to.query.type || '').toLowerCase()
+                    const isQQTopList = source === 'qq' && type === 'toplist'
+                    if (!isQQTopList && !canAccessQQMyMusic(source, hasQQAccount())) {
                         noticeOpen('请先登录 QQ 音乐', 2)
                         next({ name: 'mymusic' })
                         return
                     }
-                    enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true, source })
+                    enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true, source, type })
                 }
             },
             {

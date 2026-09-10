@@ -4,7 +4,7 @@ import { getAlbumDetail, albumDynamic } from '../api/album'
 import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
 import { getArtistMV } from '../api/mv'
 import { getSongDetail } from '../api/song'
-import { getQQSongListDetail } from '../api/qqMusic'
+import { getQQSongListDetail, getQQTopListDetail, normalizeQQTopListDetail } from '../api/qqMusic'
 import { loadQQPlaylistDetail, mergeQQPlaylistSummary } from '../utils/qqLibrary.mjs'
 import { mapSongsPlayableStatus } from "../utils/songStatus";
 import { buildAlbumSearchText, buildCloudSongSearchText, buildMVSearchText } from "../utils/songFilter";
@@ -552,7 +552,8 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.resetSearchIndex()
             if (routerName != 'playlist') this.resetPlaylistHydration()
             if (routerName == 'playlist') {
-                if (source === 'qq') await this.updateQQPlaylistDetail(id)
+                if (source === 'qq' && String(options.type || '').toLowerCase() === 'toplist') await this.updateQQTopListDetail(id)
+                else if (source === 'qq') await this.updateQQPlaylistDetail(id)
                 else await this.updatePlaylistDetail(id, { ...options, source })
             }
             if (routerName == 'album') {
@@ -567,6 +568,42 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.libraryAlbum = null
             this.libraryMV = null
             this.cacheCurrentLibraryDetail(id, routerName, source)
+        },
+        async updateQQTopListDetail(id) {
+            const playlistId = String(id || '')
+            const token = createPlaylistHydrationToken(playlistId)
+            this.playlistHydrationToken = token
+            this.playlistHydrationPromise = null
+            this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'loading', source: 'qq' })
+            this.libraryInfo = null
+            this.librarySongs = []
+            this.libraryAlbum = null
+            this.libraryMV = null
+            this.indexLibrarySongs([])
+            try {
+                const normalized = normalizeQQTopListDetail(await getQQTopListDetail(playlistId), playlistId)
+                if (this.playlistHydrationToken !== token) return
+                this.libraryInfo = { ...normalized.playlist, id: playlistId, source: 'qq' }
+                this.librarySongs = normalized.songs
+                this.indexLibrarySongs(this.librarySongs)
+                this.playlistHydration = createPlaylistHydrationState({
+                    id: playlistId,
+                    total: this.librarySongs.length,
+                    loaded: this.librarySongs.length,
+                    status: 'completed',
+                    source: 'qq',
+                })
+                this.libraryChangeAnimation = false
+                this.cacheCurrentLibraryDetail(playlistId, 'playlist', 'qq')
+            } catch (error) {
+                if (this.playlistHydrationToken === token) {
+                    this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'failed', source: 'qq' })
+                    this.playlistHydrationPromise = null
+                    this.playlistHydrationToken = null
+                    this.libraryChangeAnimation = false
+                }
+                throw error
+            }
         },
         async updateQQPlaylistDetail(id) {
             const playlistId = String(id || '')
