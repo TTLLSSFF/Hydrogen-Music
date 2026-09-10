@@ -533,6 +533,101 @@ function createQQSecurityMiddleware(options = {}) {
     params: {},
     option: {},
   }))
+  const singerService = options.singerService || fetchQQSingerInfo
+
+// —— 公共歌手详情聚合 ——
+// 热门歌曲无专用上游接口，明星页面用「歌手名搜索 → zhida_singer.hotsong」填充；
+// 描述/关注数/MV 走老版歌手页接口（与真实客户端一致，需带 Referer）。
+const QQ_SINGER_DESC_URL = 'https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_singer_desc.fcg?format=xml&outCharset=utf-8&utf8=1&singermid=___MID___&r=___TS___'
+const QQ_SINGER_STAR_URL = 'https://c.y.qq.com/rsc/fcgi-bin/fcg_order_singer_getnum.fcg?format=json&outCharset=utf-8&utf8=1&singermid=___MID___&rnd=___TS___'
+const QQ_SINGER_MV_URL = 'https://c.y.qq.com/mv/fcgi-bin/fcg_singer_mv.fcg?format=json&outCharset=utf-8&cid=205360581&begin=0&singerid=___ID___&num=20'
+const QQ_UPSTREAM_HEADERS = {
+  Accept: 'application/json,text/plain,*/*',
+  Referer: 'https://y.qq.com/',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+}
+
+function extractQQSingerDescCdata(xml) {
+  const text = String(xml || '')
+  // 描述位于 <desc>…</desc> 节点内；result 顶层的 message 等节点也带 CDATA，
+  // 直接取第一个会拿到空串，因此先锚定 desc 节点。
+  const descMatch = text.match(/<desc[^>]*>([\s\S]*?)<\/desc>/)
+  const segment = descMatch ? descMatch[1] : text
+  const cdata = segment.match(/<!\[CDATA\[([\s\S]*?)\]\]>/)
+  return (cdata ? cdata[1] : segment.replace(/<[^>]+>/g, '')).trim()
+}
+
+async function fetchQQUpstreamJson(url) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+  try {
+    const response = await fetch(url, { headers: QQ_UPSTREAM_HEADERS, signal: controller.signal })
+    const payload = await response.json()
+    return { status: response.ok ? 200 : Number(response.status) || 502, body: payload && typeof payload === 'object' ? payload : {} }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// 缺省实现，测试可通过 singerService 注入替换。
+async function fetchQQSingerInfo({ singermid, name, singerid }) {
+  const [descResult, starResult, searchResult, mvResult] = await Promise.allSettled([
+    (async () => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 10000)
+      try {
+        const url = QQ_SINGER_DESC_URL.replace('___MID___', encodeURIComponent(singermid)).replace('___TS___', String(Date.now()))
+        const response = await fetch(url, { headers: QQ_UPSTREAM_HEADERS, signal: controller.signal })
+        const raw = await response.text()
+        return { status: response.ok ? 200 : Number(response.status) || 502, body: { desc: extractQQSingerDescCdata(raw) } }
+      } finally {
+        clearTimeout(timer)
+      }
+    })(),
+    fetchQQUpstreamJson(
+      QQ_SINGER_STAR_URL.replace('___MID___', encodeURIComponent(singermid)).replace('___TS___', String(Date.now())),
+    ),
+    name
+      ? searchQQMusicPublic({ keyword: name, category: 0, limit: 1, page: 1, catZhida: 1 })
+      : Promise.resolve({ status: 200, body: {} }),
+    singerid
+      ? fetchQQUpstreamJson(
+          QQ_SINGER_MV_URL.replace('___ID___', String(singerid)),
+        )
+      : Promise.resolve({ status: 200, body: {} }),
+  ])
+  const read = settled => (settled.status === 'fulfilled' ? settled.value : { status: 502, body: {} })
+  const desc = read(descResult)
+  const star = read(starResult)
+  const search = read(searchResult)
+  const mv = read(mvResult)
+
+  // 只透传与目标歌手匹配的 zhida 热歌，避免误配同名艺人
+  const zhidaSinger = search.body?.response?.data?.zhida?.zhida_singer
+    || search.body?.data?.zhida?.zhida_singer
+    || search.body?.zhida?.zhida_singer
+    || null
+  const hotSongs = zhidaSinger && (!zhidaSinger.singerMID || zhidaSinger.singerMID === singermid)
+    ? (Array.isArray(zhidaSinger.hotsong) ? zhidaSinger.hotsong : [])
+    : []
+
+  const status = Math.min(
+    ...[desc, star, mv].map(item => Number(item.status) || 502),
+  )
+  return {
+    status: status >= 200 && status < 300 ? 200 : 502,
+    body: {
+      desc: String(desc.body?.desc || ''),
+      starNum: Number(star.body?.response?.num ?? star.body?.num ?? 0),
+      hotSongs,
+      mvs: Array.isArray(mv.body?.response?.data?.list)
+        ? mv.body.response.data.list
+        : Array.isArray(mv.body?.data?.list)
+          ? mv.body.data.list
+          : [],
+    },
+  }
+}
 
   return async function qqSecurityMiddleware(ctx, next) {
     return runWithQQSafeLogging(async () => {
@@ -715,6 +810,28 @@ function createQQSecurityMiddleware(options = {}) {
         writeJson(ctx, status, sanitizeQQResponseBody(body))
       } catch (_) {
         writeJson(ctx, 502, { error: entry.error })
+      }
+      return
+    }
+
+    // 公共歌手详情聚合（无登录要求）：描述 + 关注数 + 热门歌曲(zhida) + MV 列表。
+    if (normalizedPath === '/getsingerinfo') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const singermid = getSingleValue(ctx.query?.singermid || ctx.query?.singerMid).trim()
+      if (!singermid) {
+        writeJson(ctx, 400, { error: 'singermid is required' })
+        return
+      }
+      const name = getSingleValue(ctx.query?.name).trim().slice(0, 80)
+      const singerid = getSingleValue(ctx.query?.singerid || ctx.query?.singerId).trim().replace(/[^0-9]/g, '')
+      try {
+        const { status, body } = unwrapServiceResponse(await singerService({ singermid, name, singerid }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music singer detail unavailable' })
       }
       return
     }

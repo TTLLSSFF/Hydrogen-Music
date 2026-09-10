@@ -158,9 +158,13 @@ const routes = [
                 name: 'artist',
                 component: LibraryDetail,
                 beforeEnter: (to, from, next) => {
-                    if (String(to.query.source || '').toLowerCase() === 'qq') {
-                        noticeOpen('QQ 音乐暂不支持歌手详情', 2)
-                        next({ name: 'mymusic' })
+                    const source = String(to.query.source || '').toLowerCase()
+                    if (source == 'qq') {
+                        enterLibraryDetail(to, from, next, 'artist', {
+                            source: 'qq',
+                            name: to.query.name,
+                            singerid: to.query.singerid,
+                        })
                         return
                     }
                     enterLibraryDetail(to, from, next, 'artist', { source: 'netease' })

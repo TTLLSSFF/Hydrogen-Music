@@ -219,6 +219,7 @@ const isArtistTopSongRoute = computed(() => currentLibraryRouteName.value == 'ar
 const isArtistAlbumRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 1);
 const isArtistMVRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 2);
 const isQQPlaylist = computed(() => isPlaylistRoute.value && isQQSong(libraryInfo.value));
+const isQQSource = computed(() => isQQSong(libraryInfo.value));
 const showSongSearch = computed(() => isPlaylistRoute.value || isAlbumRoute.value || isArtistTopSongRoute.value || isArtistAlbumRoute.value || isArtistMVRoute.value);
 const normalizedSongSearchKeyword = computed(() => normalizeSongFilterKeyword(songSearchKeyword.value));
 const hasSongSearchKeyword = computed(() => normalizedSongSearchKeyword.value !== '');
@@ -353,17 +354,13 @@ onBeforeRouteUpdate(async (to, from, next) => {
         next({ name: 'mymusic' });
         return;
     }
-    // 歌手详情暂未开放 QQ 来源；专辑详情已支持（公共 getAlbumInfo）。
-    if (normalizedToName == 'artist' && String(requestedSource).toLowerCase() == 'qq') {
-        noticeOpen('QQ 音乐暂不支持歌手详情', 2);
-        next({ name: 'mymusic' });
-        return;
-    }
     const detailLoadOptions = normalizedToName == 'playlist'
         ? { deferRemaining: true, source: requestedSource }
         : normalizedToName == 'album'
             ? { source: to.query.source || 'netease' }
-            : {};
+            : normalizedToName == 'artist'
+                ? { source: to.query.source || 'netease', name: to.query.name, singerid: to.query.singerid }
+                : {};
     libraryTypeCheck(to.name);
     artistPageType.value = 0;
     libraryAlbum.value = null;
@@ -425,17 +422,21 @@ const createTime = computed(() => {
 
 //如果是歌手页面，可以更换下面的类型
 const changeType = type => {
+    const isQQSinger = normalizeMusicSource(libraryInfo.value?.source) === 'qq'
     if (type == 0) {
         isSongList.value = true;
-        updateArtistTopSong(libraryInfo.value.id);
+        if (isQQSinger) libraryStore.updateQQSingerTopSongs()
+        else updateArtistTopSong(libraryInfo.value.id);
     }
     if (type == 1) {
         isSongList.value = false;
-        updateArtistAlbum(libraryInfo.value.id);
+        if (isQQSinger) libraryStore.updateQQSingerAlbums()
+        else updateArtistAlbum(libraryInfo.value.id);
     }
     if (type == 2) {
         isSongList.value = false;
-        updateArtistsMV(libraryInfo.value.id);
+        if (isQQSinger) libraryStore.updateQQSingerMvs()
+        else updateArtistsMV(libraryInfo.value.id);
     }
     artistPageType.value = type;
 };
@@ -789,7 +790,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         <span class="introduce-num" v-if="isSinger">{{ libraryInfo.musicSize }}首歌 · {{ libraryInfo.albumSize }}张专辑 · {{ libraryInfo.mvSize }}个MV</span>
                         <div class="library-operation">
                             <template v-if="isQQPlaylist ? hasQQAccount() : isLogin()">
-                                <div class="operation-collection operation-item" v-if="isLogin() && !isQQPlaylist" v-show="!isCurrentNeteasePlaylistCreated" @click="librarySub(libraryInfo.id)">
+                                <div class="operation-collection operation-item" v-if="isLogin() && !isQQPlaylist && !isQQSource" v-show="!isCurrentNeteasePlaylistCreated" @click="librarySub(libraryInfo.id)">
                                     <svg
                                         v-show="!libraryInfo.followed"
                                         t="1669112450805"

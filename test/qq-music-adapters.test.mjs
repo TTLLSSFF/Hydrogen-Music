@@ -19,6 +19,7 @@ import {
   normalizeQQSearchMvs,
   normalizeQQSearchPayload,
   normalizeQQSearchSongs,
+  normalizeQQSingerDetail,
   normalizeQQSong,
   normalizeQQTopLists,
   QQ_PUBLIC_API_DISABLED_CODE,
@@ -371,6 +372,46 @@ test('QQ top lists normalize the live topList array', () => {
   assert.equal(lists[0].source, 'qq')
   assert.equal(lists[0].listenCount, 7953220)
   assert.equal(lists[0].tracks.length, 1)
+})
+
+test('QQ singer detail parses the zhida hotsong f field and aggregates mvs', () => {
+  const detail = normalizeQQSingerDetail({
+    desc: '周杰伦（Jay Chou）简介',
+    starNum: 50731674,
+    hotSongs: [
+      { songID: '97773', songMID: '0039MnYb0qxYhV', songName: '晴天', f: '97773|晴天|4558|周杰伦|8220|叶惠美|0|269|-1|1|0|10792943|4317292|0|0|0|55397039|5860576|6519764|0|0039MnYb0qxYhV|0025NhlN2yWrP4|000MkMni19ClKG|0|4009' },
+    ],
+    mvs: [
+      { vid: 'o001320lolt', id: '247083', title: '东风破+兰亭序', pic: 'http://y.gtimg.cn/pic.jpg', listenCount: '64721', singer_name: '周杰伦' },
+    ],
+  }, { mid: '0025NhlN2yWrP4', name: '周杰伦' })
+
+  assert.equal(detail.singer.source, 'qq')
+  assert.equal(detail.singer.name, '周杰伦')
+  assert.equal(detail.singer.description, '周杰伦（Jay Chou）简介')
+  assert.equal(detail.singer.starNum, 50731674)
+  assert.equal(detail.singer.musicSize, 1)
+  assert.equal(detail.singer.mvSize, 1)
+  assert.equal(detail.singer.albumSize, 0)
+  assert.equal(detail.hotSongs.length, 1)
+  assert.equal(detail.hotSongs[0].id, '0039MnYb0qxYhV')
+  assert.equal(detail.hotSongs[0].name, '晴天')
+  assert.equal(detail.hotSongs[0].source, 'qq')
+  assert.equal(detail.hotSongs[0].ar[0].name, '周杰伦')
+  assert.equal(detail.hotSongs[0].dt, 269000)
+  assert.equal(detail.mvs[0].id, 'o001320lolt')
+  assert.equal(detail.mvs[0].name, '东风破+兰亭序')
+  assert.equal(detail.mvs[0].playCount, 64721)
+})
+
+test('QQ singer hot songs fall back to explicit song fields without the f column', () => {
+  const detail = normalizeQQSingerDetail({
+    hotSongs: [{ songMID: 'mid-fallback', songName: '备选歌', singer: [{ name: '歌手A' }] }],
+    mvs: [],
+  }, { mid: 's-mid', name: '歌手A' })
+  assert.equal(detail.hotSongs[0].id, 'mid-fallback')
+  assert.equal(detail.hotSongs[0].name, '备选歌')
+  assert.equal(detail.hotSongs[0].ar[0].name, '歌手A')
 })
 
 test('QQ song normalization keeps a stable provider-specific identity', () => {

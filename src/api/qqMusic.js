@@ -613,6 +613,70 @@ export function getQQMvPlay() {
   return Promise.reject(createQQPublicApiDisabledError('MV playback'))
 }
 
+// —— 歌手详情（2026-09 实测：描述/关注走 fcg 接口，热歌走 zhida hotsong，MV 走 fcg_singer_mv）——
+
+// zhida hotsong.f 为管道分隔：0歌id|1歌名|2歌手id|3歌手名|4专辑id|5专辑名|6?|7时长秒|...|20 songmid|21 singermid|22 albummid
+function parseQQHotSongF(f, fallback = {}) {
+  if (typeof f !== 'string' || !f) return {
+    ...fallback,
+    songmid: fallback.songMID || fallback.songmid || '',
+    songname: fallback.songName || fallback.songname || '',
+  }
+  const parts = f.split('|')
+  const durationSec = Number(parts[7])
+  return {
+    id: parts[20] || fallback.songMID || '',
+    songmid: parts[20] || fallback.songMID || '',
+    name: parts[1] || fallback.songName || '',
+    singer: parts[3]
+      ? [{ name: parts[3], mid: parts[21] || '' }]
+      : fallback.singer && Array.isArray(fallback.singer) ? fallback.singer : [],
+    albummid: parts[22] || '',
+    albumname: parts[5] || '',
+    ...(Number.isFinite(durationSec) && durationSec > 0 ? { interval: String(durationSec) } : {}),
+  }
+}
+
+/**
+ * 归并 QQ 歌手详情聚合响应：{ desc, starNum, hotSongs, mvs }。
+ * hotSongs 优先解析 f 字段，缺失时退回 songMID/songName 最小结构。
+ */
+export function normalizeQQSingerDetail(payload, options = {}) {
+  const body = unwrapQQResponse(payload)
+  const hotSongsRaw = Array.isArray(body?.hotSongs) ? body.hotSongs : []
+  const hotSongs = hotSongsRaw.map(entry => normalizeQQSong(parseQQHotSongF(entry?.f, entry)))
+  const mvsRaw = Array.isArray(body?.mvs) ? body.mvs : []
+  const mvs = mvsRaw.map(mv => ({
+    id: String(mv?.vid || mv?.id || ''),
+    source: 'qq',
+    name: String(mv?.title || ''),
+    picUrl: String(mv?.pic || ''),
+    cover: String(mv?.pic || ''),
+    briefDesc: String(mv?.desc || ''),
+    playCount: Number(mv?.listenCount ?? 0),
+    artist: { id: mv?.singer_id, name: String(mv?.singer_name || ''), mid: mv?.singer_mid },
+  }))
+  const singerPic = options.pic || (options.mid
+    ? `https://y.gtimg.cn/music/photo_new/T001R300x300M000${options.mid}.jpg`
+    : '')
+  const singer = {
+    id: String(options.mid || ''),
+    source: 'qq',
+    name: String(options.name || ''),
+    picUrl: singerPic,
+    coverImgUrl: singerPic,
+    img1v1Url: singerPic,
+    description: String(body?.desc || ''),
+    briefDesc: String(body?.desc || ''),
+    musicSize: hotSongs.length,
+    albumSize: 0, // 歌手专辑接口上游未提供
+    mvSize: mvs.length,
+    followed: false,
+    starNum: Number(body?.starNum ?? 0),
+  }
+  return { singer, hotSongs, mvs }
+}
+
 function parseQQDurationMilliseconds(...values) {
   for (const value of values) {
     if (value === undefined || value === null || value === '') continue

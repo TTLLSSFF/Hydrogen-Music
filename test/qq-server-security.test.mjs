@@ -322,6 +322,52 @@ test('QQ public home endpoints forward without a login session', async () => {
   assert.equal(post.status, 405)
 })
 
+test('QQ public singer info forwards sanitized params without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    singerService: async params => {
+      calls.push(params)
+      return { status: 200, body: { desc: '简介', starNum: 100, hotSongs: [{ songMID: 'm1' }], mvs: [{ vid: 'v1' }] } }
+    },
+  })
+
+  const context = createContext('/getSingerInfo?singermid=s-mid&name=%E5%91%A8%E6%9D%B0%E4%BC%A6&singerid=4558')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'singer detail must be handled before the session-required boundary')
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ singermid: 's-mid', name: '周杰伦', singerid: '4558' }])
+  assert.equal(context.body.desc, '简介')
+  assert.equal(context.body.hotSongs[0].songMID, 'm1')
+  assert.equal(context.body.mvs[0].vid, 'v1')
+})
+
+test('QQ public singer info rejects missing singermid, trims identity params and blocks POST', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    singerService: async params => {
+      calls.push(params)
+      return { status: 200, body: {} }
+    },
+  })
+
+  const missing = createContext('/getSingerInfo')
+  await middleware(missing, async () => {})
+  assert.equal(missing.status, 400)
+
+  const dirty = createContext('/getSingerInfo?singermid=s-mid&name=%20abc%20&singerid=45a8b8c')
+  await middleware(dirty, async () => {})
+  assert.equal(dirty.status, 200)
+  assert.deepEqual(calls[0], { singermid: 's-mid', name: 'abc', singerid: '4588' })
+
+  const post = createContext('/getSingerInfo?singermid=s-mid', { method: 'POST', body: {} })
+  await middleware(post, async () => {})
+  assert.equal(post.status, 405)
+})
+
 test('QQ public session status exposes only a non-secret account identifier', async () => {
   const middleware = createQQSecurityMiddleware({
     getSession: () => ({

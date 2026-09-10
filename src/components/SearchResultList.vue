@@ -9,6 +9,11 @@
   const checkDetail = (id, item) => {
     playerStore.forbidLastRouter = true
     const source = normalizeMusicSource(item?.source)
+    if (props.type == 'artist' && source === 'qq') {
+      // QQ 歌手详情走公共 getSingerInfo；带 name/singerid 供聚合热歌与 MV 列表使用
+      router.push({ path: '/mymusic/artist/' + id, query: { source: 'qq', name: item.name, singerid: item.singerID || item.id } })
+      return
+    }
     if (source === 'qq') return
     if(props.type == 'playlist') router.push({ path: '/mymusic/playlist/' + id, query: { source } })
     if(props.type == 'artist' && source !== 'qq') router.push('/mymusic/artist/' + id)

@@ -559,7 +559,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                 if (source === 'qq') await this.updateQQAlbumDetail(id)
                 else await this.updateAlbumDetail(id)
             }
-            if (routerName == 'artist') await this.updateArtistDetail(id)
+            if (routerName == 'artist') {
+                if (source === 'qq') await this.updateQQSingerDetail(id, options)
+                else await this.updateArtistDetail(id)
+            }
             this.artistPageType = 0
             this.libraryAlbum = null
             this.libraryMV = null
@@ -723,6 +726,38 @@ export const useLibraryStore = defineStore('libraryStore', {
                 : []
             this.indexLibrarySongs(this.librarySongs)
             this.libraryChangeAnimation = false
+        },
+        async updateQQSingerDetail(id, options = {}) {
+            const singermid = String(id || '')
+            const { normalizeQQSingerDetail } = await import('../api/qqMusic')
+            const { getQQSingerInfo } = await import('../api/qq')
+            const payload = await getQQSingerInfo(singermid, {
+                name: String(options.name || '').slice(0, 80),
+                singerid: String(options.singerid || '').replace(/[^0-9]/g, ''),
+            })
+            const detail = normalizeQQSingerDetail(payload, { mid: singermid, name: options.name })
+            this._qqSingerPayload = detail
+            this.libraryInfo = detail.singer
+            this.librarySongs = Array.isArray(detail.hotSongs) ? detail.hotSongs : []
+            this.indexLibrarySongs(this.librarySongs)
+            this.libraryMV = Array.isArray(detail.mvs) ? detail.mvs : []
+            this.libraryAlbum = []
+            this.libraryChangeAnimation = false
+        },
+        // QQ 歌手页类型切换：歌曲=已加载热歌；专辑上游未提供（空）；MV=聚合中的列表
+        updateQQSingerTopSongs() {
+            const cached = this._qqSingerPayload
+            if (cached && Array.isArray(cached.hotSongs)) {
+                this.librarySongs = cached.hotSongs
+                this.indexLibrarySongs(this.librarySongs)
+            }
+        },
+        updateQQSingerAlbums() {
+            this.libraryAlbum = []
+        },
+        updateQQSingerMvs() {
+            const cached = this._qqSingerPayload
+            this.libraryMV = cached && Array.isArray(cached.mvs) ? cached.mvs : []
         },
         async updateAlbumDetail(id) {
             let params = {

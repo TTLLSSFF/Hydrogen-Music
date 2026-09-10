@@ -3,6 +3,7 @@ import qqRequest, { createQQQrCheckRequestConfig } from '../utils/qqRequest.mjs'
 export const getQQLoginQr = () => qqRequest({ url: '/getQQLoginQr', method: 'get' })
 export const checkQQLoginQr = (sessionId) => qqRequest(createQQQrCheckRequestConfig(sessionId))
 export const getQQSessionStatus = () => qqRequest({ url: '/session/status', method: 'get' })
+export const getQQSingerInfo = (singermid, params = {}) => qqRequest({ url: '/getSingerInfo', method: 'get', params: { singermid, ...params } })
 export const getQQUserProfile = (params) => qqRequest({ url: '/user/getUserDetail', method: 'get', params })
 export const getQQUserAvatar = (params) => qqRequest({ url: '/user/getUserAvatar', method: 'get', params })
 export const getQQLikedSongs = (params) => qqRequest({ url: '/user/getUserLikedSongs', method: 'get', params })
