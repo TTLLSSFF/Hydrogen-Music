@@ -552,6 +552,63 @@ export function getQQMv() {
   return Promise.reject(createQQPublicApiDisabledError('MV details'))
 }
 
+// —— 公共首页数据（2026-09 实测形状）——
+
+export function getQQRecommendBanner() {
+  return qqRequest({ url: '/getRecommendBanner', method: 'get' })
+}
+
+export function getQQNewSongs() {
+  return qqRequest({ url: '/getNewSongs', method: 'get' })
+}
+
+export function getQQTopLists() {
+  return qqRequest({ url: '/getTopLists', method: 'get' })
+}
+
+function readQQField(payload, key) {
+  const body = unwrapQQResponse(payload)
+  return body?.[key] || null
+}
+
+/** 焦点图：focus.data.content[] → Banner 使用的 { pic, title, subTitle, jump } 形状。 */
+export function normalizeQQRecommendBanner(payload) {
+  const focus = readQQField(payload, 'focus')
+  const data = focus?.data && typeof focus.data === 'object' ? focus.data : focus
+  const items = Array.isArray(data?.content) ? data.content : []
+  return items.map(item => ({
+    ...item,
+    pic: String((item?.pic_info && item.pic_info.url) || item?.pic || item?.cover || ''),
+    title: String(item?.title || ''),
+    subTitle: String(item?.sub_title || ''),
+    jumpUrl: String((item?.jump_info && item.jump_info.url) || ''),
+    jumpType: Number(item?.type || 0),
+  }))
+}
+
+/** 新歌：new_song.data.songlist[] → normalizeQQSong。 */
+export function normalizeQQNewSongs(payload) {
+  const newSong = readQQField(payload, 'new_song')
+  const data = newSong?.data && typeof newSong.data === 'object' ? newSong.data : newSong
+  return Array.isArray(data?.songlist) ? data.songlist.map(normalizeQQSong) : []
+}
+
+/** 榜单：data.topList[] → { id, name, picUrl, listenCount, tracks[] }。 */
+export function normalizeQQTopLists(payload) {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const topList = Array.isArray(data?.topList) ? data.topList : []
+  return topList.map(list => ({
+    id: String(list?.id ?? ''),
+    source: 'qq',
+    name: String(list?.topTitle || ''),
+    picUrl: String(list?.picUrl || ''),
+    coverImgUrl: String(list?.picUrl || ''),
+    listenCount: Number(list?.listenCount ?? 0),
+    tracks: Array.isArray(list?.songList) ? list.songList : [],
+  }))
+}
+
 export function getQQMvPlay() {
   return Promise.reject(createQQPublicApiDisabledError('MV playback'))
 }

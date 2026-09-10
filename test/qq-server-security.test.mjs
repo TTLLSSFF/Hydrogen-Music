@@ -301,6 +301,27 @@ test('QQ public album info rejects missing albummid and non-GET methods', async 
   assert.equal(post.status, 405)
 })
 
+test('QQ public home endpoints forward without a login session', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    bannerService: async () => ({ status: 200, body: { response: { focus: { data: { content: [{ id: 1 }] } } } } }),
+    newSongsService: async () => ({ status: 200, body: { response: { new_song: { data: { songlist: [1] } } } } }),
+    topListsService: async () => ({ status: 200, body: { response: { data: { topList: [2] } } } }),
+  })
+
+  for (const path of ['/getRecommendBanner', '/getNewSongs', '/getTopLists']) {
+    const context = createContext(path)
+    let reached = false
+    await middleware(context, async () => { reached = true })
+    assert.equal(reached, false, `${path} must be handled before the session-required boundary`)
+    assert.equal(context.status, 200)
+  }
+
+  const post = createContext('/getNewSongs', { method: 'POST', body: {} })
+  await middleware(post, async () => {})
+  assert.equal(post.status, 405)
+})
+
 test('QQ public session status exposes only a non-secret account identifier', async () => {
   const middleware = createQQSecurityMiddleware({
     getSession: () => ({

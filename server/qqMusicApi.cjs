@@ -518,6 +518,21 @@ function createQQSecurityMiddleware(options = {}) {
     params: { albummid, format: 'json', outCharset: 'utf-8' },
     option: {},
   }))
+  const bannerService = options.bannerService || (async () => qqServices.getRecommendBanner_default({
+    method: 'get',
+    params: {},
+    option: {},
+  }))
+  const newSongsService = options.newSongsService || (async () => qqServices.getNewSongs({
+    method: 'get',
+    params: {},
+    option: {},
+  }))
+  const topListsService = options.topListsService || (async () => qqServices.getTopLists_default({
+    method: 'get',
+    params: {},
+    option: {},
+  }))
 
   return async function qqSecurityMiddleware(ctx, next) {
     return runWithQQSafeLogging(async () => {
@@ -678,6 +693,28 @@ function createQQSecurityMiddleware(options = {}) {
         writeJson(ctx, status, sanitizeQQResponseBody(body))
       } catch (_) {
         writeJson(ctx, 502, { error: 'QQ Music album detail unavailable' })
+      }
+      return
+    }
+
+    // 公共首页数据（无登录要求）：轮播焦点图、最新歌曲、榜单总榜。
+    // 三个端点均为无参 GET，响应在到达前端前经过凭证脱敏。
+    const PUBLIC_HOME_SERVICES = {
+      '/getrecommendbanner': { service: bannerService, error: 'QQ Music banner unavailable' },
+      '/getnewsongs': { service: newSongsService, error: 'QQ Music new songs unavailable' },
+      '/gettoplists': { service: topListsService, error: 'QQ Music top lists unavailable' },
+    }
+    if (PUBLIC_HOME_SERVICES[normalizedPath]) {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const entry = PUBLIC_HOME_SERVICES[normalizedPath]
+      try {
+        const { status, body } = unwrapServiceResponse(await entry.service())
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: entry.error })
       }
       return
     }

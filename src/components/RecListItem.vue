@@ -4,10 +4,13 @@
   import { getNewAlbum } from '../api/album';
   import { getRecommendedArtists } from '../api/artist';
   import { getRecommendedSongList, getTopList } from '../api/playlist'
+  import { getQQTopLists, normalizeQQTopLists } from '../api/qqMusic';
+  import { useUserStore } from '../store/userStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { usePlayerStore } from '../store/playerStore';
   const libraryStore = useLibraryStore()
   const playerStore = usePlayerStore()
+  const userStore = useUserStore()
   const router = useRouter()
   //0为歌单,1为歌手,2为专辑,3为排行榜
   const props = defineProps(['recType'])
@@ -16,9 +19,11 @@
   const recTitleEN = ref('')
   const recommendationList = ref([{}])
   let recommendationLoaded = false
+  let loadedQQSource = false
 
   onActivated(() => {
-    if (recommendationLoaded && Array.isArray(recommendationList.value) && recommendationList.value.length > 0) return
+    const qqSource = userStore.homeSource === 'qq'
+    if (recommendationLoaded && loadedQQSource === qqSource && Array.isArray(recommendationList.value) && recommendationList.value.length > 0) return
     /**
      * 第一个参数为推荐歌手的国家,第二个为推荐歌单请求数量，第三个为最新专辑的国家，
      * 最后为当前列表的类型
@@ -45,6 +50,21 @@
 
   //加载数据
   async function loadData(artistNation,limit,albumNation,recType) {
+    const qqSource = userStore.homeSource === 'qq'
+    if (qqSource && recType == 3) {
+        const payload = await getQQTopLists()
+        // 榜单条目兼容模板字段：name/coverImgUrl/updateFrequency（热度）
+        recommendationList.value = normalizeQQTopLists(payload)
+          .slice(0, 10)
+          .map(list => ({
+            ...list,
+            updateFrequency: list.listenCount > 0 ? `热度 ${list.listenCount}` : '',
+          }))
+        setTitle("排行榜", "TOP LIST")
+        recommendationLoaded = true
+        loadedQQSource = qqSource
+        return
+    }
     if(recType == 0) {
         const listData = await getRecommendedSongList(limit)
         recommendationList.value = listData.result
@@ -70,10 +90,13 @@
         });;
     }
     recommendationLoaded = true
+    loadedQQSource = qqSource
     // console.log(recommendationList.value)
   }
 
   const checkDetail = (id) => {
+    // QQ 榜单详情路由尚未开放，阻断跳转避免误入网易云榜单
+    if (loadedQQSource) return
     libraryStore.libraryInfo = null
     if(props.recType == 0) router.push('/mymusic/playlist/' + id)
     if(props.recType == 1) router.push('/mymusic/artist/' + id)

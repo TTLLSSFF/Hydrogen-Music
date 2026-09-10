@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { normalizeMusicSource } from '../utils/musicSource.mjs'
 
 export const useUserStore = defineStore('userStore', {
     state: () => {
@@ -12,6 +13,7 @@ export const useUserStore = defineStore('userStore', {
             appOptionShow: false,
             biliUser: null,
             homePage: true,
+            homeSource: 'netease', // 首页音乐源：netease/qq，持久化，非法值回退
             cloudDiskPage: true,
             personalFMPage: true,
             sirenPage: false,
@@ -20,6 +22,9 @@ export const useUserStore = defineStore('userStore', {
     actions: {
         updateUser(userinfo) {
             this.user = userinfo
+        },
+        setHomeSource(source) {
+            this.homeSource = normalizeMusicSource(source) === 'qq' ? 'qq' : 'netease'
         },
         resetAccountState() {
             this.user = null
@@ -53,6 +58,6 @@ export const useUserStore = defineStore('userStore', {
     },
     persist: {
         storage: localStorage,
-        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource']
+        pick: ['user','biliUser','homePage','homeSource','cloudDiskPage','personalFMPage','sirenPage','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource']
     },
 })

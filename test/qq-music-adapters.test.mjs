@@ -10,14 +10,17 @@ import {
   normalizeQQAlbumDetail,
   normalizeQQLyricPayload,
   normalizeQQLikedPlaylist,
+  normalizeQQNewSongs,
   normalizeQQPlaylist,
   normalizeQQPlaylistDetail,
+  normalizeQQRecommendBanner,
   normalizeQQSearchAlbums,
   normalizeQQSearchArtists,
   normalizeQQSearchMvs,
   normalizeQQSearchPayload,
   normalizeQQSearchSongs,
   normalizeQQSong,
+  normalizeQQTopLists,
   QQ_PUBLIC_API_DISABLED_CODE,
   searchQQAll,
   searchQQCategory,
@@ -310,6 +313,64 @@ test('QQ album detail normalizes the live response into the shared album contrac
   assert.equal(detail.songs[0].id, '001Bbywq2gicae')
   assert.equal(detail.songs[0].source, 'qq')
   assert.equal(detail.songs[0].dt, 240000)
+})
+
+test('QQ banner normalizes focus content into the shared banner contract', () => {
+  const banners = normalizeQQRecommendBanner({
+    response: {
+      focus: {
+        data: {
+          content: [
+            {
+              id: 55886,
+              title: '焦点标题',
+              sub_title: '',
+              type: 10002,
+              pic_info: { url: 'http://y.gtimg.cn/music/common/upload/MUSIC_FOCUS/7032830.png' },
+              jump_info: { url: '003ryYZm47hg1r', mid: '' },
+            },
+          ],
+        },
+      },
+    },
+  })
+  assert.equal(banners.length, 1)
+  assert.equal(banners[0].pic, 'http://y.gtimg.cn/music/common/upload/MUSIC_FOCUS/7032830.png')
+  assert.equal(banners[0].title, '焦点标题')
+  assert.equal(banners[0].jumpUrl, '003ryYZm47hg1r')
+})
+
+test('QQ new songs normalizes the live songlist through the song adapter', () => {
+  const songs = normalizeQQNewSongs({
+    response: {
+      new_song: {
+        data: {
+          songlist: [{ mid: 'new-mid', name: '新歌', interval: '200', singer: [{ mid: 's1', name: '歌手' }] }],
+        },
+      },
+    },
+  })
+  assert.equal(songs.length, 1)
+  assert.equal(songs[0].id, 'new-mid')
+  assert.equal(songs[0].name, '新歌')
+  assert.equal(songs[0].source, 'qq')
+  assert.equal(songs[0].dt, 200000)
+})
+
+test('QQ top lists normalize the live topList array', () => {
+  const lists = normalizeQQTopLists({
+    response: {
+      data: {
+        topList: [{ id: 4, topTitle: '巅峰榜·流行指数', picUrl: 'http://y.gtimg.cn/pic.jpg', listenCount: 7953220, songList: [{ songname: 'A' }] }],
+      },
+    },
+  })
+  assert.equal(lists.length, 1)
+  assert.equal(lists[0].id, '4')
+  assert.equal(lists[0].name, '巅峰榜·流行指数')
+  assert.equal(lists[0].source, 'qq')
+  assert.equal(lists[0].listenCount, 7953220)
+  assert.equal(lists[0].tracks.length, 1)
 })
 
 test('QQ song normalization keeps a stable provider-specific identity', () => {
