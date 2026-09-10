@@ -1,0 +1,389 @@
+﻿## Commits
+b00abb4 feat(qq-music): 开放公共榜单详情
+
+## Diff stat
+ .../2026-09-10-qq-toplist-detail/task-3-report.md  | 45 +++++++++++
+ src/components/LibraryDetail.vue                   |  8 +-
+ src/components/RecListItem.vue                     | 10 ++-
+ src/router/router.js                               |  9 ++-
+ src/store/libraryStore.js                          | 41 +++++++++-
+ test/qq-toplist-detail-flow.test.mjs               | 87 ++++++++++++++++++++++
+ 6 files changed, 191 insertions(+), 9 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-09-10-qq-toplist-detail/task-3-report.md b/.superpowers/sdd/2026-09-10-qq-toplist-detail/task-3-report.md
+new file mode 100644
+index 0000000..c278625
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-10-qq-toplist-detail/task-3-report.md
+@@ -0,0 +1,45 @@
++# 任务 3 报告：QQ 公共榜单详情
++
++## RED 证据
++
++新增 `test/qq-toplist-detail-flow.test.mjs` 后，先将 Store 的榜单类型条件临时改为 `toplist-red`。执行：
++
++```powershell
++node --test test/qq-toplist-detail-flow.test.mjs
++```
++
++结果为 1 个失败：公共榜单测试实际调用 `updateQQPlaylistDetail('4')`，而断言要求 `updateQQTopListDetail('4')`。随后恢复条件为 `toplist`，测试通过。
++
++## 实现范围
++
++- `src/store/libraryStore.js`
++  - QQ 且 `type=toplist` 时改走 `updateQQTopListDetail`。
++  - 该方法使用 `getQQTopListDetail` 和 `normalizeQQTopListDetail`，写入标准化歌曲、搜索索引、`libraryInfo.source='qq'` 和已完成的 hydration 状态。
++  - QQ 私人歌单继续走原有 `updateQQPlaylistDetail`，网易云分支未变。
++- `src/router/router.js`
++  - 将 `query.type` 纳入详情重新加载条件。
++  - 仅 QQ 公共榜单绕过 QQ My Music 登录校验，并向 Store 转发 `source`、`type`。
++- `src/components/LibraryDetail.vue`
++  - 同页详情跳转采用相同的公共榜单豁免并转发规范化参数。
++- `src/components/RecListItem.vue`
++  - QQ 首页仅排行榜卡片（`recType === 3`）跳转至带 `source=qq&type=toplist` 的公开详情；其他 QQ 首页入口继续阻断。
++- `test/qq-toplist-detail-flow.test.mjs`
++  - 覆盖公共榜单 Store 分流、QQ 私人歌单与网易云分流保持不变，以及公开路由意图。
++
++## 验证
++
++- `node --test test/qq-toplist-detail-flow.test.mjs`：3 通过，0 失败。
++- `npm test`：137 通过，0 失败。
++- `npm run build`：成功。
++- 编辑文件语言诊断：无错误。
++
++## 自审
++
++- 公共榜单分支只调用 QQ 公共榜单 API，不触发 QQ 私人 `disstid` 加载器或网易云详情加载器。
++- `libraryInfo.source='qq'` 保留既有 QQ 只读写保护。
++- 未开放视频或 MV，未添加敏感 URL 或上游 URL 转发能力。
++- 构建仍显示项目既有的动态/静态导入及大 chunk 警告；不影响构建结果。
++
++## Commit
++
++`4a64c1a feat(qq-music): 开放公共榜单详情`
+diff --git a/src/components/LibraryDetail.vue b/src/components/LibraryDetail.vue
+index a8e786b..501d9e5 100644
+--- a/src/components/LibraryDetail.vue
++++ b/src/components/LibraryDetail.vue
+@@ -341,28 +341,30 @@ onBeforeRouteLeave((to, from, next) => {
+     libraryTypeCheck(to.name);
+     next();
+ });
+ 
+ onBeforeRouteUpdate(async (to, from, next) => {
+     saveCurrentDetailScroll(from);
+     resetSongSearch();
+     setPendingScrollPolicyForRoute(to);
+ 
+     const normalizedToName = normalizeRouteName(to.name);
+-    const requestedSource = to.query.source || 'netease';
+-    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
++    const requestedSource = String(to.query.source || 'netease').toLowerCase();
++    const requestedType = String(to.query.type || '').toLowerCase();
++    const isQQTopList = requestedSource === 'qq' && requestedType === 'toplist';
++    if (normalizedToName == 'playlist' && !isQQTopList && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
+         noticeOpen('请先登录 QQ 音乐', 2);
+         next({ name: 'mymusic' });
+         return;
+     }
+     const detailLoadOptions = normalizedToName == 'playlist'
+-        ? { deferRemaining: true, source: requestedSource }
++        ? { deferRemaining: true, source: requestedSource, type: requestedType }
+         : normalizedToName == 'album'
+             ? { source: to.query.source || 'netease' }
+             : normalizedToName == 'artist'
+                 ? { source: to.query.source || 'netease', name: to.query.name, singerid: to.query.singerid }
+                 : {};
+     libraryTypeCheck(to.name);
+     artistPageType.value = 0;
+     libraryAlbum.value = null;
+     libraryMV.value = null;
+     //先放行路由，详情数据随后填充，避免点击后卡顿
+diff --git a/src/components/RecListItem.vue b/src/components/RecListItem.vue
+index 59d6c8e..37105cd 100644
+--- a/src/components/RecListItem.vue
++++ b/src/components/RecListItem.vue
+@@ -88,21 +88,29 @@
+         recommendationList.value = listData.list.filter((item,index) => {
+             return indexs.includes(index)
+         });;
+     }
+     recommendationLoaded = true
+     loadedQQSource = qqSource
+     // console.log(recommendationList.value)
+   }
+ 
+   const checkDetail = (id) => {
+-    // QQ 榜单详情路由尚未开放，阻断跳转避免误入网易云榜单
++    if (loadedQQSource && recType.value == 3) {
++      router.push({
++        path: `/mymusic/playlist/${id}`,
++        query: { source: 'qq', type: 'toplist' },
++      })
++      playerStore.forbidLastRouter = true
++      return
++    }
++    // QQ banner/video 等其它入口仍不开放详情跳转
+     if (loadedQQSource) return
+     libraryStore.libraryInfo = null
+     if(props.recType == 0) router.push('/mymusic/playlist/' + id)
+     if(props.recType == 1) router.push('/mymusic/artist/' + id)
+     if(props.recType == 2) router.push('/mymusic/album/' + id)
+     if(props.recType == 3) router.push('/mymusic/playlist/' + id)
+     playerStore.forbidLastRouter = true
+   }
+   const checkArtist = (artistId) => {
+     router.push('/mymusic/artist/' + artistId)
+diff --git a/src/router/router.js b/src/router/router.js
+index 1678963..0f50899 100644
+--- a/src/router/router.js
++++ b/src/router/router.js
+@@ -36,23 +36,24 @@ const RecommendSongs = createRouteLoader(() => import('../components/RecommendSo
+ const SearchResult = createRouteLoader(() => import('../views/SearchResult.vue'))
+ const Settings = createRouteLoader(() => import('../views/Settings.vue'))
+ const RadioDetail = createRouteLoader(() => import('../components/RadioDetail.vue'))
+ 
+ const userStore = useUserStore()
+ const libraryStore = useLibraryStore()
+ const { updateLibraryDetail } = libraryStore
+ const { libraryInfo } = storeToRefs(libraryStore)
+ const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
+ const hasDifferentLibrarySource = (to, from) => String(to?.query?.source || 'netease') != String(from?.query?.source || 'netease')
++const hasDifferentLibraryType = (to, from) => String(to?.query?.type || '') != String(from?.query?.type || '')
+ //先完成路由跳转再拉详情数据，避免点击后要等网络请求才有反应
+ const enterLibraryDetail = (to, from, next, routeName, options = {}) => {
+-    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from) || hasDifferentLibrarySource(to, from)
++    const needReload = !libraryInfo.value || from.name != routeName || hasDifferentLibraryId(to, from) || hasDifferentLibrarySource(to, from) || hasDifferentLibraryType(to, from)
+     next()
+     if (!needReload) return
+     updateLibraryDetail(to.params.id, routeName, options).catch(() => {
+         libraryStore.libraryChangeAnimation = false
+         noticeOpen('加载失败', 2)
+     })
+ }
+ const routeComponentPreloadLoaders = [
+     HomePage,
+     MyMusic,
+@@ -129,26 +130,28 @@ const routes = [
+         path: '/mymusic',
+         name: 'mymusic',
+         component: MyMusic,
+         children: [
+             {
+                 path: '/mymusic/playlist/:id',
+                 name: 'playlist',
+                 component: LibraryDetail,
+                 beforeEnter: (to, from, next) => {
+                     const source = String(to.query.source || 'netease').toLowerCase()
+-                    if (!canAccessQQMyMusic(source, hasQQAccount())) {
++                    const type = String(to.query.type || '').toLowerCase()
++                    const isQQTopList = source === 'qq' && type === 'toplist'
++                    if (!isQQTopList && !canAccessQQMyMusic(source, hasQQAccount())) {
+                         noticeOpen('请先登录 QQ 音乐', 2)
+                         next({ name: 'mymusic' })
+                         return
+                     }
+-                    enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true, source })
++                    enterLibraryDetail(to, from, next, 'playlist', { deferRemaining: true, source, type })
+                 }
+             },
+             {
+                 path: '/mymusic/album/:id',
+                 name: 'album',
+                 component: LibraryDetail,
+                 beforeEnter: (to, from, next) => {
+                     const source = String(to.query.source || '').toLowerCase()
+                     enterLibraryDetail(to, from, next, 'album', { source: source == 'qq' ? 'qq' : 'netease' })
+                 }
+diff --git a/src/store/libraryStore.js b/src/store/libraryStore.js
+index d4ddad7..12bf15e 100644
+--- a/src/store/libraryStore.js
++++ b/src/store/libraryStore.js
+@@ -1,17 +1,17 @@
+ import { defineStore } from "pinia";
+ import { getPlaylistDetail, getPlaylistAll, getRecommendSongs, getHistoryRecommendSongsDetail, playlistDynamic } from '../api/playlist'
+ import { getAlbumDetail, albumDynamic } from '../api/album'
+ import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
+ import { getArtistMV } from '../api/mv'
+ import { getSongDetail } from '../api/song'
+-import { getQQSongListDetail } from '../api/qqMusic'
++import { getQQSongListDetail, getQQTopListDetail, normalizeQQTopListDetail } from '../api/qqMusic'
+ import { loadQQPlaylistDetail, mergeQQPlaylistSummary } from '../utils/qqLibrary.mjs'
+ import { mapSongsPlayableStatus } from "../utils/songStatus";
+ import { buildAlbumSearchText, buildCloudSongSearchText, buildMVSearchText } from "../utils/songFilter";
+ import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs'
+ 
+ const PLAYLIST_PAGE_SIZE = 100
+ const PLAYLIST_HYDRATION_CONCURRENCY = 4
+ const PLAYLIST_OVERVIEW_COUNT_FIELDS = ['trackCount', 'size']
+ 
+ const createPlaylistHydrationState = ({ id = null, total = 0, loaded = 0, status = 'idle', source = 'netease' } = {}) => ({
+@@ -545,36 +545,73 @@ export const useLibraryStore = defineStore('libraryStore', {
+         },
+         async updateLibraryDetail(id, routerName, options = {}) {
+             const { force = false } = options
+             const source = normalizeMusicSource(options.source)
+             if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName, source)) return
+ 
+             this.changeAnimation()
+             this.resetSearchIndex()
+             if (routerName != 'playlist') this.resetPlaylistHydration()
+             if (routerName == 'playlist') {
+-                if (source === 'qq') await this.updateQQPlaylistDetail(id)
++                if (source === 'qq' && String(options.type || '').toLowerCase() === 'toplist') await this.updateQQTopListDetail(id)
++                else if (source === 'qq') await this.updateQQPlaylistDetail(id)
+                 else await this.updatePlaylistDetail(id, { ...options, source })
+             }
+             if (routerName == 'album') {
+                 if (source === 'qq') await this.updateQQAlbumDetail(id)
+                 else await this.updateAlbumDetail(id)
+             }
+             if (routerName == 'artist') {
+                 if (source === 'qq') await this.updateQQSingerDetail(id, options)
+                 else await this.updateArtistDetail(id)
+             }
+             this.artistPageType = 0
+             this.libraryAlbum = null
+             this.libraryMV = null
+             this.cacheCurrentLibraryDetail(id, routerName, source)
+         },
++        async updateQQTopListDetail(id) {
++            const playlistId = String(id || '')
++            const token = createPlaylistHydrationToken(playlistId)
++            this.playlistHydrationToken = token
++            this.playlistHydrationPromise = null
++            this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'loading', source: 'qq' })
++            this.libraryInfo = null
++            this.librarySongs = []
++            this.libraryAlbum = null
++            this.libraryMV = null
++            this.indexLibrarySongs([])
++            try {
++                const normalized = normalizeQQTopListDetail(await getQQTopListDetail(playlistId), playlistId)
++                if (this.playlistHydrationToken !== token) return
++                this.libraryInfo = { ...normalized.playlist, id: playlistId, source: 'qq' }
++                this.librarySongs = normalized.songs
++                this.indexLibrarySongs(this.librarySongs)
++                this.playlistHydration = createPlaylistHydrationState({
++                    id: playlistId,
++                    total: this.librarySongs.length,
++                    loaded: this.librarySongs.length,
++                    status: 'completed',
++                    source: 'qq',
++                })
++                this.libraryChangeAnimation = false
++                this.cacheCurrentLibraryDetail(playlistId, 'playlist', 'qq')
++            } catch (error) {
++                if (this.playlistHydrationToken === token) {
++                    this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'failed', source: 'qq' })
++                    this.playlistHydrationPromise = null
++                    this.playlistHydrationToken = null
++                    this.libraryChangeAnimation = false
++                }
++                throw error
++            }
++        },
+         async updateQQPlaylistDetail(id) {
+             const playlistId = String(id || '')
+             const token = createPlaylistHydrationToken(playlistId)
+             this.playlistHydrationToken = token
+             this.playlistHydrationPromise = null
+             this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'loading', source: 'qq' })
+             const listSummary = [
+                 ...(Array.isArray(this.playlistUserCreated) ? this.playlistUserCreated : []),
+                 ...(Array.isArray(this.playlistUserSub) ? this.playlistUserSub : []),
+             ].find(item => normalizeMusicSource(item?.source) === 'qq' && String(item?.id ?? '') === playlistId)
+diff --git a/test/qq-toplist-detail-flow.test.mjs b/test/qq-toplist-detail-flow.test.mjs
+new file mode 100644
+index 0000000..c9cb075
+--- /dev/null
++++ b/test/qq-toplist-detail-flow.test.mjs
+@@ -0,0 +1,87 @@
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import { readFile } from 'node:fs/promises'
++
++const libraryStorePath = new URL('../src/store/libraryStore.js', import.meta.url)
++
++function extractMethod(source, name) {
++  const marker = `async ${name}(`
++  const start = source.indexOf(marker)
++  assert.notEqual(start, -1, `找不到 ${name}`)
++
++  const bodyStart = source.indexOf('{', source.indexOf(')', start))
++  let depth = 0
++  for (let index = bodyStart; index < source.length; index += 1) {
++    if (source[index] === '{') depth += 1
++    if (source[index] === '}') depth -= 1
++    if (depth === 0) return source.slice(start, index + 1)
++  }
++  throw new Error(`无法解析 ${name}`)
++}
++
++async function loadUpdateLibraryDetail() {
++  const source = await readFile(libraryStorePath, 'utf8')
++  const method = extractMethod(source, 'updateLibraryDetail')
++  const functionSource = method.replace(/^async updateLibraryDetail/, 'async function updateLibraryDetail')
++  return new Function('normalizeMusicSource', `return (${functionSource})`)(source => String(source || 'netease').toLowerCase())
++}
++
++function createStore() {
++  const calls = []
++  return {
++    calls,
++    libraryInfo: null,
++    changeAnimation() { calls.push('changeAnimation') },
++    resetSearchIndex() { calls.push('resetSearchIndex') },
++    resetPlaylistHydration() { calls.push('resetPlaylistHydration') },
++    shouldBypassLibraryDetailCache() { return true },
++    restoreLibraryDetailFromCache() { return false },
++    async updateQQTopListDetail(id) { calls.push(['updateQQTopListDetail', id]) },
++    async updateQQPlaylistDetail(id) { calls.push(['updateQQPlaylistDetail', id]) },
++    async updatePlaylistDetail(id, options) { calls.push(['updatePlaylistDetail', id, options]) },
++    cacheCurrentLibraryDetail(id, routeName, source) { calls.push(['cacheCurrentLibraryDetail', id, routeName, source]) },
++  }
++}
++
++test('QQ 公共榜单详情分流到公开榜单加载器，不走私人歌单或网易云加载器', async () => {
++  const updateLibraryDetail = await loadUpdateLibraryDetail()
++  const store = createStore()
++
++  await updateLibraryDetail.call(store, '4', 'playlist', { source: 'qq', type: 'toplist' })
++
++  assert.deepEqual(store.calls.filter(call => Array.isArray(call)), [
++    ['updateQQTopListDetail', '4'],
++    ['cacheCurrentLibraryDetail', '4', 'playlist', 'qq'],
++  ])
++})
++
++test('QQ 私人歌单与网易云歌单保持原有详情分流', async () => {
++  const updateLibraryDetail = await loadUpdateLibraryDetail()
++  const qqStore = createStore()
++  const neteaseStore = createStore()
++
++  await updateLibraryDetail.call(qqStore, 'private-id', 'playlist', { source: 'qq' })
++  await updateLibraryDetail.call(neteaseStore, 'cloud-id', 'playlist', { source: 'netease', type: 'toplist' })
++
++  assert.deepEqual(qqStore.calls.filter(call => Array.isArray(call))[0], ['updateQQPlaylistDetail', 'private-id'])
++  assert.deepEqual(neteaseStore.calls.filter(call => Array.isArray(call))[0], [
++    'updatePlaylistDetail',
++    'cloud-id',
++    { source: 'netease', type: 'toplist' },
++  ])
++})
++
++test('公开 QQ 榜单路由意图仅由 qq 与 toplist 组合满足', () => {
++  const canEnterPlaylist = (source, type, loggedIn) => {
++    const normalizedSource = String(source || 'netease').toLowerCase()
++    const normalizedType = String(type || '').toLowerCase()
++    const isQQTopList = normalizedSource === 'qq' && normalizedType === 'toplist'
++    return isQQTopList || normalizedSource !== 'qq' || loggedIn === true
++  }
++
++  assert.equal(canEnterPlaylist('qq', 'toplist', false), true)
++  assert.equal(canEnterPlaylist('QQ', 'TOPLIST', false), true)
++  assert.equal(canEnterPlaylist('qq', '', false), false)
++  assert.equal(canEnterPlaylist('qq', 'playlist', false), false)
++  assert.equal(canEnterPlaylist('netease', 'toplist', false), true)
++})

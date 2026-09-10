@@ -1,0 +1,218 @@
+﻿# Review package: 648d33a..16ffa54
+
+## Commits
+
+16ffa54 feat(qq-music): 开放QQ榜单详情桥接固定topId无session访问
+
+## Files changed
+
+ server/qqMusicApi.cjs            | 60 ++++++++++++++++++++++++++++++++++++++++
+ test/qq-server-security.test.mjs | 52 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 112 insertions(+)
+
+## Diff
+
+diff --git a/server/qqMusicApi.cjs b/server/qqMusicApi.cjs
+index c020347..3f1c0a0 100644
+--- a/server/qqMusicApi.cjs
++++ b/server/qqMusicApi.cjs
+@@ -494,20 +494,31 @@ async function searchQQMusicPublic({ keyword, category, limit, page, catZhida })
+     const payload = await response.json()
+     return {
+       status: response.ok ? 200 : Number(response.status) || 502,
+       body: payload && typeof payload === 'object' ? payload : {},
+     }
+   } finally {
+     clearTimeout(timer)
+   }
+ }
+ 
++// 周的 ISO 号用于构造榜单 period。复刻上游 getRanks 控制器（依赖包未导出
++// 该控制器，仅导出底层 UCommon_default 服务）的 getWeekNumber 算法，保证
++// 服务端默认实现与真实客户端请求一致。
++function getWeekNumber(d) {
++  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
++  const dayNum = d.getUTCDay() || 7
++  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
++  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
++  return Math.ceil(((d.getTime() - yearStart.getTime()) / 864e5 + 1) / 7)
++}
++
+ function createQQSecurityMiddleware(options = {}) {
+   const getLoginQr = options.getLoginQr || (async () => qqServices.getQQLoginQr({}))
+   const checkLoginQr = options.checkLoginQr || checkQQLoginQrWithStatus
+   const persistSession = options.persistSession || persistQQLoginSession
+   const clearSession = options.clearSession || clearQQLoginSession
+   const getSession = options.getSession || getQQLoginSession
+   const sessionStore = options.sessionStore || qrSessions
+   const sessionIdFactory = options.sessionIdFactory || createOpaqueSessionId
+   const now = options.now || Date.now
+   const logSink = options.logSink
+@@ -526,20 +537,48 @@ function createQQSecurityMiddleware(options = {}) {
+   const newSongsService = options.newSongsService || (async () => qqServices.getNewSongs({
+     method: 'get',
+     params: {},
+     option: {},
+   }))
+   const topListsService = options.topListsService || (async () => qqServices.getTopLists_default({
+     method: 'get',
+     params: {},
+     option: {},
+   }))
++  // 榜单详情是只读公共接口。依赖包未导出 getRanks 控制器（只导出了底层
++  // UCommon_default 服务），故在此复刻上游 getRanks 控制器的精确请求。
++  // topId 由中间件校验为纯数字，page/limit 固定为 0/100（与简报约定一致）。
++  const topListDetailService = options.topListDetailService || (async ({ topId, page, limit }) => {
++    const date = new Date()
++    const week = getWeekNumber(date)
++    const data = {
++      comm: { ct: 24, cv: 4747474, format: 'json', inCharset: 'utf-8', needNewCode: 1, uin: 0 },
++      req_1: {
++        module: 'musicToplist.ToplistInfoServer',
++        method: 'GetDetail',
++        param: {
++          topId: +topId,
++          offset: +page || 0,
++          num: +limit || 100,
++          period: `${date.getFullYear()}_${week}`,
++        },
++      },
++    }
++    const props = {
++      method: 'get',
++      params: { format: 'json', data: JSON.stringify(data) },
++      option: {},
++    }
++    const responseData = (await qqServices.UCommon_default(props)).data
++    // 与依赖控制器最终响应信封保持一致：body 形如 { response: responseData }
++    return { status: 200, body: { response: responseData } }
++  })
+   const singerService = options.singerService || fetchQQSingerInfo
+ 
+ // —— 公共歌手详情聚合 ——
+ // 热门歌曲无专用上游接口，明星页面用「歌手名搜索 → zhida_singer.hotsong」填充；
+ // 描述/关注数/MV 走老版歌手页接口（与真实客户端一致，需带 Referer）。
+ const QQ_SINGER_DESC_URL = 'https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_singer_desc.fcg?format=xml&outCharset=utf-8&utf8=1&singermid=___MID___&r=___TS___'
+ const QQ_SINGER_STAR_URL = 'https://c.y.qq.com/rsc/fcgi-bin/fcg_order_singer_getnum.fcg?format=json&outCharset=utf-8&utf8=1&singermid=___MID___&rnd=___TS___'
+ const QQ_SINGER_MV_URL = 'https://c.y.qq.com/mv/fcgi-bin/fcg_singer_mv.fcg?format=json&outCharset=utf-8&cid=205360581&begin=0&singerid=___ID___&num=20'
+ const QQ_UPSTREAM_HEADERS = {
+   Accept: 'application/json,text/plain,*/*',
+@@ -829,20 +868,41 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
+       const singerid = getSingleValue(ctx.query?.singerid || ctx.query?.singerId).trim().replace(/[^0-9]/g, '')
+       try {
+         const { status, body } = unwrapServiceResponse(await singerService({ singermid, name, singerid }))
+         writeJson(ctx, status, sanitizeQQResponseBody(body))
+       } catch (_) {
+         writeJson(ctx, 502, { error: 'QQ Music singer detail unavailable' })
+       }
+       return
+     }
+ 
++    // 公共榜单详情（无登录要求）：只放行纯数字 topId，page/limit 固定 0/100。
++    // 响应在到达前端前经过凭证脱敏。
++    if (normalizedPath === '/gettoplistdetail') {
++      if (ctx.method !== 'GET') {
++        writeJson(ctx, 405, { error: 'Method not allowed' })
++        return
++      }
++      const topId = getSingleValue(ctx.query?.topId).trim().replace(/[^0-9]/g, '')
++      if (!topId) {
++        writeJson(ctx, 400, { error: 'topId is required' })
++        return
++      }
++      try {
++        const { status, body } = unwrapServiceResponse(await topListDetailService({ topId, page: 0, limit: 100 }))
++        writeJson(ctx, status, sanitizeQQResponseBody(body))
++      } catch (_) {
++        writeJson(ctx, 502, { error: 'QQ Music toplist detail unavailable' })
++      }
++      return
++    }
++
+     // All non-private traffic must be explicitly listed above. This check is
+     // deliberately before session injection and `next()` so public QQ APIs
+     // cannot be reached even when a user has a valid login session.
+     if (!isQQPathAllowed(normalizedPath)) {
+       writeJson(ctx, 404, { error: 'Not found' })
+       return
+     }
+ 
+     // The retained QQ surface is read-only. Reject non-GET methods even when
+     // an upstream package later adds a handler under an existing path.
+diff --git a/test/qq-server-security.test.mjs b/test/qq-server-security.test.mjs
+index 503058d..3ef16df 100644
+--- a/test/qq-server-security.test.mjs
++++ b/test/qq-server-security.test.mjs
+@@ -361,20 +361,72 @@ test('QQ public singer info rejects missing singermid, trims identity params and
+   const dirty = createContext('/getSingerInfo?singermid=s-mid&name=%20abc%20&singerid=45a8b8c')
+   await middleware(dirty, async () => {})
+   assert.equal(dirty.status, 200)
+   assert.deepEqual(calls[0], { singermid: 's-mid', name: 'abc', singerid: '4588' })
+ 
+   const post = createContext('/getSingerInfo?singermid=s-mid', { method: 'POST', body: {} })
+   await middleware(post, async () => {})
+   assert.equal(post.status, 405)
+ })
+ 
++test('QQ public toplist detail forwards fixed topId/page/limit without a login session', async () => {
++  const calls = []
++  const middleware = createQQSecurityMiddleware({
++    getSession: () => null,
++    topListDetailService: async params => {
++      calls.push(params)
++      return {
++        status: 200,
++        body: {
++          response: { code: 0, data: { song: [{ songname: '晴天', token: 'stale-token' }] } },
++          cookie: 'uin=must-not-leak',
++        },
++      }
++    },
++  })
++
++  const context = createContext('/getTopListDetail?topId=4')
++  let reached = false
++  await middleware(context, async () => { reached = true })
++
++  assert.equal(reached, false, 'toplist detail must be handled before the session-required boundary')
++  assert.equal(context.status, 200)
++  assert.deepEqual(calls, [{ topId: '4', page: 0, limit: 100 }])
++  assert.equal(context.body.response.code, 0)
++  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
++  assert.equal(JSON.stringify(context.body).includes('stale-token'), false)
++})
++
++test('QQ public toplist detail only accepts a numeric topId and blocks non-GET methods', async () => {
++  const calls = []
++  const middleware = createQQSecurityMiddleware({
++    getSession: () => null,
++    topListDetailService: async params => {
++      calls.push(params)
++      return { status: 200, body: {} }
++    },
++  })
++
++  const missing = createContext('/getTopListDetail')
++  await middleware(missing, async () => {})
++  assert.equal(missing.status, 400)
++
++  const dirty = createContext('/getTopListDetail?topId=abc4def')
++  await middleware(dirty, async () => {})
++  assert.equal(dirty.status, 200)
++  assert.deepEqual(calls[0], { topId: '4', page: 0, limit: 100 })
++
++  const post = createContext('/getTopListDetail?topId=4', { method: 'POST', body: {} })
++  await middleware(post, async () => {})
++  assert.equal(post.status, 405)
++})
++
+ test('QQ public session status exposes only a non-secret account identifier', async () => {
+   const middleware = createQQSecurityMiddleware({
+     getSession: () => ({
+       cookie: 'uin=12345; qqmusic_key=server-secret',
+       loginUin: '12345',
+       uin: '12345',
+       euin: 'encrypted-user-id',
+     }),
+   })
+   const context = createContext('/session/status')
