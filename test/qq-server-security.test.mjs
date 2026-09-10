@@ -160,7 +160,6 @@ test('QQ security middleware forwards only private My Music and playback routes'
   })
 
   for (const path of [
-    '/getSearchByKey?key=test',
     '/getRecommend',
     '/getAlbumInfo?albummid=album',
     '/getMv?vid=mv',
@@ -211,6 +210,61 @@ test('QQ capability boundary keeps read-only routes GET-only', async () => {
     assert.equal(reached, false, `${path} must reject mutating methods`)
     assert.equal(context.status, 404)
   }
+})
+
+test('QQ public search forwards sanitized category params without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    searchService: async params => {
+      calls.push(params)
+      return { status: 200, body: { code: 0, data: { song: { list: [{ songmid: 'mid-1', songname: '晴天' }] } } } }
+    },
+  })
+
+  const context = createContext('/getSearchByKey?key=%E5%91%A8%E6%9D%B0%E4%BC%A6&t=8&n=5&p=2&catZhida=0')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'search must be handled before the session-required boundary')
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ keyword: '周杰伦', category: 8, limit: 5, page: 2, catZhida: 0 }])
+  assert.equal(context.body.code, 0)
+  assert.equal(context.body.data.song.list[0].songmid, 'mid-1')
+})
+
+test('QQ public search rejects missing keys, unsupported categories and non-GET methods', async () => {
+  const middleware = createQQSecurityMiddleware({ getSession: () => null })
+
+  const missingKey = createContext('/getSearchByKey?t=0')
+  await middleware(missingKey, async () => {})
+  assert.equal(missingKey.status, 400)
+
+  const badCategory = createContext('/getSearchByKey?key=song&t=7')
+  await middleware(badCategory, async () => {})
+  assert.equal(badCategory.status, 400)
+
+  const unsupported = createContext('/getSearchByKey?key=song&t=15')
+  await middleware(unsupported, async () => {})
+  assert.equal(unsupported.status, 400)
+
+  const post = createContext('/getSearchByKey?key=song&t=0', { method: 'POST', body: {} })
+  await middleware(post, async () => {})
+  assert.equal(post.status, 405)
+})
+
+test('QQ public search clamps page size and defaults pagination', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    searchService: async params => {
+      calls.push(params)
+      return { status: 200, body: {} }
+    },
+  })
+  const context = createContext('/getSearchByKey?key=song&t=0&n=999&p=0')
+  await middleware(context, async () => {})
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls[0], { keyword: 'song', category: 0, limit: 50, page: 1, catZhida: 1 })
 })
 
 test('QQ public session status exposes only a non-secret account identifier', async () => {

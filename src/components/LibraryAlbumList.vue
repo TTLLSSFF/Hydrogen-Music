@@ -2,6 +2,7 @@
   import { formatTime } from '../utils/time'
   import { useRouter } from 'vue-router'
   import { usePlayerStore } from '../store/playerStore';
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
 
   const router = useRouter()
   const props = defineProps(['albumlist', 'type'])
@@ -10,8 +11,10 @@
   //专辑日期
   const publishTime = time => formatTime(time, "YYYY-MM-DD")
 
-  const checkAlbum = (albumId) => {
+  const checkAlbum = (albumId, item) => {
     playerStore.forbidLastRouter = true
+    // QQ 专辑详情尚未开放，先阻断跳转，避免用网易云详情页误查 QQ 专辑标识。
+    if (normalizeMusicSource(item?.source) === 'qq') return
     router.push('/mymusic/album/' + albumId)
   }
 </script>
@@ -19,7 +22,7 @@
 <template>
   <div class="library-content">
     <div class="library-album-list">
-        <div class="list-item" @click="checkAlbum(item.id)" v-for="(item, index) in props.albumlist" :key="item.id || index">
+        <div class="list-item" @click="checkAlbum(item.id, item)" v-for="(item, index) in props.albumlist" :key="item.id || index">
             <div class="item-title" :class="{'item-title-full': props.type == 'search'}">
                 <div class="item-img">
                     <div class="album-back"></div>

@@ -11,11 +11,15 @@ import {
   normalizeQQLikedPlaylist,
   normalizeQQPlaylist,
   normalizeQQPlaylistDetail,
+  normalizeQQSearchAlbums,
+  normalizeQQSearchArtists,
+  normalizeQQSearchMvs,
   normalizeQQSearchPayload,
+  normalizeQQSearchSongs,
   normalizeQQSong,
   QQ_PUBLIC_API_DISABLED_CODE,
-  searchQQ,
   searchQQAll,
+  searchQQCategory,
   unwrapQQResponse,
 } from '../src/api/qqMusic.js'
 import { normalizeQQPlaybackPayload } from '../src/api/qqMusic.js'
@@ -44,7 +48,7 @@ test('QQ playlist detail uses the upstream disstid parameter', async () => {
   assert.doesNotMatch(requestUrl, /[?&]id=/)
 })
 
-test('QQ public search and detail adapters fail closed without issuing requests', async () => {
+test('QQ album, artist and MV detail adapters fail closed without issuing requests', async () => {
   const originalFetch = globalThis.fetch
   let requestCount = 0
   globalThis.fetch = async url => {
@@ -53,8 +57,6 @@ test('QQ public search and detail adapters fail closed without issuing requests'
   }
   try {
     for (const call of [
-      () => searchQQ('keyword'),
-      () => searchQQAll('keyword', { limit: 10 }),
       () => getQQAlbumInfo('album-mid'),
       () => getQQMv('mv-id'),
       () => getQQMvPlay('mv-id'),
@@ -108,6 +110,148 @@ test('QQ search adapter reads singer and album data from the live zhida shape', 
   assert.equal(result.searchArtists[0].id, '0025NhlN2yWrP4')
   assert.equal(result.searchAlbums[0].name, '叶惠美')
   assert.equal(result.searchAlbums[0].id, '000MkMni19ClKG')
+})
+
+test('QQ search request maps categories to the upstream t parameter', async () => {
+  const originalFetch = globalThis.fetch
+  const requestUrls = []
+  globalThis.fetch = async url => {
+    requestUrls.push(String(url))
+    return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ code: 0, data: {} }) }
+  }
+  try {
+    await searchQQCategory('周杰伦', 'songs', { limit: 20 })
+    await searchQQCategory('周杰伦', 'albums')
+    await searchQQCategory('周杰伦', 'artists')
+    await searchQQCategory('周杰伦', 'mvs')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  assert.equal(requestUrls.length, 4)
+  assert.match(requestUrls[0], /[?&]t=0(&|$)/)
+  assert.match(requestUrls[0], /n=20/)
+  assert.match(requestUrls[0], /key=%E5%91%A8%E6%9D%B0%E4%BC%A6/)
+  assert.match(requestUrls[1], /[?&]t=8(&|$)/)
+  assert.match(requestUrls[2], /[?&]t=9(&|$)/)
+  assert.match(requestUrls[3], /[?&]t=12(&|$)/)
+  assert.throws(() => searchQQCategory('周杰伦', 'playlists'), /unsupported QQ search category/)
+})
+
+test('QQ live album category response normalizes to the shared album contract', () => {
+  const albums = normalizeQQSearchAlbums({
+    code: 0,
+    data: {
+      album: {
+        list: [{
+          albumID: '8220',
+          albumMID: '000MkMni19ClKG',
+          albumName: '叶惠美',
+          albumPic: 'https://example.test/album.jpg',
+          singerMID: '0025NhlN2yWrP4',
+          singerName: '周杰伦',
+          publicTime: '1059580800',
+          song_count: '12',
+        }],
+      },
+    },
+  })
+  assert.equal(albums.length, 1)
+  assert.equal(albums[0].id, '000MkMni19ClKG')
+  assert.equal(albums[0].name, '叶惠美')
+  assert.equal(albums[0].source, 'qq')
+  assert.equal(albums[0].picUrl, 'https://example.test/album.jpg')
+  assert.equal(albums[0].size, 12)
+  assert.equal(albums[0].artists[0].name, '周杰伦')
+})
+
+test('QQ live singer category response normalizes to the shared artist contract', () => {
+  const artists = normalizeQQSearchArtists({
+    code: 0,
+    data: {
+      singer: {
+        list: [{
+          singerID: '4558',
+          singerMID: '0025NhlN2yWrP4',
+          singerName: '周杰伦',
+          singerPic: 'https://example.test/singer.jpg',
+        }],
+      },
+    },
+  })
+  assert.equal(artists.length, 1)
+  assert.equal(artists[0].id, '0025NhlN2yWrP4')
+  assert.equal(artists[0].name, '周杰伦')
+  assert.equal(artists[0].source, 'qq')
+  assert.equal(artists[0].coverImgUrl, 'https://example.test/singer.jpg')
+})
+
+test('QQ live mv category response normalizes to the shared mv contract', () => {
+  const mvs = normalizeQQSearchMvs({
+    code: 0,
+    data: {
+      mv: {
+        list: [{
+          v_id: 'x00135ao69x',
+          mv_id: '123',
+          mv_name: '搁浅',
+          mv_pic_url: 'https://example.test/mv.jpg',
+          duration: '240',
+          play_count: '3800000',
+          singer_name: '周杰伦',
+        }],
+      },
+    },
+  })
+  assert.equal(mvs.length, 1)
+  assert.equal(mvs[0].id, 'x00135ao69x')
+  assert.equal(mvs[0].name, '搁浅')
+  assert.equal(mvs[0].source, 'qq')
+  assert.equal(mvs[0].coverImgUrl, 'https://example.test/mv.jpg')
+  assert.equal(mvs[0].duration, 240000)
+  assert.equal(mvs[0].artists[0].name, '周杰伦')
+})
+
+test('QQ live song category response normalizes through the song adapter', () => {
+  const songs = normalizeQQSearchSongs({
+    code: 0,
+    data: {
+      song: {
+        list: [{
+          songmid: '001Bbywq2gicae',
+          songname: '搁浅',
+          interval: '240',
+          albummid: '003DFRzD192KKD',
+          albumname: '七里香',
+          singer: [{ mid: '0025NhlN2yWrP4', name: '周杰伦' }],
+        }],
+      },
+    },
+  })
+  assert.equal(songs.length, 1)
+  assert.equal(songs[0].id, '001Bbywq2gicae')
+  assert.equal(songs[0].name, '搁浅')
+  assert.equal(songs[0].source, 'qq')
+  assert.equal(songs[0].dt, 240000)
+})
+
+test('QQ aggregate search keeps playlists empty and isolates failed categories', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async url => {
+    const query = String(url)
+    if (query.includes('t=12')) return { ok: false, status: 502, headers: { get: () => 'application/json' }, json: async () => ({}) }
+    if (query.includes('t=9')) return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ code: 0, data: { singer: { list: [{ singerMID: 's1', singerName: 'Singer' }] } } }) }
+    return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ code: 0, data: { song: { list: [{ songmid: 'm1', songname: 'Song' }] } } }) }
+  }
+  let result
+  try {
+    result = await searchQQAll('Song')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  assert.equal(result.searchSongs.length, 1)
+  assert.equal(result.searchArtists[0].name, 'Singer')
+  assert.deepEqual(result.searchPlaylists, [])
+  assert.deepEqual(result.searchMvs, [])
 })
 
 test('QQ song normalization keeps a stable provider-specific identity', () => {

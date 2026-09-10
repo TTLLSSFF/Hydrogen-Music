@@ -8,11 +8,26 @@ function createQQPublicApiDisabledError(capability) {
   return error
 }
 
-// The server boundary rejects these routes as well. Keep the legacy exports
-// as explicit failures so stale callers cannot bypass the product policy by
-// importing this module directly.
-export function searchQQ() {
-  return Promise.reject(createQQPublicApiDisabledError('search'))
+// QQ 公共搜索由服务端 `/getSearchByKey` 支撑；分类以 t 参数选择：
+// 0=歌曲 8=专辑 9=歌手 12=MV。歌单分类上游不提供，返回空列表。
+const QQ_SEARCH_CATEGORY_PARAMS = Object.freeze({
+  songs: 0,
+  albums: 8,
+  artists: 9,
+  mvs: 12,
+})
+const QQ_SEARCH_DEFAULT_LIMIT = 10
+const QQ_SEARCH_MAX_LIMIT = 50
+
+export function searchQQCategory(keywords, category, options = {}) {
+  const t = QQ_SEARCH_CATEGORY_PARAMS[category]
+  if (t === undefined) throw new TypeError('unsupported QQ search category')
+  const requestedLimit = Number(options.limit)
+  const limit = Math.min(
+    Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_SEARCH_DEFAULT_LIMIT, 1),
+    QQ_SEARCH_MAX_LIMIT,
+  )
+  return qqRequest({ url: '/getSearchByKey', method: 'get', params: { key: keywords, t, n: limit } })
 }
 
 export function unwrapQQResponse(payload) {
@@ -712,6 +727,115 @@ export function normalizeQQSearchPayload(payload) {
   }
 }
 
-export function searchQQAll() {
-  return Promise.reject(createQQPublicApiDisabledError('search'))
+// —— 真实 client_search_cp 分类响应的归一化（2026-09 实测形状）——
+
+function readQQSearchCategoryList(payload, categoryKey) {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const category = data?.[categoryKey]
+  return Array.isArray(category?.list) ? category.list : []
+}
+
+/** 歌手分类：singerID/singerMID/singerName/singerPic。 */
+export function normalizeQQSearchArtists(payload) {
+  return readQQSearchCategoryList(payload, 'singer').map(singer => {
+    const mid = firstQQValue(singer.singerMID, singer.singer_mid, singer.mid)
+    const name = firstQQValue(singer.singerName, singer.singer_name, singer.name) || ''
+    const pic = firstQQValue(singer.singerPic, singer.singer_pic, singer.picUrl, singer.pic) || ''
+    return {
+      ...singer,
+      id: String(firstQQValue(mid, singer.singerID, singer.id) || ''),
+      mid: String(mid || ''),
+      source: 'qq',
+      name: String(name),
+      picUrl: String(pic),
+      coverImgUrl: String(pic),
+      img1v1Url: String(pic),
+    }
+  })
+}
+
+/** 专辑分类：albumID/albumMID/albumName/albumPic/singer_list/song_count/publicTime。 */
+export function normalizeQQSearchAlbums(payload) {
+  return readQQSearchCategoryList(payload, 'album').map(album => {
+    const mid = firstQQValue(album.albumMID, album.album_mid, album.mid)
+    const name = firstQQValue(album.albumName, album.album_name, album.albumname, album.name) || ''
+    const pic = firstQQValue(album.albumPic, album.album_pic, album.picUrl, album.pic) || ''
+    const rawArtists = firstQQValue(album.singer_list, album.singerList, album.singers)
+    const artists = Array.isArray(rawArtists)
+      ? rawArtists.map(artist => ({
+          ...(artist && typeof artist === 'object' ? artist : {}),
+          ...(artist?.name ? {} : { name: String(firstQQValue(album.singerName, album.singer_name) || '') }),
+        }))
+      : (album.singerName || album.singer_name
+        ? [{ name: String(album.singerName || album.singer_name), mid: String(firstQQValue(album.singerMID, album.singer_mid) || ''), id: album.singerID }]
+        : [])
+    return {
+      ...album,
+      id: String(firstQQValue(mid, album.albumID, album.id) || ''),
+      mid: String(mid || ''),
+      source: 'qq',
+      name: String(name),
+      picUrl: String(pic),
+      blurPicUrl: String(pic),
+      artists,
+      size: parseQQTrackCount(firstQQValue(album.song_count, album.songCount, album.songnum, album.size)),
+      publishTime: album.publicTime ?? album.publishTime ?? '',
+    }
+  })
+}
+
+/** MV 分类：v_id/mv_id/mv_name/mv_pic_url/duration/play_count/singer_list。 */
+export function normalizeQQSearchMvs(payload) {
+  return readQQSearchCategoryList(payload, 'mv').map(mv => {
+    const id = firstQQValue(mv.v_id, mv.vid, mv.mv_id, mv.mvId, mv.id)
+    const name = firstQQValue(mv.mv_name, mv.mvname, mv.name, mv.title) || ''
+    const pic = firstQQValue(mv.mv_pic_url, mv.mvPicUrl, mv.pic, mv.picUrl, mv.cover) || ''
+    const rawArtists = firstQQValue(mv.singer_list, mv.singerList, mv.singers)
+    const artists = Array.isArray(rawArtists)
+      ? rawArtists.map(artist => ({
+          ...(artist && typeof artist === 'object' ? artist : { name: artist }),
+          name: String((artist && typeof artist === 'object' ? artist.name : artist) || firstQQValue(mv.singer_name, mv.singerName) || ''),
+        }))
+      : (mv.singer_name || mv.singerName
+        ? [{ name: String(mv.singer_name || mv.singerName) }]
+        : [])
+    return {
+      ...mv,
+      id: String(id || ''),
+      source: 'qq',
+      name: String(name),
+      picUrl: String(pic),
+      coverImgUrl: String(pic),
+      artists,
+      duration: parseQQDurationMilliseconds(mv.duration),
+      playCount: parseQQTrackCount(firstQQValue(mv.play_count, mv.playCount, mv.play_cnt)),
+    }
+  })
+}
+
+/** 歌曲分类复用 song.list + normalizeQQSong。 */
+export function normalizeQQSearchSongs(payload) {
+  return readQQSearchCategoryList(payload, 'song').map(normalizeQQSong)
+}
+
+/**
+ * 聚合搜索：并行请求歌曲/专辑/歌手/MV 四个分类，返回搜索页统一使用的
+ * `searchResult` 形状。歌单上游不提供，固定为空数组，界面不冒充数据。
+ */
+export async function searchQQAll(keywords, options = {}) {
+  const [songs, albums, artists, mvs] = await Promise.allSettled([
+    searchQQCategory(keywords, 'songs', options),
+    searchQQCategory(keywords, 'albums', options),
+    searchQQCategory(keywords, 'artists', options),
+    searchQQCategory(keywords, 'mvs', options),
+  ])
+  const read = (settled, fallback = {}) => settled.status === 'fulfilled' ? settled.value : fallback
+  return {
+    searchSongs: normalizeQQSearchSongs(read(songs)),
+    searchAlbums: normalizeQQSearchAlbums(read(albums)),
+    searchArtists: normalizeQQSearchArtists(read(artists)),
+    searchPlaylists: [], // client_search_cp 不提供歌单分类
+    searchMvs: normalizeQQSearchMvs(read(mvs)),
+  }
 }

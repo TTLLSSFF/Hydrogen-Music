@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { noticeOpen } from '../utils/dialog'
 import { usePlayerStore } from '../store/playerStore'
+import { useOtherStore } from '../store/otherStore'
 import { searchHotDetail, searchSuggest, searchSuggestPc } from '../api/other'
 import { getSearchSource } from '../utils/providerPolicy.mjs'
 
@@ -12,6 +13,7 @@ const SUGGEST_DEBOUNCE_MS = 220
 const ASSIST_HOVER_ACTIVATE_DELAY_MS = 140
 
 const playerStore = usePlayerStore()
+const otherStore = useOtherStore()
 const router = useRouter()
 
 const searchInput = ref(null)
@@ -426,7 +428,7 @@ const searchInfo = (keyword = searchKeyword.value, byAssist = false) => {
     const value = JTrim(keyword)
     if (value != '') {
         searchKeyword.value = value
-        router.push({ name: 'search', query: { keywords: value, source: getSearchSource() } }).catch(() => {})
+        router.push({ name: 'search', query: { keywords: value, source: getSearchSource(otherStore.searchSource) } }).catch(() => {})
 
         if (byAssist && searchInput.value) searchInput.value.blur()
 

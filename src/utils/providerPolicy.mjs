@@ -47,9 +47,10 @@ export function findProviderPlaylist(playlists, playlistId, provider = 'netease'
     .find(playlist => String(playlist.id) === normalizedId) || null
 }
 
-// QQ is intentionally limited to authenticated "My Music" data.
-export function getSearchSource() {
-  return 'netease'
+// QQ 公共搜索开放后，搜索来源由搜索页/路由显式传入并归一化；
+// 缺省仍为网易云。来源不持久化，也不强制跟随首页来源。
+export function getSearchSource(value) {
+  return normalizeMusicSource(value) === 'qq' ? 'qq' : 'netease'
 }
 
 export function getHeartModeBlockReason(songs) {

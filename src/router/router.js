@@ -224,7 +224,7 @@ const routes = [
         component: SearchResult,
         beforeEnter: (to, from, next) => {
             const searchStore = useOtherStore()
-            searchStore.searchSource = getSearchSource()
+            searchStore.searchSource = getSearchSource(to.query.source)
             searchStore.getSearchInfo(to.query.keywords)
             next()
         }

@@ -23,10 +23,17 @@
     searchScroll.value.scrollTop = scrollTop.value
   })
   onBeforeRouteUpdate((to, from, next) => {
-      otherStore.searchSource = getSearchSource()
+      otherStore.searchSource = getSearchSource(to.query.source)
       getSearchInfo(to.query.keywords)
       next()
   })
+  const switchSearchSource = async (source) => {
+      const nextSource = getSearchSource(source)
+      if (otherStore.searchSource === nextSource) return
+      otherStore.searchSource = nextSource
+      await router.replace({ query: { ...router.currentRoute.value.query, source: nextSource } }).catch(() => {})
+      getSearchInfo(router.currentRoute.value.query.keywords)
+  }
   onBeforeRouteLeave((to, from, next) => {
     scrollTop.value = searchScroll.value.scrollTop
     next()
@@ -39,6 +46,10 @@
       <svg t="1669039513804" @click="routerChange(0)" class="router-last" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200"><path d="M716.608 1010.112L218.88 512.384 717.376 13.888l45.248 45.248-453.248 453.248 452.48 452.48z" p-id="1054"></path></svg>
       <svg t="1669039531646" @click="routerChange(1)" class="router-next" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1207" width="200" height="200"><path d="M264.896 1010.112l497.728-497.728L264.128 13.888 218.88 59.136l453.248 453.248-452.48 452.48z" p-id="1208"></path></svg>
       <span class="search-title">搜索内容：{{router.currentRoute.value.query.keywords}}</span>
+      <div class="source-switch">
+        <div class="source-item" :class="{ 'source-active': otherStore.searchSource == 'netease' }" @click="switchSearchSource('netease')">网易云音乐</div>
+        <div class="source-item" :class="{ 'source-active': otherStore.searchSource == 'qq' }" @click="switchSearchSource('qq')">QQ音乐</div>
+      </div>
     </div>
     <div class="search-container" ref="searchScroll">
       <div class="search-classify">
@@ -107,6 +118,29 @@
       .search-title{
         font: 17Px SourceHanSansCN-Bold;
         color: black;
+      }
+      .source-switch{
+        margin-left: 30px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 20px;
+        overflow: hidden;
+        .source-item{
+          padding: 5px 16px;
+          font: 13Px SourceHanSansCN-Bold;
+          color: rgba(0, 0, 0, 0.55);
+          transition: 0.2s;
+          &:hover{
+            cursor: pointer;
+            color: black;
+          }
+        }
+        .source-active{
+          background-color: rgba(0, 0, 0, 0.12);
+          color: black;
+        }
       }
       .router-last, .router-next{
         margin-right: 10Px;

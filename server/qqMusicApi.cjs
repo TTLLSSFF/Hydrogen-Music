@@ -465,6 +465,42 @@ async function checkQQLoginQrWithStatus({ ptqrtoken, qrsig }) {
   }
 }
 
+// QQ 公共类型搜索（无登录要求）。client_search_cp 的分类由 t 参数选择：
+// 0=歌曲 8=专辑 9=歌手 12=MV；歌单分类上游不提供。上游 package 的搜索服务
+// 总会注入默认 remoteplace，导致非歌曲分类返回空列表，因此这里用与真实
+// 客户端一致的固定参数模板直连上游，避免把任意 URL 控制权交给前端。
+const QQ_SEARCH_URL_TEMPLATE = 'https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&t=___T___&n=___N___&p=___P___&w=___W___&catZhida=___CAT___&aggr=1&cr=1&lossless=0&flag_qc=0&platform=yqq.json'
+const QQ_SEARCH_CATEGORIES = new Set([0, 8, 9, 12])
+const QQ_SEARCH_MAX_PAGE_SIZE = 50
+
+async function searchQQMusicPublic({ keyword, category, limit, page, catZhida }) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+  try {
+    const url = QQ_SEARCH_URL_TEMPLATE
+      .replace('___T___', String(category))
+      .replace('___N___', String(limit))
+      .replace('___P___', String(page))
+      .replace('___W___', encodeURIComponent(keyword))
+      .replace('___CAT___', String(catZhida))
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        Referer: 'https://y.qq.com/',
+        'User-Agent': 'Mozilla/5.0',
+      },
+      signal: controller.signal,
+    })
+    const payload = await response.json()
+    return {
+      status: response.ok ? 200 : Number(response.status) || 502,
+      body: payload && typeof payload === 'object' ? payload : {},
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function createQQSecurityMiddleware(options = {}) {
   const getLoginQr = options.getLoginQr || (async () => qqServices.getQQLoginQr({}))
   const checkLoginQr = options.checkLoginQr || checkQQLoginQrWithStatus
@@ -476,6 +512,7 @@ function createQQSecurityMiddleware(options = {}) {
   const now = options.now || Date.now
   const logSink = options.logSink
   const allowServerSession = options.allowServerSession !== false
+  const searchService = options.searchService || searchQQMusicPublic
 
   return async function qqSecurityMiddleware(ctx, next) {
     return runWithQQSafeLogging(async () => {
@@ -583,6 +620,39 @@ function createQQSecurityMiddleware(options = {}) {
       clearSession()
       sessionStore.clear()
       writeJson(ctx, 200, { ok: true })
+      return
+    }
+
+    // 公共搜索：无需登录会话，只放行固定分类与安全参数。
+    if (normalizedPath === '/getsearchbykey') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const keyword = getSingleValue(ctx.query?.key || ctx.query?.w).trim()
+      if (!keyword) {
+        writeJson(ctx, 400, { error: 'search key is required' })
+        return
+      }
+      const category = Number(ctx.query?.t)
+      if (!QQ_SEARCH_CATEGORIES.has(category)) {
+        writeJson(ctx, 400, { error: 'unsupported search category' })
+        return
+      }
+      const requestedLimit = Number(ctx.query?.n)
+      const limit = Math.min(
+        Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : 10, 1),
+        QQ_SEARCH_MAX_PAGE_SIZE,
+      )
+      const requestedPage = Number(ctx.query?.p)
+      const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 1, 1)
+      const catZhida = Number(ctx.query?.catZhida) === 0 ? 0 : 1
+      try {
+        const { status, body } = unwrapServiceResponse(await searchService({ keyword, category, limit, page, catZhida }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music search unavailable' })
+      }
       return
     }
 

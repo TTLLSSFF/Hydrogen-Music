@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { search } from '../api/other';
-import { getSearchSource } from '../utils/providerPolicy.mjs'
+import { searchQQAll } from '../api/qqMusic'
 import { mapSongsPlayableStatus } from '../utils/songStatus';
 import { noticeOpen } from '../utils/dialog';
 
@@ -140,7 +140,11 @@ export const useOtherStore = defineStore('otherStore', {
         async getSearchInfo(keywords) {
             const requestToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
             this.searchRequestToken = requestToken
-            this.searchSource = getSearchSource()
+
+            if (this.searchSource === 'qq') {
+                await this.getQQSearchInfo(keywords, requestToken)
+                return
+            }
 
             const requestConfigs = [
                 { type: 1, key: 'searchSongs' },
@@ -201,6 +205,31 @@ export const useOtherStore = defineStore('otherStore', {
             })
 
             this.searchResult = nextSearchResult
-        }
+        },
+
+        // QQ 分类搜索：并行请求歌曲/专辑/歌手/MV，歌单上游不提供（空区块）。
+        // 任一分类失败只清空该分类，不阻断其他分类。
+        async getQQSearchInfo(keywords, requestToken) {
+            try {
+                const result = await searchQQAll(keywords, { limit: 10 })
+                if (this.searchRequestToken !== requestToken) return
+                this.searchResult = {
+                    searchSongs: Array.isArray(result.searchSongs) ? result.searchSongs : [],
+                    searchAlbums: Array.isArray(result.searchAlbums) ? result.searchAlbums : [],
+                    searchArtists: Array.isArray(result.searchArtists) ? result.searchArtists : [],
+                    searchPlaylists: Array.isArray(result.searchPlaylists) ? result.searchPlaylists : [],
+                    searchMvs: Array.isArray(result.searchMvs) ? result.searchMvs : [],
+                }
+            } catch (_) {
+                if (this.searchRequestToken !== requestToken) return
+                this.searchResult = {
+                    searchSongs: [],
+                    searchAlbums: [],
+                    searchArtists: [],
+                    searchPlaylists: [],
+                    searchMvs: [],
+                }
+            }
+        },
     },
 })

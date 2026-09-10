@@ -29,7 +29,14 @@ test('QQ detection handles mixed queues without changing NetEase behavior', () =
   assert.equal(containsQQSongs([{ id: 1, source: 'netease' }, { id: 2, source: 'qq' }]), true)
   assert.equal(containsQQSongs([{ id: 1, source: 'netease' }]), false)
   assert.equal(canUseSongAction({ id: 1, source: 'netease' }, 'like'), true)
-  assert.equal(getSearchSource('qq'), 'netease')
+})
+
+test('search source normalizes explicit providers and defaults to netease', () => {
+  assert.equal(getSearchSource('qq'), 'qq')
+  assert.equal(getSearchSource('QQ'), 'qq')
+  assert.equal(getSearchSource('netease'), 'netease')
+  assert.equal(getSearchSource(undefined), 'netease')
+  assert.equal(getSearchSource('local'), 'netease')
 })
 
 test('QQ My Music details require an authenticated QQ account', () => {
