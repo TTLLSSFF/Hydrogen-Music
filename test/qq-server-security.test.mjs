@@ -161,7 +161,6 @@ test('QQ security middleware forwards only private My Music and playback routes'
 
   for (const path of [
     '/getRecommend',
-    '/getAlbumInfo?albummid=album',
     '/getMv?vid=mv',
     '/user/getVipInfo',
     '/user/getUserMedal',
@@ -265,6 +264,41 @@ test('QQ public search clamps page size and defaults pagination', async () => {
   await middleware(context, async () => {})
   assert.equal(context.status, 200)
   assert.deepEqual(calls[0], { keyword: 'song', category: 0, limit: 50, page: 1, catZhida: 1 })
+})
+
+test('QQ public album info forwards albummid without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    albumInfoService: async params => {
+      calls.push(params)
+      return { status: 200, body: { response: { code: '0', data: { mid: 'album-mid', name: '七里香' } } } }
+    },
+  })
+
+  const context = createContext('/getAlbumInfo?albummid=album-mid')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'album detail must be handled before the session-required boundary')
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ albummid: 'album-mid' }])
+  assert.equal(context.body.response.data.mid, 'album-mid')
+})
+
+test('QQ public album info rejects missing albummid and non-GET methods', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    albumInfoService: async () => ({ status: 200, body: {} }),
+  })
+
+  const missing = createContext('/getAlbumInfo')
+  await middleware(missing, async () => {})
+  assert.equal(missing.status, 400)
+
+  const post = createContext('/getAlbumInfo?albummid=album-mid', { method: 'POST', body: {} })
+  await middleware(post, async () => {})
+  assert.equal(post.status, 405)
 })
 
 test('QQ public session status exposes only a non-secret account identifier', async () => {

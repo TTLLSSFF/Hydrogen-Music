@@ -513,6 +513,11 @@ function createQQSecurityMiddleware(options = {}) {
   const logSink = options.logSink
   const allowServerSession = options.allowServerSession !== false
   const searchService = options.searchService || searchQQMusicPublic
+  const albumInfoService = options.albumInfoService || (async ({ albummid }) => qqServices.getAlbumInfo_default({
+    method: 'get',
+    params: { albummid, format: 'json', outCharset: 'utf-8' },
+    option: {},
+  }))
 
   return async function qqSecurityMiddleware(ctx, next) {
     return runWithQQSafeLogging(async () => {
@@ -652,6 +657,27 @@ function createQQSecurityMiddleware(options = {}) {
         writeJson(ctx, status, sanitizeQQResponseBody(body))
       } catch (_) {
         writeJson(ctx, 502, { error: 'QQ Music search unavailable' })
+      }
+      return
+    }
+
+    // 公共专辑详情（无登录要求）：只放行 albummid 参数，响应在到达前端前
+    // 经过凭证脱敏。上游 getAlbumInfo 自带完整歌曲列表。
+    if (normalizedPath === '/getalbuminfo') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const albummid = getSingleValue(ctx.query?.albummid || ctx.query?.albumMid).trim()
+      if (!albummid) {
+        writeJson(ctx, 400, { error: 'albummid is required' })
+        return
+      }
+      try {
+        const { status, body } = unwrapServiceResponse(await albumInfoService({ albummid }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music album detail unavailable' })
       }
       return
     }

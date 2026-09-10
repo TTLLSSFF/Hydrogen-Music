@@ -546,7 +546,6 @@ export const useLibraryStore = defineStore('libraryStore', {
         async updateLibraryDetail(id, routerName, options = {}) {
             const { force = false } = options
             const source = normalizeMusicSource(options.source)
-            if (routerName === 'album' && source === 'qq') return
             if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName, source)) return
 
             this.changeAnimation()
@@ -556,7 +555,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                 if (source === 'qq') await this.updateQQPlaylistDetail(id)
                 else await this.updatePlaylistDetail(id, { ...options, source })
             }
-            if (routerName == 'album') await this.updateAlbumDetail(id)
+            if (routerName == 'album') {
+                if (source === 'qq') await this.updateQQAlbumDetail(id)
+                else await this.updateAlbumDetail(id)
+            }
             if (routerName == 'artist') await this.updateArtistDetail(id)
             this.artistPageType = 0
             this.libraryAlbum = null
@@ -703,6 +705,24 @@ export const useLibraryStore = defineStore('libraryStore', {
                 }
                 throw error
             }
+        },
+        async updateQQAlbumDetail(id) {
+            const { getQQAlbumInfo, normalizeQQAlbumDetail } = await import('../api/qqMusic')
+            const albummid = String(id || '')
+            const detail = normalizeQQAlbumDetail(await getQQAlbumInfo(albummid), albummid)
+            this.libraryInfo = detail.album
+
+            const albumCover = detail.album?.coverImgUrl || detail.album?.blurPicUrl || null
+            this.librarySongs = Array.isArray(detail.songs)
+                ? detail.songs.map((song = {}) => {
+                    // 确保播放器在专辑场景下总能拿到封面
+                    if (!song.al) song.al = {}
+                    if (!song.al.picUrl && albumCover) song.al.picUrl = albumCover
+                    return song
+                })
+                : []
+            this.indexLibrarySongs(this.librarySongs)
+            this.libraryChangeAnimation = false
         },
         async updateAlbumDetail(id) {
             let params = {

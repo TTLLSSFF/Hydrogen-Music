@@ -7,6 +7,7 @@ import {
   getQQMv,
   getQQMvPlay,
   getQQSongListDetail,
+  normalizeQQAlbumDetail,
   normalizeQQLyricPayload,
   normalizeQQLikedPlaylist,
   normalizeQQPlaylist,
@@ -48,7 +49,7 @@ test('QQ playlist detail uses the upstream disstid parameter', async () => {
   assert.doesNotMatch(requestUrl, /[?&]id=/)
 })
 
-test('QQ album, artist and MV detail adapters fail closed without issuing requests', async () => {
+test('QQ MV detail adapters fail closed without issuing requests', async () => {
   const originalFetch = globalThis.fetch
   let requestCount = 0
   globalThis.fetch = async url => {
@@ -57,7 +58,6 @@ test('QQ album, artist and MV detail adapters fail closed without issuing reques
   }
   try {
     for (const call of [
-      () => getQQAlbumInfo('album-mid'),
       () => getQQMv('mv-id'),
       () => getQQMvPlay('mv-id'),
     ]) {
@@ -252,6 +252,64 @@ test('QQ aggregate search keeps playlists empty and isolates failed categories',
   assert.equal(result.searchArtists[0].name, 'Singer')
   assert.deepEqual(result.searchPlaylists, [])
   assert.deepEqual(result.searchMvs, [])
+})
+
+test('QQ album detail request carries the albummid query and requires it', async () => {
+  const originalFetch = globalThis.fetch
+  let requestUrl = ''
+  globalThis.fetch = async url => {
+    requestUrl = String(url)
+    return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ response: { code: '0', data: {} } }) }
+  }
+  try {
+    await getQQAlbumInfo('003DFRzD192KKD')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  assert.match(requestUrl, /albummid=003DFRzD192KKD/)
+  assert.throws(() => getQQAlbumInfo(''), /album mid is required/)
+})
+
+test('QQ album detail normalizes the live response into the shared album contract', () => {
+  const detail = normalizeQQAlbumDetail({
+    response: {
+      code: '0',
+      data: {
+        mid: '003DFRzD192KKD',
+        name: '七里香',
+        singername: '周杰伦',
+        singermid: '0025NhlN2yWrP4',
+        aDate: '2004-08-03',
+        company: '杰威尔音乐有限公司',
+        desc: '2004年夏天周杰伦带来浓郁《七里香》！',
+        genre: 'Pop 流行',
+        lan: '国语',
+        cur_song_num: '10',
+        list: [{
+          songmid: '001Bbywq2gicae',
+          songname: '搁浅',
+          interval: '240',
+          albummid: '003DFRzD192KKD',
+          albumname: '七里香',
+          singer: [{ mid: '0025NhlN2yWrP4', name: '周杰伦' }],
+        }],
+      },
+    },
+  }, '003DFRzD192KKD')
+
+  assert.equal(detail.album.id, '003DFRzD192KKD')
+  assert.equal(detail.album.mid, '003DFRzD192KKD')
+  assert.equal(detail.album.source, 'qq')
+  assert.equal(detail.album.name, '七里香')
+  assert.equal(detail.album.coverImgUrl, 'https://y.gtimg.cn/music/photo_new/T002R500x500M000003DFRzD192KKD.jpg')
+  assert.equal(detail.album.artists[0].name, '周杰伦')
+  assert.equal(detail.album.publishTime, '2004-08-03')
+  assert.equal(detail.album.trackCount, 10)
+  assert.deepEqual(detail.album.description, '2004年夏天周杰伦带来浓郁《七里香》！')
+  assert.equal(detail.songs.length, 1)
+  assert.equal(detail.songs[0].id, '001Bbywq2gicae')
+  assert.equal(detail.songs[0].source, 'qq')
+  assert.equal(detail.songs[0].dt, 240000)
 })
 
 test('QQ song normalization keeps a stable provider-specific identity', () => {

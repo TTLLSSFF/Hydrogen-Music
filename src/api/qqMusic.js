@@ -486,8 +486,66 @@ export function getQQSongListDetail(id, params = {}) {
   return qqRequest({ url: '/getSongListDetail', method: 'get', params: { disstid: id, ...params } })
 }
 
-export function getQQAlbumInfo() {
-  return Promise.reject(createQQPublicApiDisabledError('album details'))
+export function getQQAlbumInfo(albummid, params = {}) {
+  if (!albummid) throw new TypeError('QQ album mid is required')
+  return qqRequest({ url: '/getAlbumInfo', method: 'get', params: { albummid, ...params } })
+}
+
+// 专辑封面使用 QQ 固定图床模板，与搜索专辑 pic/歌曲专辑曲绘一致。
+const buildQQAlbumCoverUrl = (mid, size = 'T002R500x500M000') => (
+  mid ? `https://y.gtimg.cn/music/photo_new/${size}${mid}.jpg` : ''
+)
+
+/**
+ * 归一化 QQ 专辑详情（实测 getAlbumInfo 返回 `response.data`）：
+ * 元数据字段 mid/name/singername/singermid/aDate/company/desc/genre/lan/cur_song_num，
+ * 并自带完整歌曲列表 `list`（复用 normalizeQQSong）。
+ */
+export function normalizeQQAlbumDetail(payload, fallbackMid = '') {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const mid = String(firstQQValue(data?.mid, data?.albummid, data?.albumMid, fallbackMid) || '')
+  const name = firstQQValue(data?.name, data?.albumname, data?.albumName) || ''
+  const singerName = firstQQValue(data?.singername, data?.singerName) || ''
+  const singerMid = firstQQValue(data?.singermid, data?.singerMid, data?.singerMID)
+  const trackCount = parseQQTrackCount(firstQQValue(
+    data?.cur_song_num,
+    data?.total_song_num,
+    data?.total,
+    data?.song_num,
+  ))
+  const coverUrl = String(firstQQValue(data?.pic, data?.picUrl, buildQQAlbumCoverUrl(mid)) || '')
+  const artists = (singerName || singerMid)
+    ? [{ name: String(singerName), ...(singerMid ? { mid: String(singerMid) } : {}) }]
+    : []
+  const album = {
+    ...data,
+    id: String(firstQQValue(data?.id, mid) || ''),
+    mid: String(mid),
+    source: 'qq',
+    name: String(name),
+    artists,
+    singers: artists,
+    // LibraryDetail 的封面读取 coverImgUrl/blurPicUrl/img1v1Url 三选一
+    coverImgUrl: coverUrl,
+    blurPicUrl: coverUrl,
+    img1v1Url: coverUrl,
+    picUrl: coverUrl,
+    company: firstQQValue(data?.company, ''),
+    description: firstQQValue(data?.desc, data?.description, ''),
+    briefDesc: firstQQValue(data?.desc, data?.description, ''),
+    publishTime: firstQQValue(data?.aDate, data?.publishTime, ''),
+    genre: firstQQValue(data?.genre, ''),
+    lan: firstQQValue(data?.lan, ''),
+    trackCount,
+    size: trackCount,
+    followed: false,
+  }
+  const rawSongs = Array.isArray(data?.list) ? data.list : []
+  return {
+    album,
+    songs: rawSongs.map(normalizeQQSong),
+  }
 }
 
 export function getQQMv() {

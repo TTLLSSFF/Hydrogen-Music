@@ -353,8 +353,9 @@ onBeforeRouteUpdate(async (to, from, next) => {
         next({ name: 'mymusic' });
         return;
     }
-    if ((normalizedToName == 'album' || normalizedToName == 'artist') && String(requestedSource).toLowerCase() == 'qq') {
-        noticeOpen(`QQ 音乐暂不支持${normalizedToName == 'album' ? '专辑' : '歌手'}详情`, 2);
+    // 歌手详情暂未开放 QQ 来源；专辑详情已支持（公共 getAlbumInfo）。
+    if (normalizedToName == 'artist' && String(requestedSource).toLowerCase() == 'qq') {
+        noticeOpen('QQ 音乐暂不支持歌手详情', 2);
         next({ name: 'mymusic' });
         return;
     }

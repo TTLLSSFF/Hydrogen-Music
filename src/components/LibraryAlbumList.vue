@@ -13,9 +13,9 @@
 
   const checkAlbum = (albumId, item) => {
     playerStore.forbidLastRouter = true
-    // QQ 专辑详情尚未开放，先阻断跳转，避免用网易云详情页误查 QQ 专辑标识。
-    if (normalizeMusicSource(item?.source) === 'qq') return
-    router.push('/mymusic/album/' + albumId)
+    // QQ 专辑详情走公共 getAlbumInfo，跳转时带 source=qq 让路由按来源分发。
+    const source = normalizeMusicSource(item?.source)
+    router.push({ path: '/mymusic/album/' + albumId, query: source === 'qq' ? { source: 'qq' } : {} })
   }
 </script>
 
