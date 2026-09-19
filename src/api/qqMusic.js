@@ -672,7 +672,7 @@ export function getQQMvPlay() {
   return Promise.reject(createQQPublicApiDisabledError('MV playback'))
 }
 
-// —— 歌手详情（2026-09 实测：描述/关注走 fcg 接口，热歌走 zhida hotsong，MV 走 fcg_singer_mv）——
+// —— 歌手详情（2026-09 实测：歌曲列表/总量走 musicu 歌手详情模块，描述/关注走 fcg 接口，MV 走 fcg_singer_mv）——
 
 // zhida hotsong.f 为管道分隔：0歌id|1歌名|2歌手id|3歌手名|4专辑id|5专辑名|6?|7时长秒|...|20 songmid|21 singermid|22 albummid
 function parseQQHotSongF(f, fallback = {}) {
@@ -697,8 +697,9 @@ function parseQQHotSongF(f, fallback = {}) {
 }
 
 /**
- * 归并 QQ 歌手详情聚合响应：{ desc, starNum, hotSongs, mvs }。
- * hotSongs 优先解析 f 字段，缺失时退回 songMID/songName 最小结构。
+ * 归并 QQ 歌手详情聚合响应：{ desc, starNum, hotSongs, totalSong, totalAlbum, totalMv, mvs }。
+ * hotSongs 为 musicu 歌手详情模块的完整歌曲列表；上游降级为 zhida 热歌时条目带 f
+ * 管道字段，parseQQHotSongF 会解析它，缺失时原样透传条目字段。
  */
 export function normalizeQQSingerDetail(payload, options = {}) {
   const body = unwrapQQResponse(payload)
@@ -718,6 +719,9 @@ export function normalizeQQSingerDetail(payload, options = {}) {
   const singerPic = options.pic || (options.mid
     ? `https://y.gtimg.cn/music/photo_new/T001R300x300M000${options.mid}.jpg`
     : '')
+  const totalSong = Number(body?.totalSong ?? 0)
+  const totalAlbum = Number(body?.totalAlbum ?? 0)
+  const totalMv = Number(body?.totalMv ?? 0)
   const singer = {
     id: String(options.mid || ''),
     source: 'qq',
@@ -727,13 +731,66 @@ export function normalizeQQSingerDetail(payload, options = {}) {
     img1v1Url: singerPic,
     description: String(body?.desc || ''),
     briefDesc: String(body?.desc || ''),
-    musicSize: hotSongs.length,
-    albumSize: 0, // 歌手专辑接口上游未提供
-    mvSize: mvs.length,
+    // 页头展示真实总量（musicu 返回 total_song 等），缺失时退回已加载条数。
+    musicSize: totalSong > 0 ? totalSong : hotSongs.length,
+    albumSize: totalAlbum > 0 ? totalAlbum : 0,
+    mvSize: totalMv > 0 ? totalMv : mvs.length,
     followed: false,
     starNum: Number(body?.starNum ?? 0),
   }
   return { singer, hotSongs, mvs }
+}
+
+/**
+ * 归一化歌手歌曲分页响应：{ songs, totalSong }。
+ * songs 为 musicu 歌手详情模块的原始歌曲结构，交给 normalizeQQSong 映射。
+ */
+export function normalizeQQSingerSongs(payload) {
+  const body = unwrapQQResponse(payload)
+  const songs = Array.isArray(body?.songs) ? body.songs.map(normalizeQQSong) : []
+  return { songs, totalSong: Number(body?.totalSong ?? 0) }
+}
+
+/**
+ * 归一化单条歌手专辑（musicu GetAlbumList 的 albumList 条目）。
+ * 上游只给 albumMid/albumName/publishDate/albumType，曲目数 totalNum 恒为 0，
+ * 故 size/trackCount 为 0，列表页据此隐藏曲目数而不是显示「0首」。
+ */
+function normalizeQQSingerAlbum(entry) {
+  const data = entry && typeof entry === 'object' ? entry : {}
+  const mid = String(firstQQValue(data.albumMid, data.albummid, data.mid) || '')
+  const coverUrl = buildQQAlbumCoverUrl(mid)
+  const singerName = String(firstQQValue(data.singerName, data.singername) || '')
+  const artists = singerName ? [{ name: singerName }] : []
+  const trackCount = parseQQTrackCount(data.totalNum)
+  return {
+    ...data,
+    id: mid,
+    mid,
+    source: 'qq',
+    name: String(firstQQValue(data.albumName, data.albumTranName, data.name) || ''),
+    artists,
+    singers: artists,
+    // LibraryAlbumList 的封面读取 blurPicUrl
+    coverImgUrl: coverUrl,
+    blurPicUrl: coverUrl,
+    img1v1Url: coverUrl,
+    picUrl: coverUrl,
+    publishTime: String(firstQQValue(data.publishDate, data.publishTime) || ''),
+    type: String(firstQQValue(data.albumType, data.type) || ''),
+    trackCount,
+    size: trackCount,
+  }
+}
+
+/**
+ * 归一化歌手专辑分页响应：{ albums, totalAlbum }。
+ * albums 为 musicu GetAlbumList 的原始专辑结构，交给 normalizeQQSingerAlbum 映射。
+ */
+export function normalizeQQSingerAlbums(payload) {
+  const body = unwrapQQResponse(payload)
+  const albums = Array.isArray(body?.albums) ? body.albums.map(normalizeQQSingerAlbum) : []
+  return { albums, totalAlbum: Number(body?.totalAlbum ?? 0) }
 }
 
 function parseQQDurationMilliseconds(...values) {
@@ -845,18 +902,25 @@ export function normalizeQQSong(song = {}) {
     const artistMid = firstQQValue(item.mid, item.singer_mid, item.singerMid, item.singerMID)
     const artistId = firstQQValue(item.id, item.singer_id, item.singerId, item.singerID)
     const artistName = firstQQValue(item.name, item.singer_name, item.singerName, item.title)
+    const mid = artistMid != null && String(artistMid).trim() ? String(artistMid) : ''
+    const numericId = artistId != null ? String(artistId).replace(/[^0-9]/g, '') : ''
+    const routeId = mid || (typeof artistId === 'string' && /[A-Za-z]/.test(String(artistId)) ? String(artistId) : '')
     return {
       ...item,
-      ...(artistId !== undefined ? { id: artistId } : {}),
-      ...(artistMid !== undefined ? { mid: artistMid } : {}),
+      ...(routeId ? { id: routeId } : (numericId ? { id: numericId } : {})),
+      ...(mid ? { mid } : {}),
+      ...(numericId ? { singerid: numericId } : {}),
       name: String(artistName || ''),
     }
   }).filter(artist => artist.name || artist.mid || artist.id !== undefined)
   if (!artists.length) {
     const singerName = firstQQValue(value.singerName, value.singer_name)
     const singerMid = firstQQValue(value.singerMid, value.singer_mid, value.singermid)
+    const singerId = firstQQValue(value.singerid, value.singer_id, value.singerId, value.singerID)
+    const numericId = singerId != null ? String(singerId).replace(/[^0-9]/g, '') : ''
     if (singerName || singerMid) artists.push({
-      ...(singerMid ? { mid: singerMid } : {}),
+      ...(singerMid ? { id: String(singerMid), mid: String(singerMid) } : {}),
+      ...(numericId ? { singerid: numericId } : {}),
       name: String(singerName || ''),
     })
   }
@@ -980,10 +1044,12 @@ export function normalizeQQSearchArtists(payload) {
     const mid = firstQQValue(singer.singerMID, singer.singer_mid, singer.mid)
     const name = firstQQValue(singer.singerName, singer.singer_name, singer.name) || ''
     const pic = firstQQValue(singer.singerPic, singer.singer_pic, singer.picUrl, singer.pic) || ''
+    const singerid = String(firstQQValue(singer.singerID, singer.singer_id, singer.singerId, singer.id) || '').replace(/[^0-9]/g, '')
     return {
       ...singer,
       id: String(firstQQValue(mid, singer.singerID, singer.id) || ''),
       mid: String(mid || ''),
+      ...(singerid ? { singerid, singerID: singerid } : {}),
       source: 'qq',
       name: String(name),
       picUrl: String(pic),

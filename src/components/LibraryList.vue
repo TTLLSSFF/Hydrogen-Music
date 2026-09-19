@@ -7,6 +7,7 @@
   import { storeToRefs } from 'pinia'
   import { withCoverParam } from '../utils/coverBackdrop'
   import { isQQSong } from '../utils/providerPolicy.mjs'
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
   const libraryStore = useLibraryStore()
   const { libraryList, libraryInfo, listType1, listType2, lastLibraryRoute, restoreLibraryScrollOnActivate } = storeToRefs(libraryStore)
   const playerStore = usePlayerStore()
@@ -26,8 +27,18 @@
   const router = useRouter()
   const showDetail = async (selectedId, item) => {
     if(listType1.value == 0) router.push({ path: '/mymusic/playlist/' + item.id, query: { source: item?.source || 'netease' } })
-    if(listType1.value == 1 && listType2.value == 0) router.push('/mymusic/album/' + item.id)
-    if(listType1.value == 1 && listType2.value == 1) router.push('/mymusic/artist/' + item.id)
+    if(listType1.value == 1 && listType2.value == 0) {
+      if (item?.source === 'qq') router.push({ path: '/mymusic/album/' + item.id, query: { source: 'qq' } })
+      else router.push('/mymusic/album/' + item.id)
+    }
+    if(listType1.value == 1 && listType2.value == 1) {
+      openArtistRoute(router, item, {
+        playerStore,
+        source: item?.source,
+        name: item?.name,
+        singerid: item?.singerid || item?.singerID,
+      })
+    }
     if(listType1.value == 1 && listType2.value == 2) {
       // MV 预览已移除
     }

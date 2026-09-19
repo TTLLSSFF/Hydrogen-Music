@@ -10,6 +10,7 @@
   import { getIndexedSong } from '../utils/songList'
   import { shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
   import { canUseSongAction } from '../utils/providerPolicy.mjs'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
   import { getSongIdentity } from '../utils/musicSource.mjs'
   import { getPlaylistItemKey, getPlaylistItems, invalidatePlaylistItems } from '../utils/player/playlistRuntime.mjs'
   const router = useRouter()
@@ -49,11 +50,10 @@
     }, 300);
   }
 
-  const checkArtist = (song, artistId) => {
-    if(!artistId || !canUseSongAction(song, 'artist')) return
+  const checkArtist = (song, singer) => {
+    if(!singer || !canUseSongAction(song, 'artist')) return
     if(song && song.type != 'local') {
-      router.push('/mymusic/artist/' + artistId)
-      playerStore.forbidLastRouter = true
+      if (!openArtistRoute(router, singer, { song, playerStore, source: song.source })) return
       if(!widgetState.value) {widgetState.value = true;playlistWidgetShow.value = false;lyricShow.value = false}
     }
   }
@@ -146,7 +146,7 @@
             </div>
             <span class="item-name">{{getSongDisplayName(item.song, '', showSongTranslation)}}</span>
             <span class="item-separator"> - </span>
-            <span class="item-author" @dblclick.stop @click="checkArtist(item.song, singer.id)" v-for="(singer, index) in item.song.ar">{{singer.name}}{{index == item.song.ar.length -1 ? '' : '/'}}</span>
+            <span class="item-author" @dblclick.stop @click="checkArtist(item.song, singer)" v-for="(singer, index) in item.song.ar">{{singer.name}}{{index == item.song.ar.length -1 ? '' : '/'}}</span>
           </div>
           <svg t="1670569532229" @dblclick.stop @click="delCurrentSong(item.index, item.song.id)" class="item-delete" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2597" width="200" height="200"><path d="M558.933333 529.066667l285.866667 285.866666-29.866667 29.866667-285.866666-285.866667-285.866667 285.866667-29.866667-29.866667 285.866667-285.866666L213.333333 243.2l29.866667-29.866667 285.866667 285.866667L814.933333 213.333333l29.866667 29.866667-285.866667 285.866667z" fill="#444444" p-id="2598"></path></svg>
         </div>

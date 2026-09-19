@@ -1,12 +1,8 @@
 import axios from "axios";
 import { getCookie, isLogin } from '../utils/authority'
 import pinia from "../store/pinia";
-import { useLibraryStore } from '../store/libraryStore'
 import { useUserStore } from '../store/userStore'
 import { clearAccountScopedState } from './accountState'
-
-const libraryStore = useLibraryStore(pinia)
-
 import { noticeOpen } from "./dialog";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -263,7 +259,12 @@ request.interceptors.request.use(async function (config) {
     const mergedCookieString = mergeCookieStrings(authCookieString, config.params.cookie)
     if (mergedCookieString) config.params.cookie = mergedCookieString
   }
-  if (libraryStore.needTimestamp.indexOf(config.url) != -1) {
+  let needTimestamp = []
+  try {
+    const { useLibraryStore } = await import('../store/libraryStore')
+    needTimestamp = useLibraryStore(pinia)?.needTimestamp
+  } catch (_) { }
+  if (Array.isArray(needTimestamp) && needTimestamp.includes(config.url)) {
     config.params.timestamp = new Date().getTime()
   }
 

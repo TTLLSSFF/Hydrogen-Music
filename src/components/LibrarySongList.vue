@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { songTime } from '../utils/time'
@@ -15,6 +15,7 @@ import { getSongDisplayName } from '../utils/songName'
 import { getRestrictedPlaybackFailureMessage, shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
 import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
 import { getSongIdentity } from '../utils/musicSource.mjs'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -64,8 +65,17 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    // 分页列表（当前为 QQ 歌手页）用：还有更多时滚动到底触发 load-more
+    hasMore: {
+        type: Boolean,
+        default: false,
+    },
+    loadingMore: {
+        type: Boolean,
+        default: false,
+    },
 })
-const emit = defineEmits(['toggle-download-selection'])
+const emit = defineEmits(['toggle-download-selection', 'load-more'])
 const hoverRowKey = ref(null)
 const recycleScroller = ref(null)
 const rowKeyBySong = new WeakMap()
@@ -120,6 +130,27 @@ const scheduleRecycleScrollerRefresh = () => {
 const refreshListRuntimeState = () => {
     scheduleRecycleScrollerRefresh()
 }
+// 距底部不足一屏内触发 load-more；虚拟滚动没有 footer 插槽，故监听滚动容器本身。
+const LOAD_MORE_THRESHOLD = 120
+const getScrollerElement = () => recycleScroller.value?.$el || null
+const handleScrollerScroll = () => {
+    if (!props.hasMore || props.loadingMore) return
+    const scroller = getScrollerElement()
+    if (!scroller) return
+    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+    if (remaining > LOAD_MORE_THRESHOLD) return
+    emit('load-more')
+}
+const attachScrollerScroll = async () => {
+    await nextTick()
+    const scroller = getScrollerElement()
+    if (!scroller) return
+    scroller.removeEventListener('scroll', handleScrollerScroll)
+    scroller.addEventListener('scroll', handleScrollerScroll, { passive: true })
+}
+const detachScrollerScroll = () => {
+    getScrollerElement()?.removeEventListener('scroll', handleScrollerScroll)
+}
 const isSongDisabled = song => {
     return shouldBlockRestrictedPlayback(song)
 }
@@ -138,14 +169,22 @@ const isCurrentSong = song => {
 
 watch(scrollerItems, scheduleRecycleScrollerRefresh, { flush: 'post' })
 
-onMounted(refreshListRuntimeState)
+onMounted(() => {
+    refreshListRuntimeState()
+    void attachScrollerScroll()
+})
 
-onActivated(refreshListRuntimeState)
+onActivated(() => {
+    refreshListRuntimeState()
+    void attachScrollerScroll()
+})
 
-const checkArtist = (song, artistId) => {
-    if (!props.artistRouteEnabled || !artistId || !canUseSongAction(song, 'artist')) return
-    router.push('/mymusic/artist/' + artistId)
-    playerStore.forbidLastRouter = true
+onDeactivated(detachScrollerScroll)
+onBeforeUnmount(detachScrollerScroll)
+
+const checkArtist = (song, singer) => {
+    if (!props.artistRouteEnabled || !singer || !canUseSongAction(song, 'artist')) return
+    openArtistRoute(router, singer, { song, playerStore, source: song?.source })
 }
 const play = async (song, index) => {
     if (props.downloadSelectionMode) return
@@ -282,7 +321,7 @@ const openMenu = (e, item) => {
                 </div>
                 <div class="item-other">
                     <div class="item-author" v-if="item.song.ar">
-                        <span class="item-singer" @click="checkArtist(item.song, singer.id)" v-for="(singer, index) in item.song.ar">{{ singer.name }}{{ index == item.song.ar.length - 1 ? '' : '/' }}</span>
+                        <span class="item-singer" @click="checkArtist(item.song, singer)" v-for="(singer, index) in item.song.ar">{{ singer.name }}{{ index == item.song.ar.length - 1 ? '' : '/' }}</span>
                     </div>
                         <span class="item-time">{{ songTime(item.song.dt || item.song.duration) || '--:--' }}</span>
                 </div>

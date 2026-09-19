@@ -14,6 +14,7 @@ import { useUserStore } from '../store/userStore';
    findProviderPlaylist,
    isProviderPlaylist,
  } from '../utils/providerPolicy.mjs'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 import { withCoverParam } from '../utils/coverBackdrop'
 import { getLikelist, getUserPlaylistCount, getUserPlaylist } from '../api/user'
 import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
@@ -293,6 +294,49 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
   const menuOpt = (id) => {
     if(id == 1) { addToNext(otherStore.selectedItem, true); return; }
     if(id == 2) { addToNext(otherStore.selectedItem, false); return; }
+    if(id == 21) {
+      const song = otherStore.selectedItem
+      const artist = song?.ar?.[0]
+      if (!artist) {
+        noticeOpen('暂无歌手信息', 2)
+        return
+      }
+      if (song?.source === 'siren') {
+        const artistId = artist.id
+        if (!artistId) {
+          noticeOpen('暂无歌手信息', 2)
+          return
+        }
+        playerStore.forbidLastRouter = true
+        router.push('/siren/artist/' + artistId)
+        otherStore.contextMenuShow = false
+        return
+      }
+      if (!openArtistRoute(router, artist, { song, playerStore, source: song?.source })) {
+        noticeOpen('暂无歌手信息', 2)
+        return
+      }
+      otherStore.contextMenuShow = false
+      return
+    }
+    if(id == 22) {
+      const song = otherStore.selectedItem
+      if (!canUseSongAction(song, 'mv')) {
+        noticeOpen('QQ 音乐暂不支持 MV', 2)
+        otherStore.contextMenuShow = false
+        return
+      }
+      const mvId = song?.mv
+      if (!mvId) {
+        noticeOpen('暂无 MV 信息', 2)
+        return
+      }
+      playerStore.forbidLastRouter = true
+      if (song?.source === 'qq') router.push({ path: '/mymusic/mv/' + mvId, query: { source: 'qq' } })
+      else router.push('/mymusic/mv/' + mvId)
+      otherStore.contextMenuShow = false
+      return
+    }
     if(id == 3) {
       const song = otherStore.selectedItem
       if (!canUseSongAction(song, 'download')) {
@@ -324,6 +368,7 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
       }
       playerStore.forbidLastRouter = true
       if (song?.source === 'siren') router.push('/siren/album/' + albumId)
+      else if (song?.source === 'qq') router.push({ path: '/mymusic/album/' + albumId, query: { source: 'qq' } })
       else router.push('/mymusic/album/' + albumId)
       otherStore.contextMenuShow = false
       return

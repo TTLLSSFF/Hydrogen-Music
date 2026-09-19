@@ -18,6 +18,7 @@
   import { useStableImageSource } from '../composables/useStableImageSource'
   import { noticeOpen } from '../utils/dialog'
   import { isQQSong } from '../utils/providerPolicy.mjs'
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
   import { getActivePlaylistSurface } from '../utils/player/playlistRuntime.mjs'
   const PlayList = defineAsyncComponent(() => import('./PlayList.vue'))
   const router = useRouter()
@@ -130,13 +131,11 @@
     return Array.isArray(userStore.likelist) && userStore.likelist.includes(id)
   })
 
-  const checkArtist = (artistId) => {
-    if (isDjMode.value || isCurrentSirenSong.value || isCurrentQQSong.value || !artistId || !currentSong.value || currentSong.value.type == 'local') return
-    if(currentSong.value.type != 'local') {
-        router.push('/mymusic/artist/' + artistId)
-        playlistWidgetShow.value = false
-        playerStore.forbidLastRouter = true
-    }
+  const checkArtist = (singer) => {
+    const song = currentSong.value
+    if (isDjMode.value || isCurrentSirenSong.value || !singer || !song || song.type == 'local') return
+    if (!openArtistRoute(router, singer, { song, playerStore, source: song.source })) return
+    playlistWidgetShow.value = false
   }
 
   const showPlayer = () => {
@@ -213,7 +212,7 @@
                 :start-delay-ms="900"
             ></OverflowMarquee>
             <div class="music-author">
-                <span @click="checkArtist(singer.id)" :class="['author', { disabled: isDjMode || isCurrentSirenSong }]" v-for="(singer, index) in currentSongArtists">{{singer.name || ''}}{{index == currentSongArtists.length -1 ? '' : ' / '}}</span>
+                <span @click="checkArtist(singer)" :class="['author', { disabled: isDjMode || isCurrentSirenSong }]" v-for="(singer, index) in currentSongArtists">{{singer.name || ''}}{{index == currentSongArtists.length -1 ? '' : ' / '}}</span>
             </div>
         </div>
     </div>

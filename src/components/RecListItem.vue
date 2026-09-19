@@ -8,6 +8,7 @@
   import { useUserStore } from '../store/userStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { usePlayerStore } from '../store/playerStore';
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
   const libraryStore = useLibraryStore()
   const playerStore = usePlayerStore()
   const userStore = useUserStore()
@@ -94,7 +95,7 @@
     // console.log(recommendationList.value)
   }
 
-  const checkDetail = (id) => {
+  const checkDetail = (id, item) => {
     if (loadedQQSource && recType.value == 3) {
       router.push({
         path: `/mymusic/playlist/${id}`,
@@ -103,18 +104,32 @@
       playerStore.forbidLastRouter = true
       return
     }
+    if (props.recType == 1) {
+      openArtistRoute(router, item || { id }, {
+        id,
+        playerStore,
+        source: item?.source || (loadedQQSource ? 'qq' : ''),
+        name: item?.name,
+        singerid: item?.singerid || item?.singerID,
+      })
+      return
+    }
     // QQ banner/video 等其它入口仍不开放详情跳转
-    if (loadedQQSource) return
+    if (loadedQQSource) {
+      playerStore.forbidLastRouter = true
+      return
+    }
     libraryStore.libraryInfo = null
     if(props.recType == 0) router.push('/mymusic/playlist/' + id)
-    if(props.recType == 1) router.push('/mymusic/artist/' + id)
     if(props.recType == 2) router.push('/mymusic/album/' + id)
     if(props.recType == 3) router.push('/mymusic/playlist/' + id)
     playerStore.forbidLastRouter = true
   }
-  const checkArtist = (artistId) => {
-    router.push('/mymusic/artist/' + artistId)
-    playerStore.forbidLastRouter = true
+  const checkArtist = (artist) => {
+    openArtistRoute(router, artist, {
+      playerStore,
+      source: loadedQQSource ? 'qq' : artist?.source,
+    })
   }
 </script>
 
@@ -130,11 +145,11 @@
     </div>
     <div class="item-list">
         <div class="item" v-for="(item,index) in recommendationList">
-            <div class="item-img" :class="recType == 1 ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id)">
+            <div class="item-img" :class="recType == 1 ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id, item)">
                 <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl) + '?param=450y450'" alt="">
             </div>
             <div class="item-name" :class="{'item-name-center': recType == 1}">{{item.name}}</div>
-            <div class="item-sub" @click="checkArtist(item.artist.id)" v-if="item.artist">{{ item.artist.name }}</div>
+            <div class="item-sub" @click="checkArtist(item.artist)" v-if="item.artist">{{ item.artist.name }}</div>
             <div class="item-sub" v-else>{{ item.updateFrequency}}</div>
         </div>
     </div>

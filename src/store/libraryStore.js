@@ -4,7 +4,7 @@ import { getAlbumDetail, albumDynamic } from '../api/album'
 import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
 import { getArtistMV } from '../api/mv'
 import { getSongDetail } from '../api/song'
-import { getQQSongListDetail, getQQTopListDetail, normalizeQQTopListDetail } from '../api/qqMusic'
+import { getQQSongListDetail } from '../api/qqMusic'
 import { loadQQPlaylistDetail, mergeQQPlaylistSummary } from '../utils/qqLibrary.mjs'
 import { mapSongsPlayableStatus } from "../utils/songStatus";
 import { buildAlbumSearchText, buildCloudSongSearchText, buildMVSearchText } from "../utils/songFilter";
@@ -13,6 +13,10 @@ import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs'
 const PLAYLIST_PAGE_SIZE = 100
 const PLAYLIST_HYDRATION_CONCURRENCY = 4
 const PLAYLIST_OVERVIEW_COUNT_FIELDS = ['trackCount', 'size']
+// QQ 歌手页歌曲分页步长，与 server 端 QQ_SINGER_SONGS_MAX_LIMIT（上游单次上限）一致。
+const QQ_SINGER_SONGS_PAGE_SIZE = 60
+// QQ 歌手页专辑分页步长，与 server 端 QQ_SINGER_ALBUMS_PAGE_SIZE 一致。
+const QQ_SINGER_ALBUMS_PAGE_SIZE = 30
 
 const createPlaylistHydrationState = ({ id = null, total = 0, loaded = 0, status = 'idle', source = 'netease' } = {}) => ({
     id,
@@ -35,11 +39,12 @@ const cloneSearchIndexState = index => ({
 const getSearchEntryKey = (entry, fallbackKey = '0') => String(getSongIdentity(entry) || entry?.id || fallbackKey)
 const isBlankValue = value => value == null || value === ''
 const normalizeOptionalId = id => isBlankValue(id) ? '' : String(id)
-const getLibraryDetailCacheKey = (id, routerName, source = 'netease') => {
+const getLibraryDetailCacheKey = (id, routerName, source = 'netease', type = '') => {
     const normalizedName = String(routerName || '')
     const normalizedId = normalizeOptionalId(id)
+    const normalizedType = String(type || '').trim().toLowerCase()
     if (!normalizedName || !normalizedId) return ''
-    return `${normalizedName}:${normalizeMusicSource(source)}:${normalizedId}`
+    return `${normalizedName}:${normalizeMusicSource(source)}:${normalizedType}:${normalizedId}`
 }
 const trimRecordMap = (records, limit, fallbackLimit) => {
     if (!records || typeof records != 'object') return {}
@@ -56,9 +61,6 @@ const trimRecordMap = (records, limit, fallbackLimit) => {
         delete nextRecords[entries[i][0]]
     }
     return nextRecords
-}
-const hasNeedTimestampUrl = (needTimestamp, url) => {
-    return Array.isArray(needTimestamp) && needTimestamp.includes(url)
 }
 const createPlaylistHydrationToken = playlistId => `${playlistId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -92,6 +94,12 @@ export const useLibraryStore = defineStore('libraryStore', {
             searchIndexById: createSearchIndexState(),
             needTimestamp: [],
             libraryChangeAnimation: false,
+            qqSingerSongsNextPage: 1,
+            qqSingerSongsLoading: false,
+            qqSingerSongsHasMore: false,
+            qqSingerAlbumsNextPage: 1,
+            qqSingerAlbumsLoading: false,
+            qqSingerAlbumsHasMore: false,
         }
     },
     actions: {
@@ -354,9 +362,10 @@ export const useLibraryStore = defineStore('libraryStore', {
             const hydrationId = String(this.playlistHydration?.id || '')
             if (!normalizedId || hydrationId == normalizedId) this.resetPlaylistHydration()
         },
-        cacheCurrentLibraryDetail(id, routerName, source = this.libraryInfo?.source || 'netease') {
+        cacheCurrentLibraryDetail(id, routerName, source = this.libraryInfo?.source || 'netease', type = this.libraryInfo?.type || '') {
             const normalizedSource = normalizeMusicSource(source)
-            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource)
+            const normalizedType = String(type || '').trim().toLowerCase()
+            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource, normalizedType)
             if (!key || !this.libraryInfo) return
             if (!this.detailCache || typeof this.detailCache != 'object') this.detailCache = {}
 
@@ -373,9 +382,10 @@ export const useLibraryStore = defineStore('libraryStore', {
             }
             this.trimDetailCache()
         },
-        restoreLibraryDetailFromCache(id, routerName, source = 'netease') {
+        restoreLibraryDetailFromCache(id, routerName, source = 'netease', type = '') {
             const normalizedSource = normalizeMusicSource(source)
-            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource)
+            const normalizedType = String(type || '').trim().toLowerCase()
+            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource, normalizedType)
             const cached = key ? this.detailCache?.[key] : null
             if (!cached?.libraryInfo || (cached.source && normalizeMusicSource(cached.source) !== normalizedSource)) return false
 
@@ -397,13 +407,19 @@ export const useLibraryStore = defineStore('libraryStore', {
             } else {
                 this.resetPlaylistHydration()
             }
+            // 缓存里保留了已加载的分页，回到歌手页时按已加载条数恢复「加载更多」游标
+            if (routerName == 'artist' && normalizedSource === 'qq') {
+                this.resetQQSingerSongsPaging()
+                this.resetQQSingerAlbumsPaging()
+            }
 
             return true
         },
         shouldBypassLibraryDetailCache(routerName) {
-            return routerName == 'playlist' && (
-                hasNeedTimestampUrl(this.needTimestamp, '/playlist/detail')
-                || hasNeedTimestampUrl(this.needTimestamp, '/playlist/track/all')
+            const needTimestamp = this.needTimestamp
+            return routerName == 'playlist' && Array.isArray(needTimestamp) && (
+                needTimestamp.includes('/playlist/detail')
+                || needTimestamp.includes('/playlist/track/all')
             )
         },
         async waitForPlaylistHydration(id) {
@@ -546,7 +562,7 @@ export const useLibraryStore = defineStore('libraryStore', {
         async updateLibraryDetail(id, routerName, options = {}) {
             const { force = false } = options
             const source = normalizeMusicSource(options.source)
-            if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName, source)) return
+            if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName, source, options.type)) return
 
             this.changeAnimation()
             this.resetSearchIndex()
@@ -567,9 +583,10 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.artistPageType = 0
             this.libraryAlbum = null
             this.libraryMV = null
-            this.cacheCurrentLibraryDetail(id, routerName, source)
+            this.cacheCurrentLibraryDetail(id, routerName, source, options.type)
         },
         async updateQQTopListDetail(id) {
+            const { getQQTopListDetail, normalizeQQTopListDetail } = await import('../api/qqMusic')
             const playlistId = String(id || '')
             const token = createPlaylistHydrationToken(playlistId)
             this.playlistHydrationToken = token
@@ -779,9 +796,59 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.indexLibrarySongs(this.librarySongs)
             this.libraryMV = Array.isArray(detail.mvs) ? detail.mvs : []
             this.libraryAlbum = []
+            this.resetQQSingerSongsPaging()
             this.libraryChangeAnimation = false
         },
-        // QQ 歌手页类型切换：歌曲=已加载热歌；专辑上游未提供（空）；MV=聚合中的列表
+        // QQ 歌手页歌曲分页游标：由已加载条数反推下一页（首屏 60 条 → 下一页为第 1 页）。
+        resetQQSingerSongsPaging() {
+            const loaded = Array.isArray(this.librarySongs) ? this.librarySongs.length : 0
+            const total = Number(this.libraryInfo?.musicSize || 0)
+            this.qqSingerSongsNextPage = Math.floor(loaded / QQ_SINGER_SONGS_PAGE_SIZE)
+            this.qqSingerSongsLoading = false
+            this.qqSingerSongsHasMore = loaded > 0 && loaded < total
+        },
+        async loadMoreQQSingerSongs() {
+            if (this.qqSingerSongsLoading || !this.qqSingerSongsHasMore) return false
+            const singermid = String(this.libraryInfo?.source === 'qq' ? this.libraryInfo?.id || '' : '')
+            if (!singermid) return false
+            const page = Number(this.qqSingerSongsNextPage || 1)
+            this.qqSingerSongsLoading = true
+            try {
+                const { getQQSingerSongs } = await import('../api/qq')
+                const { normalizeQQSingerSongs } = await import('../api/qqMusic')
+                const result = normalizeQQSingerSongs(await getQQSingerSongs(singermid, {
+                    page,
+                    limit: QQ_SINGER_SONGS_PAGE_SIZE,
+                }))
+                // 路由已切走时丢弃结果，避免污染其他详情页
+                if (String(this.libraryInfo?.id || '') !== singermid || this.libraryInfo?.source !== 'qq') return false
+                const existing = Array.isArray(this.librarySongs) ? this.librarySongs : []
+                const seen = new Set(existing.map(song => getSongIdentity(song)))
+                const appended = result.songs.filter(song => {
+                    const key = getSongIdentity(song)
+                    if (!key || seen.has(key)) return false
+                    seen.add(key)
+                    return true
+                })
+                if (appended.length) {
+                    this.librarySongs = [...existing, ...appended]
+                    this.indexLibrarySongs(appended, { append: true })
+                    // 同步缓存，切到专辑/MV 页签再切回时不会丢失已加载的分页
+                    if (this._qqSingerPayload) this._qqSingerPayload.hotSongs = this.librarySongs
+                }
+                this.qqSingerSongsNextPage = page + 1
+                const total = Number(this.libraryInfo?.musicSize || 0)
+                this.qqSingerSongsHasMore = appended.length > 0 && this.librarySongs.length < total
+                return appended.length > 0
+            } catch (_) {
+                // 失败即停止自动重试，避免滚动时反复请求上游
+                this.qqSingerSongsHasMore = false
+                return false
+            } finally {
+                this.qqSingerSongsLoading = false
+            }
+        },
+        // QQ 歌手页类型切换：歌曲=已加载热歌；专辑=分页拉取；MV=聚合中的列表
         updateQQSingerTopSongs() {
             const cached = this._qqSingerPayload
             if (cached && Array.isArray(cached.hotSongs)) {
@@ -789,8 +856,89 @@ export const useLibraryStore = defineStore('libraryStore', {
                 this.indexLibrarySongs(this.librarySongs)
             }
         },
-        updateQQSingerAlbums() {
-            this.libraryAlbum = []
+        // QQ 歌手页专辑分页游标：由已加载条数反推下一页。
+        resetQQSingerAlbumsPaging() {
+            const loaded = Array.isArray(this.libraryAlbum) ? this.libraryAlbum.length : 0
+            const total = Number(this.libraryInfo?.albumSize || 0)
+            this.qqSingerAlbumsNextPage = Math.floor(loaded / QQ_SINGER_ALBUMS_PAGE_SIZE)
+            this.qqSingerAlbumsLoading = false
+            this.qqSingerAlbumsHasMore = loaded > 0 && loaded < total
+        },
+        // 首次进入专辑页签拉首屏；已有数据（含缓存恢复）时只还原游标，不重复请求。
+        async updateQQSingerAlbums() {
+            if (Array.isArray(this.libraryAlbum) && this.libraryAlbum.length) {
+                this.resetQQSingerAlbumsPaging()
+                return
+            }
+            if (this.qqSingerAlbumsLoading) return
+            const singermid = String(this.libraryInfo?.source === 'qq' ? this.libraryInfo?.id || '' : '')
+            if (!singermid) {
+                this.libraryAlbum = []
+                this.qqSingerAlbumsHasMore = false
+                return
+            }
+            this.qqSingerAlbumsLoading = true
+            try {
+                const { getQQSingerAlbums } = await import('../api/qq')
+                const { normalizeQQSingerAlbums } = await import('../api/qqMusic')
+                const result = normalizeQQSingerAlbums(await getQQSingerAlbums(singermid, {
+                    page: 0,
+                    limit: QQ_SINGER_ALBUMS_PAGE_SIZE,
+                }))
+                // 路由已切走时丢弃结果，避免污染其他详情页
+                if (String(this.libraryInfo?.id || '') !== singermid || this.libraryInfo?.source !== 'qq') return
+                this.libraryAlbum = result.albums
+                this.indexLibraryAlbums(this.libraryAlbum)
+                this.qqSingerAlbumsNextPage = 1
+                const total = result.totalAlbum || Number(this.libraryInfo?.albumSize || 0)
+                this.qqSingerAlbumsHasMore = result.albums.length > 0 && this.libraryAlbum.length < total
+            } catch (_) {
+                // 上游不可用时保持空列表，不阻塞页签展示
+                this.libraryAlbum = []
+                this.qqSingerAlbumsNextPage = 1
+                this.qqSingerAlbumsHasMore = false
+            } finally {
+                this.qqSingerAlbumsLoading = false
+            }
+        },
+        async loadMoreQQSingerAlbums() {
+            if (this.qqSingerAlbumsLoading || !this.qqSingerAlbumsHasMore) return false
+            const singermid = String(this.libraryInfo?.source === 'qq' ? this.libraryInfo?.id || '' : '')
+            if (!singermid) return false
+            const page = Number(this.qqSingerAlbumsNextPage || 1)
+            this.qqSingerAlbumsLoading = true
+            try {
+                const { getQQSingerAlbums } = await import('../api/qq')
+                const { normalizeQQSingerAlbums } = await import('../api/qqMusic')
+                const result = normalizeQQSingerAlbums(await getQQSingerAlbums(singermid, {
+                    page,
+                    limit: QQ_SINGER_ALBUMS_PAGE_SIZE,
+                }))
+                // 路由已切走时丢弃结果，避免污染其他详情页
+                if (String(this.libraryInfo?.id || '') !== singermid || this.libraryInfo?.source !== 'qq') return false
+                const existing = Array.isArray(this.libraryAlbum) ? this.libraryAlbum : []
+                const seen = new Set(existing.map(album => String(album?.id || album?.mid || '')))
+                const appended = result.albums.filter(album => {
+                    const key = String(album?.id || album?.mid || '')
+                    if (!key || seen.has(key)) return false
+                    seen.add(key)
+                    return true
+                })
+                if (appended.length) {
+                    this.libraryAlbum = [...existing, ...appended]
+                    this.indexLibraryAlbums(this.libraryAlbum)
+                }
+                this.qqSingerAlbumsNextPage = page + 1
+                const total = Number(this.libraryInfo?.albumSize || 0)
+                this.qqSingerAlbumsHasMore = appended.length > 0 && this.libraryAlbum.length < total
+                return appended.length > 0
+            } catch (_) {
+                // 失败即停止自动重试，避免滚动时反复请求上游
+                this.qqSingerAlbumsHasMore = false
+                return false
+            } finally {
+                this.qqSingerAlbumsLoading = false
+            }
         },
         updateQQSingerMvs() {
             const cached = this._qqSingerPayload

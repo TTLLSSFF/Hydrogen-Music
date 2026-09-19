@@ -151,11 +151,11 @@ function getSingleValue(value) {
   return String(value)
 }
 
-// QQ login cookies commonly store the account number as `uin=o012345`.
-// The upstream user services parse their explicit `uin` parameter with
-// Number.parseInt, so passing that cookie representation produces NaN and
-// silently returns empty profile/playlist data. Keep the cookie untouched,
-// but normalize the public/query identifier used by those services.
+// QQ login cookies commonly store the account number as `uin=o012345`. The
+// upstream user services parse their explicit `uin` parameter with
+// Number.parseInt, and the vkey service copies the raw cookie value into the
+// CgiGetVkey payload, so that representation either produces NaN or fails the
+// member entitlement check. Normalize it to the plain account number.
 function normalizeQQUin(value) {
   const normalized = getSingleValue(value).trim()
   if (!normalized) return ''
@@ -177,9 +177,19 @@ function getQQCookieValue(cookie, name) {
 // QR login currently returns qm_keyst on some accounts, while the installed
 // upstream vkey service still reads qqmusic_key. Keep the credential entirely
 // inside the server boundary and add the compatible alias only for upstream use.
+// The cookie's `uin` is rewritten to the plain account number because the
+// upstream vkey service forwards it verbatim into CgiGetVkey, and an
+// `o`-prefixed value is rejected there, leaving member-only tracks without a
+// playback url.
 function normalizeQQUpstreamCookie(cookie) {
-  const normalized = getSingleValue(cookie).trim()
-  if (!normalized || getQQCookieValue(normalized, 'qqmusic_key')) return normalized
+  let normalized = getSingleValue(cookie).trim()
+  if (!normalized) return normalized
+  const rawUin = parseCookieUin(normalized)
+  const numericUin = normalizeQQUin(rawUin)
+  if (numericUin && numericUin !== rawUin) {
+    normalized = normalized.replace(/(^|;\s*)uin=[^;]*/i, (_match, separator) => `${separator}uin=${numericUin}`)
+  }
+  if (getQQCookieValue(normalized, 'qqmusic_key')) return normalized
   const qmKeyst = getQQCookieValue(normalized, 'qm_keyst')
   return qmKeyst ? `${normalized}; qqmusic_key=${qmKeyst}` : normalized
 }
@@ -573,6 +583,8 @@ function createQQSecurityMiddleware(options = {}) {
     return { status: 200, body: { response: responseData } }
   })
   const singerService = options.singerService || fetchQQSingerInfo
+  const singerSongsService = options.singerSongsService || fetchQQSingerSongsPage
+  const singerAlbumsService = options.singerAlbumsService || fetchQQSingerAlbumsPage
 
 // —— 公共歌手详情聚合 ——
 // 热门歌曲无专用上游接口，明星页面用「歌手名搜索 → zhida_singer.hotsong」填充；
@@ -608,9 +620,67 @@ async function fetchQQUpstreamJson(url) {
   }
 }
 
+// 歌手歌曲列表上游。旧实现用「歌手名搜索 → zhida_singer.hotsong」取热歌，上游
+// 每次只回约 10 条且无法翻页，歌手页因此只显示 10 首。这里改用真实客户端使用的
+// musicu.fcg 歌手详情模块（sort=5 为热度排序）：sin/num 可翻页，单次最多 60 条，
+// 并回传 total_song 真实总量。上游对该接口的封装（getSingerHotsong）只导出了
+// 底层 UCommon_default 服务，故与 topListDetailService 一样在此复刻请求构造。
+const QQ_SINGER_SONGS_MAX_LIMIT = 60
+
+async function fetchQQSingerSongsPage({ singermid, page = 0, limit = QQ_SINGER_SONGS_MAX_LIMIT }) {
+  const data = {
+    comm: { ct: 24, cv: 0 },
+    singer: {
+      method: 'get_singer_detail_info',
+      param: { sort: 5, singermid, sin: Math.max(Number(page) || 0, 0) * limit, num: limit },
+      module: 'music.web_singer_info_svr',
+    },
+  }
+  const props = {
+    method: 'get',
+    params: { format: 'json', data: JSON.stringify(data) },
+    option: {},
+  }
+  const parsed = (await qqServices.UCommon_default(props)).data
+  const payload = parsed?.singer?.data
+  return { status: 200, body: payload && typeof payload === 'object' ? payload : {} }
+}
+
+// 歌手专辑列表上游。上游封装 getSingerAlbum 只导出底层 UCommon_default 服务，故同样在此
+// 复刻请求构造。注意 param.begin 是「偏移量」而非页码，单页条数由 num 控制；上游默认
+// num=5 太少，这里显式放大。返回 data.total 为真实专辑总数，但 totalNum（专辑曲目数）
+// 上游恒为 0，故页面上不展示曲目数。
+const QQ_SINGER_ALBUMS_PAGE_SIZE = 30
+const QQ_SINGER_ALBUMS_MAX_LIMIT = 100
+
+async function fetchQQSingerAlbumsPage({ singermid, page = 0, limit = QQ_SINGER_ALBUMS_PAGE_SIZE }) {
+  const data = {
+    comm: { ct: 24, cv: 0 },
+    singer: {
+      method: 'GetAlbumList',
+      param: { sort: 5, singermid, begin: Math.max(Number(page) || 0, 0) * limit, num: limit },
+      module: 'music.musichallAlbum.AlbumListServer',
+    },
+  }
+  const props = {
+    method: 'get',
+    params: { format: 'json', singermid, data: JSON.stringify(data) },
+    option: {},
+  }
+  const parsed = (await qqServices.UCommon_default(props)).data
+  const payload = parsed?.singer?.data
+  return {
+    status: 200,
+    body: payload && typeof payload === 'object'
+      ? { albumList: Array.isArray(payload.albumList) ? payload.albumList : [], total: Number(payload.total ?? 0) }
+      : { albumList: [], total: 0 },
+  }
+}
+
 // 缺省实现，测试可通过 singerService 注入替换。
 async function fetchQQSingerInfo({ singermid, name, singerid }) {
-  const [descResult, starResult, searchResult, mvResult] = await Promise.allSettled([
+  const [songsResult, descResult, starResult, searchResult, mvResult] = await Promise.allSettled([
+    fetchQQSingerSongsPage({ singermid, page: 0, limit: QQ_SINGER_SONGS_MAX_LIMIT }),
     (async () => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 10000)
@@ -636,17 +706,23 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       : Promise.resolve({ status: 200, body: {} }),
   ])
   const read = settled => (settled.status === 'fulfilled' ? settled.value : { status: 502, body: {} })
+  const songs = read(songsResult)
   const desc = read(descResult)
   const star = read(starResult)
   const search = read(searchResult)
   const mv = read(mvResult)
 
-  // 只透传与目标歌手匹配的 zhida 热歌，避免误配同名艺人
+  // 主来源：歌手详情模块的歌曲列表（已按热度排序，本次取前 60 首）。
+  const songList = Array.isArray(songs.body?.songlist) ? songs.body.songlist : []
+  const singerInfo = songs.body?.singer_info && typeof songs.body.singer_info === 'object' ? songs.body.singer_info : {}
+
+  // 兜底：旧 zhida 搜索结果，仅在歌曲列表上游不可用时使用。只透传与目标歌手
+  // 匹配的 zhida 热歌，避免误配同名艺人。
   const zhidaSinger = search.body?.response?.data?.zhida?.zhida_singer
     || search.body?.data?.zhida?.zhida_singer
     || search.body?.zhida?.zhida_singer
     || null
-  const hotSongs = zhidaSinger && (!zhidaSinger.singerMID || zhidaSinger.singerMID === singermid)
+  const zhidaHotSongs = zhidaSinger && (!zhidaSinger.singerMID || zhidaSinger.singerMID === singermid)
     ? (Array.isArray(zhidaSinger.hotsong) ? zhidaSinger.hotsong : [])
     : []
 
@@ -656,9 +732,12 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
   return {
     status: status >= 200 && status < 300 ? 200 : 502,
     body: {
-      desc: String(desc.body?.desc || ''),
-      starNum: Number(star.body?.response?.num ?? star.body?.num ?? 0),
-      hotSongs,
+      desc: String(desc.body?.desc || songs.body?.singer_brief || ''),
+      starNum: Number(star.body?.response?.num ?? star.body?.num ?? singerInfo.fans ?? 0),
+      hotSongs: songList.length ? songList : zhidaHotSongs,
+      totalSong: Number(songs.body?.total_song ?? 0),
+      totalAlbum: Number(songs.body?.total_album ?? 0),
+      totalMv: Number(songs.body?.total_mv ?? 0),
       mvs: Array.isArray(mv.body?.response?.data?.list)
         ? mv.body.response.data.list
         : Array.isArray(mv.body?.data?.list)
@@ -853,7 +932,7 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       return
     }
 
-    // 公共歌手详情聚合（无登录要求）：描述 + 关注数 + 热门歌曲(zhida) + MV 列表。
+    // 公共歌手详情聚合（无登录要求）：描述 + 关注数 + 歌曲列表 + MV 列表。
     if (normalizedPath === '/getsingerinfo') {
       if (ctx.method !== 'GET') {
         writeJson(ctx, 405, { error: 'Method not allowed' })
@@ -871,6 +950,68 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
         writeJson(ctx, status, sanitizeQQResponseBody(body))
       } catch (_) {
         writeJson(ctx, 502, { error: 'QQ Music singer detail unavailable' })
+      }
+      return
+    }
+
+    // 公共歌手歌曲列表（无登录要求）：歌手页「加载更多」用。page 从 0 开始，
+    // limit 上限 60（上游单次返回上限），响应只透出歌曲与总数。
+    if (normalizedPath === '/getsingersongs') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const singermid = getSingleValue(ctx.query?.singermid || ctx.query?.singerMid).trim()
+      if (!singermid) {
+        writeJson(ctx, 400, { error: 'singermid is required' })
+        return
+      }
+      const requestedLimit = Number(ctx.query?.limit)
+      const limit = Math.min(
+        Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_SINGER_SONGS_MAX_LIMIT, 1),
+        QQ_SINGER_SONGS_MAX_LIMIT,
+      )
+      const requestedPage = Number(ctx.query?.page)
+      const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 0, 0)
+      try {
+        const { status, body } = unwrapServiceResponse(await singerSongsService({ singermid, page, limit }))
+        writeJson(ctx, status, sanitizeQQResponseBody({
+          songs: Array.isArray(body?.songlist) ? body.songlist : [],
+          totalSong: Number(body?.total_song ?? 0),
+        }))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music singer songs unavailable' })
+      }
+      return
+    }
+
+    // 公共歌手专辑列表（无登录要求）：歌手页「专辑」页签用。page 从 0 开始，
+    // limit 上限 100，响应只透出专辑与总数。
+    if (normalizedPath === '/getsingeralbums') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const singermid = getSingleValue(ctx.query?.singermid || ctx.query?.singerMid).trim()
+      if (!singermid) {
+        writeJson(ctx, 400, { error: 'singermid is required' })
+        return
+      }
+      const requestedLimit = Number(ctx.query?.limit)
+      const limit = Math.min(
+        Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_SINGER_ALBUMS_PAGE_SIZE, 1),
+        QQ_SINGER_ALBUMS_MAX_LIMIT,
+      )
+      const requestedPage = Number(ctx.query?.page)
+      const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 0, 0)
+      try {
+        const { status, body } = unwrapServiceResponse(await singerAlbumsService({ singermid, page, limit }))
+        writeJson(ctx, status, sanitizeQQResponseBody({
+          albums: Array.isArray(body?.albumList) ? body.albumList : [],
+          totalAlbum: Number(body?.total ?? 0),
+        }))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music singer albums unavailable' })
       }
       return
     }
@@ -919,7 +1060,7 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       try {
         const decoded = JSON.parse(Buffer.from(clientHeader, 'base64url').toString('utf8'))
         clientCookie = getSingleValue(decoded?.cookie).trim()
-        clientUin = getSingleValue(decoded?.uin).trim()
+        clientUin = normalizeQQUin(decoded?.uin)
         clientEuin = getSingleValue(decoded?.euin).trim()
       } catch (_) {}
     }

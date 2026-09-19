@@ -3,8 +3,6 @@ import { normalizeMusicSource } from './musicSource.mjs'
 const QQ_BLOCKED_SONG_ACTIONS = new Set([
   'like',
   'comment',
-  'album',
-  'artist',
   'download',
   'collect',
   'playlistMutation',

@@ -368,6 +368,118 @@ test('QQ public singer info rejects missing singermid, trims identity params and
   assert.equal(post.status, 405)
 })
 
+test('QQ public singer songs forwards page/limit without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    singerSongsService: async params => {
+      calls.push(params)
+      return {
+        status: 200,
+        body: { songlist: [{ songmid: 'm1', token: 'stale-token' }], total_song: 1012, cookie: 'uin=must-not-leak' },
+      }
+    },
+  })
+
+  const context = createContext('/getSingerSongs?singermid=s-mid&page=2&limit=30')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'singer songs must be handled before the session-required boundary')
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ singermid: 's-mid', page: 2, limit: 30 }])
+  assert.equal(context.body.songs.length, 1)
+  assert.equal(context.body.totalSong, 1012)
+  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
+  assert.equal(JSON.stringify(context.body).includes('stale-token'), false)
+})
+
+test('QQ public singer songs clamps paging params and rejects missing singermid or POST', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    singerSongsService: async params => {
+      calls.push(params)
+      return { status: 200, body: {} }
+    },
+  })
+
+  const missing = createContext('/getSingerSongs')
+  await middleware(missing, async () => {})
+  assert.equal(missing.status, 400)
+
+  const defaults = createContext('/getSingerSongs?singermid=s-mid')
+  await middleware(defaults, async () => {})
+  assert.equal(defaults.status, 200)
+  assert.deepEqual(calls[0], { singermid: 's-mid', page: 0, limit: 60 })
+
+  // 上游单次上限 60：超限与非法值都收敛到 60，负数 page 收敛到 0
+  const clamped = createContext('/getSingerSongs?singermid=s-mid&page=-3&limit=999')
+  await middleware(clamped, async () => {})
+  assert.equal(clamped.status, 200)
+  assert.deepEqual(calls[1], { singermid: 's-mid', page: 0, limit: 60 })
+
+  const post = createContext('/getSingerSongs?singermid=s-mid', { method: 'POST', body: {} })
+  await middleware(post, async () => {})
+  assert.equal(post.status, 405)
+})
+
+test('QQ public singer albums forwards page/limit without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    singerAlbumsService: async params => {
+      calls.push(params)
+      return {
+        status: 200,
+        body: { albumList: [{ albumMid: 'a-mid', token: 'stale-token' }], total: 43, cookie: 'uin=must-not-leak' },
+      }
+    },
+  })
+
+  const context = createContext('/getSingerAlbums?singermid=s-mid&page=1&limit=20')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'singer albums must be handled before the session-required boundary')
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ singermid: 's-mid', page: 1, limit: 20 }])
+  assert.equal(context.body.albums.length, 1)
+  assert.equal(context.body.totalAlbum, 43)
+  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
+  assert.equal(JSON.stringify(context.body).includes('stale-token'), false)
+})
+
+test('QQ public singer albums clamps paging params and rejects missing singermid or POST', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    singerAlbumsService: async params => {
+      calls.push(params)
+      return { status: 200, body: {} }
+    },
+  })
+
+  const missing = createContext('/getSingerAlbums')
+  await middleware(missing, async () => {})
+  assert.equal(missing.status, 400)
+
+  const defaults = createContext('/getSingerAlbums?singermid=s-mid')
+  await middleware(defaults, async () => {})
+  assert.equal(defaults.status, 200)
+  assert.deepEqual(calls[0], { singermid: 's-mid', page: 0, limit: 30 })
+
+  // limit 上限 100：超限与非法值都收敛，负数 page 收敛到 0
+  const clamped = createContext('/getSingerAlbums?singermid=s-mid&page=-3&limit=999')
+  await middleware(clamped, async () => {})
+  assert.equal(clamped.status, 200)
+  assert.deepEqual(calls[1], { singermid: 's-mid', page: 0, limit: 100 })
+
+  const post = createContext('/getSingerAlbums?singermid=s-mid', { method: 'POST', body: {} })
+  await middleware(post, async () => {})
+  assert.equal(post.status, 405)
+})
+
 test('QQ public toplist detail forwards fixed topId/page/limit without a login session', async () => {
   const calls = []
   const middleware = createQQSecurityMiddleware({
@@ -527,6 +639,33 @@ test('QQ playback aliases the QR login qm_keyst credential for the upstream VIP 
   })
 
   assert.equal(JSON.stringify(context.body).includes('vip-secret'), false)
+})
+
+test('QQ playback hands the upstream vkey service a numeric uin instead of the cookie representation', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=o0012345; qm_keyst=vip-secret', uin: 'o0012345', loginUin: 'o0012345' }),
+  })
+  const context = createContext('/getMusicPlay?songmid=vip-mid')
+
+  await middleware(context, async () => {
+    assert.match(context.request.cookie, /(?:^|;\s*)uin=12345(?:;|$)/)
+    assert.equal(context.request.cookie.includes('uin=o0012345'), false)
+    assert.match(context.request.cookie, /(?:^|;\s*)qqmusic_key=vip-secret(?:;|$)/)
+    context.body = { data: { playUrl: { 'vip-mid': { url: 'https://example.test/vip.mp3' } } } }
+  })
+})
+
+test('QQ playback keeps a plain numeric uin untouched while aliasing the member credential', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680; qm_keyst=vip-secret' }),
+  })
+  const context = createContext('/getMusicPlay?songmid=vip-mid')
+
+  await middleware(context, async () => {
+    assert.match(context.request.cookie, /(?:^|;\s*)uin=24680(?:;|$)/)
+    assert.match(context.request.cookie, /(?:^|;\s*)qqmusic_key=vip-secret(?:;|$)/)
+    context.body = { ok: true }
+  })
 })
 
 test('QQ profile, avatar, liked songs and playlists receive the server-side uin', async () => {

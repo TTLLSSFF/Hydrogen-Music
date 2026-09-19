@@ -1,4 +1,5 @@
 import { applyTraditionalTextByFont } from './traditionalText'
+import { syncDesktopLyricStyle } from './desktopLyric'
 
 const CUSTOM_FONT_STYLE_ID = '__CUSTOM_FONT__'
 const LEGACY_CUSTOM_FONT_STYLE_ID = '__HYDROGEN_CUSTOM_FONT__'
@@ -32,6 +33,19 @@ function getLocalFontCandidates(fontName) {
     })
 }
 
+function buildCustomFontFaceCss(fontName) {
+    const localSources = getLocalFontCandidates(fontName)
+        .map(candidate => `local("${escapeCssString(candidate)}")`)
+        .join(', ')
+
+    return `
+    @font-face {
+      font-family: ${CUSTOM_FONT_FACE_NAME};
+      src: ${localSources};
+      font-display: swap;
+    }`
+}
+
 function insertCustomFontStyle(customFont) {
     if (typeof document === 'undefined') return ''
 
@@ -47,17 +61,7 @@ function insertCustomFontStyle(customFont) {
         return ''
     }
 
-    const localSources = getLocalFontCandidates(fontName)
-        .map(candidate => `local("${escapeCssString(candidate)}")`)
-        .join(', ')
-
-    const styleText = `
-    @font-face {
-      font-family: ${CUSTOM_FONT_FACE_NAME};
-      src: ${localSources};
-      font-display: swap;
-    }`
-
+    const styleText = buildCustomFontFaceCss(fontName)
     const style = existingStyle || document.createElement('style')
     style.id = CUSTOM_FONT_STYLE_ID
     style.textContent = styleText
@@ -74,6 +78,8 @@ export function applyCustomFontStyle(customFont, customFontLabel = '') {
     return insertedFont
 }
 
-export function syncDesktopLyricCustomFont() {
-    // 网页版无桌面歌词，无需同步
+export function syncDesktopLyricCustomFont(customFont) {
+    // 歌词窗口是独立文档，自定义字体需要单独注入一份
+    const fontName = typeof customFont === 'string' ? customFont.trim() : ''
+    syncDesktopLyricStyle(fontName ? buildCustomFontFaceCss(fontName) : '')
 }

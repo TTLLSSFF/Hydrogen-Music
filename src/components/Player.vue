@@ -15,7 +15,9 @@ import { noticeOpen } from '../utils/dialog';
 import { getSongDisplayName } from '../utils/songName';
 import { getIndexedSong } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
+import { toggleDesktopLyric } from '../utils/desktopLyric';
 import { isQQSong } from '../utils/providerPolicy.mjs'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 import { getActivePlaylistSurface } from '../utils/player/playlistRuntime.mjs'
 const PlayList = defineAsyncComponent(() => import('./PlayList.vue'));
 
@@ -90,9 +92,20 @@ const {
     currentLyricIndex,
     coverBlur,
     showSongTranslation,
+    isDesktopLyricOpen,
 } = storeToRefs(playerStore);
 const playlistWidgetLoaded = ref(false);
 const isActivePlaylistSurface = computed(() => getActivePlaylistSurface(widgetState.value) === 'player');
+
+// 桌面歌词：优先使用 Document Picture-in-Picture 置顶浮窗，不支持时降级为普通弹窗
+const handleToggleDesktopLyric = async () => {
+    const result = await toggleDesktopLyric();
+    if (result.ok) return;
+
+    noticeOpen(result.reason === 'popup-blocked'
+        ? '桌面歌词窗口被浏览器拦截，请允许本站弹出窗口后重试'
+        : '桌面歌词打开失败，请稍后重试');
+};
 
 const sliderDuration = computed(() => {
     const currentTime = Number(time.value);
@@ -243,16 +256,15 @@ const download = () => {
     }
 };
 
-const checkArtist = artistId => {
+const checkArtist = singer => {
     const song = currentSong.value;
     // 电台模式下禁止点击作者
-    if (isDjMode.value || isCurrentSirenSong.value || isQQSong(song) || !artistId) return;
+    if (isDjMode.value || isCurrentSirenSong.value || !singer) return;
     if (song && song.type != 'local') {
-        router.push('/mymusic/artist/' + artistId);
+        if (!openArtistRoute(router, singer, { song, playerStore, source: song.source })) return;
         widgetState.value = true;
         lyricShow.value = false;
         playlistWidgetShow.value = false;
-        playerStore.forbidLastRouter = true;
     }
 };
 const addToPlaylist = () => {
@@ -313,7 +325,7 @@ const toggleDjSub = async isSubscribe => {
                     <div class="music-author-lable" :class="{ 'music-author-lable-dim': coverBlur }"></div>
                     <div class="music-author">
                             <span
-                                @click="checkArtist(singer.id)"
+                                @click="checkArtist(singer)"
                                 :class="['author', { disabled: isDjMode || isCurrentSirenSong }]"
                                 :style="{ color: coverBlur ? 'var(--text)' : 'var(--muted-text)' }"
                                 v-for="(singer, index) in currentSongArtists"
@@ -813,6 +825,22 @@ const toggleDjSub = async isSubscribe => {
                     </text>
                 </svg>
 
+                <!-- 桌面歌词控制按钮 -->
+                <svg
+                    @click="handleToggleDesktopLyric"
+                    :class="{ active: isDesktopLyricOpen }"
+                    class="icon desktop-lyric-btn"
+                    viewBox="0 0 1024 1024"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="200"
+                    height="200"
+                >
+                    <path
+                        d="M896 128H128c-70.4 0-128 57.6-128 128v512c0 70.4 57.6 128 128 128h768c70.4 0 128-57.6 128-128V256c0-70.4-57.6-128-128-128zM128 192h768c35.2 0 64 28.8 64 64v85.333333H64V256c0-35.2 28.8-64 64-64z m768 640H128c-35.2 0-64-28.8-64-64V405.333333h896V768c0 35.2-28.8 64-64 64z"
+                    ></path>
+                    <path d="M256 576h512v64H256z m0 128h384v64H256z"></path>
+                </svg>
+
                 <!-- 播放列表按钮 -->
                 <svg
                     t="1668787624519"
@@ -1288,6 +1316,33 @@ const toggleDjSub = async isSubscribe => {
 
         &:hover {
             transform: scale(1.05);
+        }
+    }
+
+    .desktop-lyric-btn {
+        cursor: pointer;
+        opacity: 0.5;
+        transition: all 0.2s ease;
+
+        path {
+            fill: #8a8a8a;
+        }
+
+        &.active {
+            opacity: 1;
+
+            path {
+                fill: #000000;
+            }
+        }
+
+        &:hover {
+            opacity: 0.8;
+            transform: scale(1.05);
+        }
+
+        &:active {
+            transform: scale(0.95);
         }
     }
 

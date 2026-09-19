@@ -6,8 +6,11 @@
 
 - 公共搜索：歌曲、专辑、歌手、MV 四分类（无登录要求），由服务端 `/api/qq/getSearchByKey` 直连上游 `client_search_cp` 固定参数模板返回。歌单分类上游未提供，搜索页对应区块显示为空。
 - 公共专辑详情（无登录要求）：`/api/qq/getAlbumInfo` 返回专辑元数据与完整歌曲列表，搜索结果中的 QQ 专辑可点击进入专辑详情并播放。
-- 公共歌手详情（无登录要求）：`/api/qq/getSingerInfo` 聚合描述、关注数、热门歌曲（歌手名搜索 zhida）与 MV 列表；搜索歌手页可跳转歌手详情，热门歌曲可播放。歌手专辑接口上游未提供，专辑页签显示为空；MV 播放与收藏暂未开放。
-- 公共首页（无登录要求）：轮播焦点图 `/api/qq/getRecommendBanner`、最新歌曲 `/api/qq/getNewSongs`、榜单总榜 `/api/qq/getTopLists`。首页顶部提供网易云/QQ 来源切换并持久化；QQ 源下「每日推荐」个人化区块隐藏，歌单/歌手/专辑推荐区块按设计不展示，只保留轮播、新歌与排行榜。QQ 榜单详情页未开放，点击暂不跳转。
+- 公共歌手详情（无登录要求）：`/api/qq/getSingerInfo` 聚合描述、关注数、歌曲列表与 MV 列表。歌曲列表走 `musicu.fcg` 的歌手详情模块（`music.web_singer_info_svr` / `get_singer_detail_info`，按热度排序，单次上限 60 首），并回传 `total_song`/`total_album`/`total_mv` 供页头展示真实总量；旧 zhida 搜索结果仅在该接口不可用时兜底（约 10 首）。搜索歌手页可跳转歌手详情，歌曲列表可播放；MV 播放与收藏暂未开放。
+- 公共歌手歌曲分页（无登录要求）：`/api/qq/getSingerSongs`（`singermid` + `page`/`limit`，`page` 从 0 开始，`limit` 默认与上限均为 60）返回 `{ songs, totalSong }`，歌手页歌曲列表滚动到底自动请求下一页，底部同时提供「加载更多」按钮，按 `qq:` 歌曲标识去重后追加。
+- 公共歌手专辑列表（无登录要求）：`/api/qq/getSingerAlbums`（`singermid` + `page`/`limit`，`page` 从 0 开始，`limit` 默认 30、上限 100）返回 `{ albums, totalAlbum }`。上游走 `musicu.fcg` 的 `music.musichallAlbum.AlbumListServer` / `GetAlbumList`（`param.begin` 是偏移量而非页码，故服务端按 `page * limit` 换算），专辑页签滚动到底自动请求下一页，底部同时提供「加载更多」按钮，按专辑 mid 去重后追加。注意上游 `totalNum`（专辑曲目数）恒为 0，列表页据此隐藏曲目数而不是显示「0首」。
+- 公共首页（无登录要求）：轮播焦点图 `/api/qq/getRecommendBanner`、最新歌曲 `/api/qq/getNewSongs`、榜单总榜 `/api/qq/getTopLists`。首页顶部提供网易云/QQ 来源切换并持久化；QQ 源下「每日推荐」个人化区块隐藏，歌单/歌手/专辑推荐区块按设计不展示，只保留轮播、新歌与排行榜。
+- 公共榜单详情（无登录要求）：`/api/qq/getTopListDetail` 返回 QQ 排行榜详情及歌曲列表，首页点击榜单卡片跳转，共用公共歌单详情路由。
 - 登录会话状态、资料和头像。
 - 喜欢歌曲、自己创建的歌单、已收藏的歌单及歌单详情（歌曲列表）。
 - 歌曲播放地址和歌词；QQ 歌曲保留来源标识、曲绘和专辑基础展示字段。
@@ -18,9 +21,12 @@
 /getSearchByKey（公共搜索，仅 t=0/8/9/12）
 /getAlbumInfo（公共专辑详情，仅 albummid）
 /getSingerInfo（公共歌手详情聚合：singermid + 可选 name/singerid）
+/getSingerSongs（公共歌手歌曲分页：singermid + page/limit）
+/getSingerAlbums（公共歌手专辑分页：singermid + page/limit）
 /getRecommendBanner（公共首页轮播）
 /getNewSongs（公共首页新歌）
 /getTopLists（公共首页榜单）
+/getTopListDetail（公共榜单详情：仅 topId，固定分页）
 /getMusicPlay
 /getLyric
 /getSongListDetail
@@ -31,7 +37,7 @@
 /user/getUserCollectedSongLists
 ```
 
-QQ MV 详情、评论、下载、收藏或歌单写操作、VIP、好友/粉丝、勋章、听歌日历、音乐基因和不喜欢列表均明确禁用。前端适配器会返回"不支持"错误，服务端白名单也会以 `404` 拦截，避免旧调用绕过产品边界。QQ 歌曲不会触发网易云喜欢、歌单、评论或最近播放副作用。
+QQ 下载、收藏或歌单写操作、好友/粉丝、勋章、听歌日历、音乐基因和不喜欢列表均明确禁用。`/getMusicPlay` 仅按当前登录账号自身的权益取流，账号有权播放的会员曲目可正常播放，但不提供任何 VIP 特权接口。前端适配器会返回"不支持"错误，服务端白名单也会以 `404` 拦截，避免旧调用绕过产品边界。QQ 歌曲不会触发网易云喜欢、歌单、评论或最近播放副作用。
 
 QQ 扫码登录状态码：`800` 过期、`801` 等待扫码、`802` 已扫码待确认、`803` 登录成功。Cookie 仅由服务端 QQ API 进程持有，不写入 Pinia、localStorage、URL、响应体或日志。
 

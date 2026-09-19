@@ -105,13 +105,13 @@
                             <h2 class="song-name">{{ getSongDisplayName(currentSong, '', showSongTranslation) }}</h2>
                             <p class="artist-name">
                                 <template v-for="(artist, index) in currentSongArtists" :key="artist?.id || artist?.name || index">
-                                    <span class="artist-link" :class="{ clickable: canOpenArtist(artist) }" @click="openArtist(artist)">
+                                    <span class="artist-link" :class="{ clickable: canOpenArtist(artist) }" @click="openArtist(artist, currentSong)">
                                         {{ artist?.name || '' }}
                                     </span>
                                     <span v-if="index != currentSongArtists.length - 1" class="artist-separator">/</span>
                                 </template>
                             </p>
-                            <p class="album-name" :class="{ clickable: canOpenAlbum(currentSongAlbum) }" @click="openAlbum(currentSongAlbum)">
+                            <p class="album-name" :class="{ clickable: canOpenAlbum(currentSongAlbum) }" @click="openAlbum(currentSongAlbum, currentSong)">
                                 {{ getFmSongAlbumName(currentSong) }}
                             </p>
                         </div>
@@ -187,6 +187,7 @@ import { getSongDisplayName } from '../utils/songName'
 import { getPrefetchedSongAssets, hydrateRemoteSongMetadata, prefetchSongAssetList } from '../utils/player/assetPrefetch'
 import { createEmptyLyric } from '../utils/player/lyricPayload'
 import { getSongCoverUrl, withCoverParam } from '../utils/coverBackdrop'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 
 const router = useRouter()
 const playerStore = usePlayerStore()
@@ -354,18 +355,16 @@ function canOpenAlbum(album) {
     return !!getAlbumId(album)
 }
 
-function openArtist(artist) {
-    const artistId = getArtistId(artist)
-    if (!artistId) return
-    playerStore.forbidLastRouter = true
-    router.push('/mymusic/artist/' + artistId)
+function openArtist(artist, song) {
+    openArtistRoute(router, artist, { song, playerStore, source: song?.source })
 }
 
-function openAlbum(album) {
+function openAlbum(album, song) {
     const albumId = getAlbumId(album)
     if (!albumId) return
     playerStore.forbidLastRouter = true
-    router.push('/mymusic/album/' + albumId)
+    if (song?.source === 'qq') router.push({ path: '/mymusic/album/' + albumId, query: { source: 'qq' } })
+    else router.push('/mymusic/album/' + albumId)
 }
 
 function normalizeFmSong(song) {

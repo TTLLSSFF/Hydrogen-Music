@@ -1,18 +1,27 @@
 <script setup>
   import { formatTime } from '../utils/time'
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
+  import { noticeOpen } from '../utils/dialog'
 
   const props = defineProps(['mvlist'])
   //MV日期
   const publishTime = time => formatTime(time, "YYYY-MM-DD")
+
+  const checkMV = (item) => {
+    if (normalizeMusicSource(item?.source) === 'qq') {
+      noticeOpen('QQ 音乐暂不支持播放 MV', 2)
+      return
+    }
+  }
 </script>
 
 <template>
   <div class="library-content">
     <div class="library-mv-list">
-        <div class="list-item" v-for="(item, index) in props.mvlist" :key="item.id || index">
+        <div class="list-item" @click="checkMV(item)" v-for="(item, index) in props.mvlist" :key="item.id || index">
             <div class="item-title">
                 <div class="item-img">
-                    <img v-lazy :src="item.imgurl + '?param=176y99'" alt="">
+                    <img v-lazy :src="(item.imgurl || item.picUrl) + '?param=176y99'" alt="">
                 </div>
                 <span class="item-name">{{item.name}}</span>
             </div>

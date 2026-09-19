@@ -21,13 +21,14 @@ import { useLibraryStore } from '../store/libraryStore';
 import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
 import { canAccessQQMyMusic, canUseSongAction, findProviderPlaylist, isQQSong } from '../utils/providerPolicy.mjs';
-import { getSongIdentity } from '../utils/musicSource.mjs';
+import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs';
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
 
 const playerStore = usePlayerStore();
 const libraryStore = useLibraryStore();
 const otherStore = useOtherStore();
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
-const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration } = storeToRefs(libraryStore);
+const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration, qqSingerSongsHasMore, qqSingerSongsLoading, qqSingerAlbumsHasMore, qqSingerAlbumsLoading } = storeToRefs(libraryStore);
 
 const router = useRouter();
 const isAlbum = ref(false);
@@ -278,6 +279,20 @@ const songSearchEmptyDescription = computed(() => {
     if (isSongSearchFailed.value) return '剩余歌曲加载失败，结果可能不完整';
     return '';
 });
+// QQ 歌手页歌曲分页：搜索态下列表是过滤结果，不做「加载更多」
+const isQQSingerSongsPaging = computed(() => isArtistTopSongRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
+const showQQSingerLoadMore = computed(() => isQQSingerSongsPaging.value && (qqSingerSongsHasMore.value || qqSingerSongsLoading.value));
+const loadMoreQQSingerSongs = () => {
+    if (!showQQSingerLoadMore.value || qqSingerSongsLoading.value) return;
+    void libraryStore.loadMoreQQSingerSongs();
+};
+// QQ 歌手页专辑分页：搜索态下列表是过滤结果，不做「加载更多」
+const isQQSingerAlbumsPaging = computed(() => isArtistAlbumRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
+const showQQSingerAlbumsLoadMore = computed(() => isQQSingerAlbumsPaging.value && (qqSingerAlbumsHasMore.value || qqSingerAlbumsLoading.value));
+const loadMoreQQSingerAlbums = () => {
+    if (!showQQSingerAlbumsLoadMore.value || qqSingerAlbumsLoading.value) return;
+    void libraryStore.loadMoreQQSingerAlbums();
+};
 
 const applyPendingScrollPolicy = async () => {
     const currentRoute = router.currentRoute.value;
@@ -526,10 +541,13 @@ const librarySub = id => {
 };
 
 //查看并跳转歌手页面
-const checkArtist = artistId => {
-    if (isQQSong(libraryInfo.value)) return;
-    router.push('/mymusic/artist/' + artistId);
-    playerStore.forbidLastRouter = true;
+const checkArtist = artist => {
+    openArtistRoute(router, artist, {
+        playerStore,
+        source: libraryInfo.value?.source,
+        name: artist?.name,
+        singerid: artist?.singerid || artist?.singerID,
+    });
 };
 const waitCurrentPlaylistHydration = async () => {
     if (normalizeRouteName(router.currentRoute.value.name) != 'playlist') return;
@@ -782,7 +800,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                     <div class="info-other">
                         <div class="introduce-author">
                             <span class="author" v-if="libraryInfo.creator">{{ libraryInfo.creator.nickname }}</span>
-                            <span class="author" @click="checkArtist(artist.id)" v-for="(artist, index) in libraryInfo.artists">
+                            <span class="author" @click="checkArtist(artist)" v-for="(artist, index) in libraryInfo.artists">
                                 {{ artist.name }}{{ index == libraryInfo.artists.length - 1 ? '' : '/' }}
                             </span>
                             <span class="author" v-if="libraryInfo.trans">{{ libraryInfo.trans }}&nbsp;&nbsp;</span>
@@ -923,15 +941,34 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :source-indexes="visibleLibrarySourceIndexes"
                         :download-selection-mode="downloadSelectionMode"
                         :selected-download-ids="selectedDownloadIds"
+                        :has-more="isQQSingerSongsPaging && qqSingerSongsHasMore"
+                        :loading-more="qqSingerSongsLoading"
                         @toggle-download-selection="toggleDownloadSelection"
+                        @load-more="loadMoreQQSingerSongs"
                         class="library-content"
                     ></LibrarySongList>
+                    <div class="library-load-more" v-if="showQQSingerLoadMore" @click="loadMoreQQSingerSongs">
+                        <span v-if="qqSingerSongsLoading">正在加载更多...</span>
+                        <span v-else>加载更多</span>
+                    </div>
                 </template>
                 <template v-else-if="artistPageType == 1">
                     <div class="library-search-empty" v-if="showSongSearchEmpty">
                         <span class="empty-title">{{ songSearchEmptyTitle }}</span>
                     </div>
-                    <LibraryAlbumList v-else id="libraryScroll" :albumlist="visibleArtistAlbums" class="library-content3"></LibraryAlbumList>
+                    <LibraryAlbumList
+                        v-else
+                        id="libraryScroll"
+                        :albumlist="visibleArtistAlbums"
+                        :has-more="isQQSingerAlbumsPaging && qqSingerAlbumsHasMore"
+                        :loading-more="qqSingerAlbumsLoading"
+                        @load-more="loadMoreQQSingerAlbums"
+                        class="library-content3"
+                    ></LibraryAlbumList>
+                    <div class="library-load-more" v-if="showQQSingerAlbumsLoadMore" @click="loadMoreQQSingerAlbums">
+                        <span v-if="qqSingerAlbumsLoading">正在加载更多...</span>
+                        <span v-else>加载更多</span>
+                    </div>
                 </template>
                 <template v-else-if="artistPageType == 2">
                     <div class="library-search-empty" v-if="showSongSearchEmpty">
@@ -1541,10 +1578,28 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
     .library-content-panel {
         flex: 1;
         min-height: 0;
+        display: flex;
+        flex-direction: column;
     }
     .library-content {
-        height: 100%;
+        flex: 1;
+        min-height: 0;
         overflow: hidden;
+    }
+    .library-load-more {
+        flex: 0 0 auto;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font: 12px SourceHanSansCN-Bold;
+        color: var(--ld-muted);
+        cursor: pointer;
+        user-select: none;
+        transition: 0.2s;
+        &:hover {
+            color: var(--ld-text);
+        }
     }
     .library-content3 {
         height: 100%;

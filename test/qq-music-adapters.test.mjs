@@ -21,6 +21,8 @@ import {
   normalizeQQSearchPayload,
   normalizeQQSearchSongs,
   normalizeQQSingerDetail,
+  normalizeQQSingerSongs,
+  normalizeQQSingerAlbums,
   normalizeQQSong,
   normalizeQQTopListDetail,
   normalizeQQTopLists,
@@ -484,6 +486,103 @@ test('QQ singer hot songs fall back to explicit song fields without the f column
   assert.equal(detail.hotSongs[0].ar[0].name, '歌手A')
 })
 
+test('QQ singer detail consumes the musicu songlist and reports upstream totals', () => {
+  const detail = normalizeQQSingerDetail({
+    desc: '歌手简介',
+    starNum: 50760177,
+    hotSongs: [{
+      id: 97773,
+      mid: '0039MnYb0qxYhV',
+      name: '晴天',
+      singer: [{ id: 4558, mid: '0025NhlN2yWrP4', name: '周杰伦' }],
+      album: { id: 8220, mid: '000MkMni19ClKG', name: '叶惠美' },
+      interval: 269,
+    }],
+    totalSong: 1012,
+    totalAlbum: 43,
+    totalMv: 808,
+    mvs: [],
+  }, { mid: '0025NhlN2yWrP4', name: '周杰伦' })
+
+  assert.equal(detail.hotSongs.length, 1)
+  assert.equal(detail.hotSongs[0].id, 97773)
+  assert.equal(detail.hotSongs[0].sourceId, '0039MnYb0qxYhV')
+  assert.equal(detail.hotSongs[0].sourceKey, 'qq:0039MnYb0qxYhV')
+  assert.equal(detail.hotSongs[0].name, '晴天')
+  assert.equal(detail.hotSongs[0].dt, 269000)
+  assert.equal(detail.hotSongs[0].al.mid, '000MkMni19ClKG')
+  assert.equal(detail.hotSongs[0].ar[0].id, '0025NhlN2yWrP4')
+  assert.equal(detail.hotSongs[0].ar[0].singerid, '4558')
+  assert.equal(detail.singer.musicSize, 1012)
+  assert.equal(detail.singer.albumSize, 43)
+  assert.equal(detail.singer.mvSize, 808)
+})
+
+test('QQ singer songs page normalizes the musicu songlist for load-more appends', () => {
+  const page = normalizeQQSingerSongs({
+    songs: [{
+      id: 97773,
+      mid: '0039MnYb0qxYhV',
+      name: '晴天',
+      singer: [{ id: 4558, mid: '0025NhlN2yWrP4', name: '周杰伦' }],
+      album: { id: 8220, mid: '000MkMni19ClKG', name: '叶惠美' },
+      interval: 269,
+    }],
+    totalSong: 1012,
+  })
+
+  assert.equal(page.songs.length, 1)
+  assert.equal(page.songs[0].sourceKey, 'qq:0039MnYb0qxYhV')
+  assert.equal(page.songs[0].name, '晴天')
+  assert.equal(page.songs[0].dt, 269000)
+  assert.equal(page.totalSong, 1012)
+})
+
+test('QQ singer songs page tolerates a missing songlist', () => {
+  const page = normalizeQQSingerSongs({})
+  assert.deepEqual(page.songs, [])
+  assert.equal(page.totalSong, 0)
+})
+
+test('QQ singer albums page normalizes the musicu albumList for load-more appends', () => {
+  const page = normalizeQQSingerAlbums({
+    albums: [{
+      albumMid: '000MkMni19ClKG',
+      albumName: '叶惠美',
+      albumTranName: 'Ye Hui Mei',
+      singerName: '周杰伦',
+      publishDate: '2003-07-31',
+      albumType: '录音室专辑',
+      // 上游 totalNum（曲目数）恒为 0
+      totalNum: 0,
+    }],
+    totalAlbum: 43,
+  })
+
+  assert.equal(page.albums.length, 1)
+  assert.equal(page.albums[0].id, '000MkMni19ClKG')
+  assert.equal(page.albums[0].mid, '000MkMni19ClKG')
+  assert.equal(page.albums[0].source, 'qq')
+  assert.equal(page.albums[0].name, '叶惠美')
+  assert.equal(page.albums[0].artists[0].name, '周杰伦')
+  assert.equal(page.albums[0].publishTime, '2003-07-31')
+  assert.equal(page.albums[0].type, '录音室专辑')
+  // size 恒 0 时列表页隐藏曲目数，而不是显示「0首」
+  assert.equal(page.albums[0].size, 0)
+  assert.equal(page.albums[0].trackCount, 0)
+  assert.equal(
+    page.albums[0].blurPicUrl,
+    'https://y.gtimg.cn/music/photo_new/T002R500x500M000000MkMni19ClKG.jpg',
+  )
+  assert.equal(page.totalAlbum, 43)
+})
+
+test('QQ singer albums page tolerates a missing albumList', () => {
+  const page = normalizeQQSingerAlbums({})
+  assert.deepEqual(page.albums, [])
+  assert.equal(page.totalAlbum, 0)
+})
+
 test('QQ song normalization keeps a stable provider-specific identity', () => {
   const song = normalizeQQSong({
     songmid: 'mid-2',
@@ -507,7 +606,7 @@ test('QQ song normalization maps upstream snake/camel aliases into playable meta
     song_id: 90210,
     song_mid: '002-song-mid',
     songName: 'Alias song',
-    singer: [{ singer_mid: 'singer-mid', singerName: 'Alias singer' }],
+    singer: [{ singer_id: 4558, singer_mid: 'singer-mid', singerName: 'Alias singer' }],
     album: { album_mid: 'album-mid', albumName: 'Alias album', picurl: 'https://example.test/album.jpg' },
     songtime: 241,
   })
@@ -516,8 +615,10 @@ test('QQ song normalization maps upstream snake/camel aliases into playable meta
     id: song.id,
     sourceId: song.sourceId,
     name: song.name,
+    artistId: song.ar[0]?.id,
     artistName: song.ar[0]?.name,
     artistMid: song.ar[0]?.mid,
+    artistSingerId: song.ar[0]?.singerid,
     albumName: song.al.name,
     cover: song.al.picUrl,
     duration: song.dt,
@@ -525,12 +626,25 @@ test('QQ song normalization maps upstream snake/camel aliases into playable meta
     id: 90210,
     sourceId: '002-song-mid',
     name: 'Alias song',
+    artistId: 'singer-mid',
     artistName: 'Alias singer',
     artistMid: 'singer-mid',
+    artistSingerId: '4558',
     albumName: 'Alias album',
     cover: 'https://example.test/album.jpg',
     duration: 241000,
   })
+})
+
+test('QQ song artist id prefers mid and stores numeric singerid separately', () => {
+  const song = normalizeQQSong({
+    songmid: 'mid-jay',
+    songname: '晴天',
+    singer: [{ id: 4558, mid: '0025NhlN2yWrP4', name: '周杰伦' }],
+  })
+  assert.equal(song.ar[0].id, '0025NhlN2yWrP4')
+  assert.equal(song.ar[0].mid, '0025NhlN2yWrP4')
+  assert.equal(song.ar[0].singerid, '4558')
 })
 
 test('QQ song normalization keeps scalar singer, song-level cover, and clock duration fields', () => {

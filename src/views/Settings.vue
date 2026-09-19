@@ -241,6 +241,7 @@ const setCustomFont = (font, option = null) => {
     const appliedFont = applyCustomFontStyle(resolvedFont, resolvedLabel)
     customFont.value = appliedFont
     customFontLabel.value = appliedFont ? resolvedLabel : ''
+    syncDesktopLyricCustomFont(appliedFont)
 }
 
 const refreshCustomFont = () => {

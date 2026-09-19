@@ -2,6 +2,7 @@
   import { useRouter } from 'vue-router';
   import { usePlayerStore } from '../store/playerStore';
   import { normalizeMusicSource } from '../utils/musicSource.mjs'
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 
   const router = useRouter()
   const playerStore = usePlayerStore()
@@ -9,14 +10,18 @@
   const checkDetail = (id, item) => {
     playerStore.forbidLastRouter = true
     const source = normalizeMusicSource(item?.source)
-    if (props.type == 'artist' && source === 'qq') {
-      // QQ 歌手详情走公共 getSingerInfo；带 name/singerid 供聚合热歌与 MV 列表使用
-      router.push({ path: '/mymusic/artist/' + id, query: { source: 'qq', name: item.name, singerid: item.singerID || item.id } })
+    if (props.type == 'artist') {
+      openArtistRoute(router, item, {
+        id,
+        playerStore,
+        source,
+        name: item?.name,
+        singerid: item?.singerid || item?.singerID,
+      })
       return
     }
     if (source === 'qq') return
     if(props.type == 'playlist') router.push({ path: '/mymusic/playlist/' + id, query: { source } })
-    if(props.type == 'artist' && source !== 'qq') router.push('/mymusic/artist/' + id)
     if(props.type == 'mv') {
       // MV 预览已移除
     }

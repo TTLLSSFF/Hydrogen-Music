@@ -8,6 +8,7 @@
   import { usePlayerStore } from '../store/playerStore';
   import { storeToRefs } from 'pinia';
   import { getSongDisplayName } from '../utils/songName';
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
 
   const router = useRouter()
   const playerStore = usePlayerStore()
@@ -62,11 +63,12 @@
     }
     await play(song)
   }
-  const checkArtist = (artistId) => {
-    // QQ 歌手详情暂未开放，阻断跳转避免误入网易云歌手页
-    if (loadedQQSource) return
-    router.push('/mymusic/artist/' + artistId)
-    playerStore.forbidLastRouter = true
+  const checkArtist = (song, singer) => {
+    openArtistRoute(router, singer, {
+      song,
+      playerStore,
+      source: loadedQQSource ? 'qq' : song?.source,
+    })
   }
 </script>
 
@@ -82,7 +84,7 @@
                 <div class="song-other">
                     <div class="song-name">{{getSongDisplayName(item, '', showSongTranslation)}}</div>
                     <div class="song-author">
-                        <span @click="checkArtist(singer.id)" v-for="(singer, index) in item.song.artists">{{singer.name}}{{index == item.song.artists.length -1 ? '' : '/'}}</span>
+                        <span @click="checkArtist(item, singer)" v-for="(singer, index) in item.song.artists">{{singer.name}}{{index == item.song.artists.length -1 ? '' : '/'}}</span>
                     </div>
                 </div>
             </div>
