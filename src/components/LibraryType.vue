@@ -20,7 +20,7 @@
   const { user } = storeToRefs(userStore)
   const libraryStore = useLibraryStore()
   const { changeLibraryList } = libraryStore
-  const { libraryList, libraryListAlbum, libraryListAritist, listType1, listType2, playlistOverviewVersion } = storeToRefs(libraryStore)
+  const { libraryList, libraryListAlbum, libraryListAritist, listType1, listType2, playlistOverviewVersion, playlistOverviewRefreshSilent } = storeToRefs(libraryStore)
 
   const typeTracker = ref(0)
   const option = ref(0)
@@ -103,7 +103,7 @@
     libraryStore.setPlaylistOverviewTrackCount(playlistId, userStore.likelist.length)
   }
 
-  async function loadUserPlaylist(requestToken, requestUserId) {
+  async function loadUserPlaylist(requestToken, requestUserId, options = {}) {
     if (!requestUserId) {
       return { created: [], subscribed: [] }
     }
@@ -116,10 +116,10 @@
     }
 
     try {
-      const listCount = await getUserPlaylistCount()
+      const listCount = await getUserPlaylistCount(options)
       if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
-      const list = await getUserPlaylist(params)
+      const list = await getUserPlaylist(params, options)
       if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
       const playlists = Array.isArray(list?.playlist) ? list.playlist : []
       const createdCount = Number(listCount?.createdPlaylistCount) || 0
@@ -182,7 +182,7 @@
     }
   }
 
-  async function refreshCurrentSection() {
+  async function refreshCurrentSection(options = {}) {
     const requestUserId = getCurrentUserId()
     const requestToken = ++libraryRequestToken
 
@@ -194,7 +194,7 @@
     if (option.value == 0) {
       const qqUserId = String(qqAccountStore.user?.uin || qqAccountStore.user?.id || '')
       const [neteaseResult, qqCreated, qqSubscribed, qqLiked] = await Promise.all([
-        isLogin() ? loadUserPlaylist(requestToken, user.value?.userId) : Promise.resolve({ created: [], subscribed: [] }),
+        isLogin() ? loadUserPlaylist(requestToken, user.value?.userId, options) : Promise.resolve({ created: [], subscribed: [] }),
         qqAccountStore.loggedIn ? loadQQPlaylist(requestToken, qqUserId, false) : Promise.resolve([]),
         qqAccountStore.loggedIn ? loadQQPlaylist(requestToken, qqUserId, true) : Promise.resolve([]),
         qqAccountStore.loggedIn ? loadQQLikedPlaylist(requestToken, qqUserId) : Promise.resolve(null),
@@ -206,6 +206,7 @@
       libraryStore.playlistUserCreated = created
       libraryStore.playlistUserSub = subscribed
       libraryStore.playlistCount = { createdPlaylistCount: created.length, subPlaylistCount: subscribed.length }
+      syncFavoritePlaylistTrackCount()
       libraryList.value = typeOne.value == 0 ? created : subscribed
       listType2.value = typeOne.value == 0 ? 0 : 1
       libraryListAlbum.value = null
@@ -301,7 +302,7 @@
     version => {
       if (version === lastHandledPlaylistOverviewVersion.value) return
       if (option.value != 0) return
-      void refreshCurrentSection()
+      void refreshCurrentSection({ silent: playlistOverviewRefreshSilent.value })
     }
   )
 
@@ -310,7 +311,7 @@
     const needsUserReload = (option.value == 0 || option.value == 1) && currentUserId && lastLoadedUserId.value !== currentUserId
     const needsPlaylistOverviewReload = option.value == 0 && playlistOverviewVersion.value !== lastHandledPlaylistOverviewVersion.value
     if (needsUserReload || needsPlaylistOverviewReload) {
-      void refreshCurrentSection()
+      void refreshCurrentSection({ silent: needsPlaylistOverviewReload && playlistOverviewRefreshSilent.value })
     }
   })
 

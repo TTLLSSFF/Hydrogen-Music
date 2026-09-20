@@ -12,10 +12,12 @@ import { formatTime } from '../utils/time';
 import { playAll, addToNext } from '../utils/player/lazy';
 import { scheduleAlbumSublistCacheInvalidation, scheduleArtistSublistCacheInvalidation } from '../utils/cacheInvalidation';
 import { matchSearchText, normalizeSongFilterKeyword } from '../utils/songFilter';
+import { createSongSortOptions, sortSongEntries } from '../utils/songSort';
 import LibrarySongList from './LibrarySongList.vue';
 import LibraryAlbumList from './LibraryAlbumList.vue';
 import LibraryMVList from '../components/LibraryMVList.vue';
 import SongFilterInput from './SongFilterInput.vue';
+import SongSortControl from './SongSortControl.vue';
 import { usePlayerStore } from '../store/playerStore';
 import { useLibraryStore } from '../store/libraryStore';
 import { useOtherStore } from '../store/otherStore';
@@ -37,6 +39,7 @@ const isSongList = ref(false);
 const introduceDetailShow = ref(false);
 const introduceDetailShowDelay = ref(false);
 const songSearchKeyword = ref('');
+const songSortMode = ref('default');
 const downloadSelectionMode = ref(false);
 const selectedDownloadSongs = ref([]);
 const selectionMenuExpanded = ref(false);
@@ -208,6 +211,7 @@ const updateNavState = () => {
 };
 const resetSongSearch = () => {
     songSearchKeyword.value = '';
+    songSortMode.value = 'default';
 };
 const resetSongSearchResultScroll = async () => {
     await nextTick();
@@ -224,19 +228,36 @@ const isQQSource = computed(() => isQQSong(libraryInfo.value));
 const showSongSearch = computed(() => isPlaylistRoute.value || isAlbumRoute.value || isArtistTopSongRoute.value || isArtistAlbumRoute.value || isArtistMVRoute.value);
 const normalizedSongSearchKeyword = computed(() => normalizeSongFilterKeyword(songSearchKeyword.value));
 const hasSongSearchKeyword = computed(() => normalizedSongSearchKeyword.value !== '');
-const songFilterEntries = computed(() => {
+const songSortOptions = computed(() => createSongSortOptions(isPlaylistRoute.value ? '添加时间' : ''));
+const playlistTrackAddedAt = computed(() => {
+    const addedAtBySongId = new Map();
+    const trackIds = Array.isArray(libraryInfo.value?.trackIds) ? libraryInfo.value.trackIds : [];
+    trackIds.forEach(track => addedAtBySongId.set(String(track?.id ?? ''), track?.at));
+    return addedAtBySongId;
+});
+const sortedLibraryEntries = computed(() => {
     const songs = Array.isArray(librarySongs.value) ? librarySongs.value : [];
-    return songs
-        .map((song, sourceIndex) => ({ song, sourceIndex }))
+    const entries = songs.map((song, sourceIndex) => ({ song, sourceIndex }));
+    return sortSongEntries(entries, songSortMode.value, {
+        getTitle: entry => entry.song?.name,
+        getArtist: entry => entry.song?.ar?.map(artist => artist.name).join('/'),
+        getTime: entry => playlistTrackAddedAt.value.get(String(entry.song?.id ?? '')),
+    }).map((entry, queueIndex) => ({ ...entry, queueIndex }));
+});
+const hasChangedSongSort = computed(() => songSortMode.value != 'default'
+    && sortedLibraryEntries.value.some((entry, index) => entry.sourceIndex != index));
+const sortedLibrarySongs = computed(() => sortedLibraryEntries.value.map(entry => entry.song));
+const songFilterEntries = computed(() => {
+    return sortedLibraryEntries.value
         .filter(entry => !showSongSearch.value || !hasSongSearchKeyword.value || matchSearchText(libraryStore.getSongSearchText(entry.song, `song-${entry.sourceIndex}`), normalizedSongSearchKeyword.value));
 });
 const visibleLibrarySongs = computed(() => {
-    if (!showSongSearch.value) return Array.isArray(librarySongs.value) ? librarySongs.value : [];
+    if (!showSongSearch.value) return sortedLibrarySongs.value;
     return songFilterEntries.value.map(entry => entry.song);
 });
 const visibleLibrarySourceIndexes = computed(() => {
     if (!showSongSearch.value || !hasSongSearchKeyword.value) return null;
-    return songFilterEntries.value.map(entry => entry.sourceIndex);
+    return songFilterEntries.value.map(entry => entry.queueIndex);
 });
 const visibleArtistAlbums = computed(() => {
     const albums = Array.isArray(libraryAlbum.value) ? libraryAlbum.value : [];
@@ -554,7 +575,7 @@ const waitCurrentPlaylistHydration = async () => {
 
 const playAllSafe = async () => {
     await waitCurrentPlaylistHydration();
-    playAll(router.currentRoute.value.name || 'other', librarySongs.value || []);
+    playAll(router.currentRoute.value.name || 'other', sortedLibrarySongs.value);
 };
 
 //进入选择模式
@@ -716,7 +737,7 @@ const cancelDownloadSelection = () => {
     selectionMenuExpanded.value = false;
 };
 watch(
-    () => songSearchKeyword.value,
+    () => [songSearchKeyword.value, songSortMode.value],
     () => {
         if (!showSongSearch.value) return;
         void resetSongSearchResultScroll();
@@ -869,7 +890,11 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                 </div>
                             </template>
                             <div class="operation-search" v-if="showSongSearch">
-                                <SongFilterInput v-model="songSearchKeyword" compact show-icon placeholder="SEARCH"></SongFilterInput>
+                                <SongFilterInput v-model="songSearchKeyword" compact show-icon placeholder="SEARCH">
+                                    <template v-if="isSongList || (isSinger && artistPageType == 0)" #trailing>
+                                        <SongSortControl v-model="songSortMode" :options="songSortOptions" :changed="hasChangedSongSort"></SongSortControl>
+                                    </template>
+                                </SongFilterInput>
                             </div>
                         </div>
                     </div>
@@ -934,7 +959,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                     <LibrarySongList
                         v-else
                         :songlist="visibleLibrarySongs"
-                        :queue-songlist="hasSongSearchKeyword ? librarySongs : null"
+                        :queue-songlist="hasSongSearchKeyword || songSortMode != 'default' ? sortedLibrarySongs : null"
                         :source-indexes="visibleLibrarySourceIndexes"
                         :download-selection-mode="downloadSelectionMode"
                         :selected-download-ids="selectedDownloadIds"
@@ -1529,7 +1554,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                 }
             }
             .playall-line {
-                width: 100%;
+                flex: 1;
                 height: 0.5px;
                 background-color: var(--ld-line);
             }

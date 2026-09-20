@@ -21,10 +21,11 @@ import request from '../utils/request'
  * offset : 偏移数量，用于分页 , 如 :( 页数 -1)*30, 其中 30 为 limit 的值 , 默认为 0
  * @returns 
  */
-  export function getUserPlaylist(params) {
+  export function getUserPlaylist(params, options = {}) {
     return request({
       url: '/user/playlist',
       method: 'get',
+      suppressGlobalNotice: options.silent === true,
       params,
     });
   }
@@ -35,10 +36,11 @@ import request from '../utils/request'
  * @param {*} params 
  * @returns 
  */
-  export function getUserPlaylistCount() {
+  export function getUserPlaylistCount(options = {}) {
     return request({
       url: '/user/subcount',
       method: 'get',
+      suppressGlobalNotice: options.silent === true,
       params: {
         timestamp: new Date().getTime(),
       }
@@ -64,10 +66,11 @@ import request from '../utils/request'
  * @param {*} id 
  * @returns 
  */
- export function getLikelist(id) {
+ export function getLikelist(id, options = {}) {
     return request({
       url: '/likelist',
       method: 'get',
+      suppressGlobalNotice: options.silent === true,
       params: {
         id: id,
         timestamp: new Date().getTime(),

@@ -6,6 +6,7 @@ import SearchInput from './components/SearchInput.vue';
 import MusicWidget from './components/MusicWidget.vue';
 import AudioVisualizer from './components/AudioVisualizer.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
+import { usePlaylistSync } from './composables/usePlaylistSync';
 import { initKeyboardShortcuts, destroyKeyboardShortcuts } from './utils/keyboardShortcuts';
 import { initAppUpdateCheck } from './utils/appUpdate';
 
@@ -21,6 +22,7 @@ const Update = defineAsyncComponent(() => import('./components/Update.vue'));
 
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
+usePlaylistSync();
 
 // 音频可视化只在播放页（非挂件态）且有播放实例时显示
 const visualizerActive = computed(() => {

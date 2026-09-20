@@ -22,12 +22,13 @@ import { schedulePlaylistCacheInvalidation } from './cacheInvalidation'
 import { PLAYBACK_TICK_FAST_INTERVAL_MS, subscribePlaybackTick } from './player/playbackTicker'
 import { initPlayerExternalBridge as initExternalBridge } from './player/externalBridge'
 import { loadStoredPlaylist, persistPlaylistBeforeExit, saveStoredPlaybackProgress, saveStoredPlaylist } from './player/playlistPersistence'
-import { createShuffledList } from './player/queue'
+import { createNextShuffledCycle, createShuffledList, haveSameSongIds } from './player/queue'
 import { normalizeQueueSong, normalizeQueueSongs } from './player/queueSong'
 import { getPrefetchedSongAssets, getSongAssetKey, prefetchSongAssets } from './player/assetPrefetch'
 import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong } from './player/lyricFallback'
 import { createDecodedAudioPlayer } from './player/webAudioGapless'
 import { ensureAudioCrossOrigin, normalizeAudioUrl } from './player/audioPlaybackCompat'
+import { resolveActivatedPlaybackPosition } from './player/activationProgress.mjs'
 import { runIdleTask } from './player/idleTask'
 import { createEmptyLyric, hasUsableLyricPayload } from './player/lyricPayload'
 import { preparePlayAllSongs } from './player/playAllGuard.mjs'
@@ -425,6 +426,40 @@ function getActivePlaybackQueue() {
     }
 }
 
+let pendingShuffledCycle = null
+let pendingShuffledCycleSignature = ''
+
+function getShuffleCycleSignature() {
+    const sourceList = Array.isArray(songList.value) ? songList.value : []
+    return JSON.stringify(sourceList.map(song => normalizePlayerSongId(song?.id)))
+}
+
+function clearPendingShuffledCycle() {
+    pendingShuffledCycle = null
+    pendingShuffledCycleSignature = ''
+}
+
+function getNextShuffledCycle() {
+    const sourceList = Array.isArray(songList.value) ? songList.value : []
+    const signature = getShuffleCycleSignature()
+    if (pendingShuffledCycle && pendingShuffledCycleSignature === signature) return pendingShuffledCycle
+
+    const nextCycle = createNextShuffledCycle(sourceList, shuffledList.value, {
+        currentSongId: songId.value,
+    })
+
+    pendingShuffledCycle = nextCycle
+    pendingShuffledCycleSignature = signature
+    return pendingShuffledCycle
+}
+
+function commitNextShuffledCycle(nextCycle) {
+    if (!Array.isArray(nextCycle)) return
+    shuffledList.value = nextCycle
+    shuffleIndex.value = 0
+    clearPendingShuffledCycle()
+}
+
 function getPlaybackTarget(direction = PLAYBACK_DIRECTION_NEXT, options = {}) {
     if (isPersonalFMContext()) return null
 
@@ -432,6 +467,18 @@ function getPlaybackTarget(direction = PLAYBACK_DIRECTION_NEXT, options = {}) {
     if (list.length === 0) return null
     if (options.skipSingleCurrent && list.length === 1 && String(list[0]?.id || '') === String(songId.value || '')) return null
     if (options.stopAtSequentialEnd && !isShuffleMode && playMode.value == 0 && direction > 0 && activeIndex >= list.length - 1) return null
+
+    if (isShuffleMode && direction > 0 && activeIndex >= list.length - 1) {
+        const nextCycle = getNextShuffledCycle()
+        const targetSong = nextCycle[0] || null
+        if (!targetSong) return null
+        return {
+            song: targetSong,
+            id: targetSong.id,
+            index: 0,
+            nextShuffledList: nextCycle,
+        }
+    }
 
     const step = direction < 0 ? -1 : 1
     let targetIndex = activeIndex + step
@@ -904,21 +951,30 @@ function hydrateSongAssets(song, targetSongId, options = {}) {
     return loadRemoteLyricForSong(song, targetSongId, options.emptyFallback === true)
 }
 
-function resetSongSwitchState() {
+function resetSongSwitchPosition() {
     loadLast = false
     progress.value = 0
     time.value = 0
-    try { localBase64Img.value = null } catch (_) {}
     try {
         window.dispatchEvent(new CustomEvent('mediaSession:seeked', {
-            detail: { duration: 0, toTime: 0 }
+            detail: { duration: 0, toTime: 0, reason: 'song-switch' }
         }))
     } catch (_) {}
+}
+
+function resetSongSwitchState() {
+    resetSongSwitchPosition()
+    try { localBase64Img.value = null } catch (_) {}
 
     if (lyricShow.value) {
         lyricShow.value = false
         playerChangeSong.value = true
     }
+}
+
+export function prepareResolvedPlaybackSongSwitch() {
+    stopProgressSampling()
+    resetSongSwitchPosition()
 }
 
 watch(
@@ -1032,8 +1088,14 @@ export function loadLastSong() {
             if (list) {
                 const restoredSongList = normalizeQueueSongs(list.songList)
                 const restoredSelection = resolveRestoredSongSelection(list, restoredSongList)
+                const restoredShuffledList = normalizeQueueSongs(list.shuffledList)
                 songList.value = restoredSongList.length > 0 ? restoredSongList : null
-                shuffledList.value = normalizeQueueSongs(list.shuffledList)
+                shuffledList.value = playMode.value == 3 && !haveSameSongIds(restoredSongList, restoredShuffledList)
+                    ? createShuffledList(restoredSongList, {
+                        currentSongId: restoredSelection?.song?.id,
+                        currentSong: restoredSelection?.song,
+                    })
+                    : restoredShuffledList
 
                 if (restoredSelection) {
                     currentIndex.value = restoredSelection.index
@@ -1563,15 +1625,16 @@ function syncActivatedHowlAfterLoad(nextHowl, normalizedSeek, autoplay) {
     const loadedDuration = getStablePlaybackDuration(nextHowl, getCurrentSong())
     time.value = loadedDuration
     updateCurrentSongDurationFromHowl()
-    let targetSeek = null
-
-    if (normalizedSeek !== null) {
-        targetSeek = clampPlaybackProgress(normalizedSeek, loadedDuration)
-        loadLast = false
-    } else if (loadLast && !autoplay) {
-        targetSeek = clampPlaybackProgress(progress.value || 0, loadedDuration)
-        loadLast = false
-    }
+    const shouldRestoreStoredProgress = normalizedSeek === null && loadLast && !autoplay
+    const activatedPosition = resolveActivatedPlaybackPosition({
+        resumeSeek: normalizedSeek,
+        restoreStoredProgress: shouldRestoreStoredProgress,
+        storedProgress: progress.value,
+        playbackProgress: nextHowl.seek?.(),
+        duration: loadedDuration,
+    })
+    const targetSeek = activatedPosition.shouldSeekPlayback ? activatedPosition.progress : null
+    if (shouldRestoreStoredProgress || normalizedSeek !== null) loadLast = false
 
     if (targetSeek !== null && !Number.isNaN(targetSeek)) {
         nextHowl.volume(0)
@@ -1712,7 +1775,9 @@ function applyGaplessTargetState(target) {
         return
     }
 
+    if (target.nextShuffledList) commitNextShuffledCycle(target.nextShuffledList)
     setId(target.id, target.index)
+    if (target.nextShuffledList) savePlaylist()
 }
 
 function dispatchGaplessTargetStarted(target) {
@@ -1765,6 +1830,7 @@ function getGaplessStartTarget(entry) {
         song: candidate.song,
         id: candidate.id,
         index: candidate.index,
+        nextShuffledList: candidate.nextShuffledList,
         isPersonalFm: false,
     }
 }
@@ -2062,6 +2128,7 @@ export function addToList(listType, songlist, listMeta = null, options = {}) {
         type: listType
     }
     songList.value = normalizedSongList.slice(0, normalizedSongList.length + 1)
+    clearPendingShuffledCycle()
     syncWindowsTaskbarPlaybackState()
     if (options.persist !== false) savePlaylist()
 }
@@ -2108,6 +2175,7 @@ export function addLocalMusicTOList(listType, localMusicList, playId, playIndex)
     }
 
     songList.value = localMusicHandle(localMusicList, false)
+    clearPendingShuffledCycle()
     syncWindowsTaskbarPlaybackState()
     addSong(playId, playIndex, true, true)
     savePlaylist()
@@ -2446,7 +2514,9 @@ export function playNext() {
 
     const target = getPlaybackTarget(PLAYBACK_DIRECTION_NEXT)
     if (!target) return
+    if (target.nextShuffledList) commitNextShuffledCycle(target.nextShuffledList)
     addSong(target.id, target.index, true)
+    if (target.nextShuffledList) savePlaylist()
 }
 const clearLycAnimation = () => {
     isLyricDelay.value = false
@@ -2827,6 +2897,7 @@ async function startIntelligencePlayback(options = {}) {
 }
 
 export function setShuffledList(isplayAll) {
+    clearPendingShuffledCycle()
     shuffledList.value = createShuffledList(songList.value, {
         isPlayAll: isplayAll,
         currentSongId: songId.value,
@@ -3256,6 +3327,7 @@ export function addToNext(nextSong, autoplay) {
 
     const normalizedNextSong = normalizeQueueSong(nextSong)
     if (!normalizedNextSong || !normalizedNextSong.id) return
+    clearPendingShuffledCycle()
     if (!songList.value) songList.value = []
     const nextSongIdentity = getQueueSongIdentity(normalizedNextSong)
     const currentSongIdentity = getQueueSongIdentity(getCurrentSong())

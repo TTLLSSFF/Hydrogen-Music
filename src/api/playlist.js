@@ -32,10 +32,11 @@ export function getTopList() {
  * 接口获取所有歌曲的详情。
  * @returns 
  */
-export function getPlaylistDetail(params) {
+export function getPlaylistDetail(params, options = {}) {
     return request({
       url: '/playlist/detail',
       method: 'get',
+      suppressGlobalNotice: options.silent === true,
       params,
     });
 }
@@ -48,10 +49,11 @@ export function getPlaylistDetail(params) {
  * @param {*} params 
  * @returns 
  */
-export function getPlaylistAll(params) {
+export function getPlaylistAll(params, options = {}) {
     return request({
       url: '/playlist/track/all',
       method: 'get',
+      suppressGlobalNotice: options.silent === true,
       params,
     });
 }
@@ -138,10 +140,11 @@ export function subPlaylist(params) {
  * @param {*} params 
  * @returns 
  */
-export function playlistDynamic(id) {
+export function playlistDynamic(id, options = {}) {
     return request({
       url: '/playlist/detail/dynamic',
       method: 'get',
+      suppressGlobalNotice: options.silent === true,
       params: {
         id: id,
         timestamp: new Date().getTime(),
@@ -178,23 +181,6 @@ export function updatePlaylist(params) {
       url: '/playlist/tracks',
       method: 'post',
       params,
-    });
-}
-
-/**
- * 说明 : 调用此接口 , 可获取心动模式播放列表
- * 必选参数 : id : 歌曲 id, pid : 歌单 id
- * @param {*} params
- * @returns
- */
-export function getIntelligenceList(params) {
-    return request({
-      url: '/playmode/intelligence/list',
-      method: 'get',
-      params: {
-        ...params,
-        timestamp: new Date().getTime(),
-      }
     });
 }
 
