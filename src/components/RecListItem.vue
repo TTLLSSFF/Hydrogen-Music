@@ -1,14 +1,28 @@
 <script setup>
-  import { onActivated, ref } from 'vue'
+  import { computed, onActivated, ref, watch } from 'vue'
   import { useRouter } from 'vue-router';
   import { getNewAlbum } from '../api/album';
   import { getRecommendedArtists } from '../api/artist';
   import { getRecommendedSongList, getTopList } from '../api/playlist'
+  import {
+    getQQPlaylistTags,
+    getQQPlaylistsByTag,
+    getQQDigitalAlbumLists,
+    getQQPersonalRecommend,
+    getQQTopLists,
+    normalizeQQTagList,
+    normalizeQQPlaylistCard,
+    normalizeQQRecommendCards,
+    normalizeQQDigitalAlbumCard,
+    normalizeQQTopLists,
+  } from '../api/qqMusic';
+  import { useOtherStore } from '../store/otherStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { usePlayerStore } from '../store/playerStore';
   import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
   const libraryStore = useLibraryStore()
   const playerStore = usePlayerStore()
+  const otherStore = useOtherStore()
   const router = useRouter()
   //0为歌单,1为歌手,2为专辑,3为排行榜
   const props = defineProps(['recType'])
@@ -16,15 +30,30 @@
   const recTitle = ref('')
   const recTitleEN = ref('')
   const recommendationList = ref([{}])
+  // QQ 来源下的空态（未登录 / 上游不可用 / 无数据）
+  const qqEmpty = ref(false)
   let recommendationLoaded = false
+  let loadedQQSource = false
+  const isQQSource = computed(() => otherStore.searchSource === 'qq')
+  // 分类歌单的默认热门标签：标签接口不可用时用它兜底
+  const QQ_DEFAULT_PLAYLIST_TAG_ID = '1'
 
   onActivated(() => {
-    if (recommendationLoaded && Array.isArray(recommendationList.value) && recommendationList.value.length > 0) return
+    const qqSource = isQQSource.value
+    if (recommendationLoaded && loadedQQSource === qqSource && Array.isArray(recommendationList.value) && recommendationList.value.length > 0) return
     /**
      * 第一个参数为推荐歌手的国家,第二个为推荐歌单请求数量，第三个为最新专辑的国家，
      * 最后为当前列表的类型
      */
     loadData(1, 10, 'all', recType.value)
+  })
+
+  // 切换平台来源后必须重新加载，否则会继续显示上一个来源的推荐内容
+  watch(() => otherStore.searchSource, () => {
+    recommendationLoaded = false
+    qqEmpty.value = false
+    recommendationList.value = [{}]
+    void loadData(1, 10, 'all', recType.value)
   })
   //设置标题
   const setTitle = (cn, en) => {
@@ -44,8 +73,53 @@
     });
   }
 
+  // QQ 各 recType 的数据源映射：0 推荐歌单 / 1 个性化推荐 / 2 新碟 / 3 排行榜
+  async function loadQQData(limit, recType) {
+    const size = Math.max(1, Number(limit) || 10)
+    try {
+        if(recType == 0) {
+            setTitle("推荐歌单", "RECOMMENDED SONG LIST")
+            // 标签接口不可用时退回默认热门标签，不因标签失败而丢掉整个区块
+            let tagId = QQ_DEFAULT_PLAYLIST_TAG_ID
+            try {
+                const tags = normalizeQQTagList(await getQQPlaylistTags())
+                const hotTag = tags.find(tag => /热门|推荐/.test(tag.name)) || tags[0]
+                if (hotTag?.id) tagId = hotTag.id
+            } catch (_) {}
+            const payload = await getQQPlaylistsByTag({ tagId, page: 0, limit: 20 })
+            recommendationList.value = normalizeQQPlaylistCard(payload).slice(0, size)
+        } else if(recType == 1) {
+            setTitle("个性化推荐", "PERSONAL RECOMMEND")
+            // 上游返回的是推荐歌单卡片，归一化后与推荐歌单共用同一套卡片契约
+            recommendationList.value = normalizeQQRecommendCards(await getQQPersonalRecommend()).slice(0, size)
+        } else if(recType == 2) {
+            setTitle("最新专辑", "NEWEST ALBUM")
+            recommendationList.value = normalizeQQDigitalAlbumCard(await getQQDigitalAlbumLists()).slice(0, size)
+        } else if(recType == 3) {
+            setTitle("排行榜", "TOP LIST")
+            recommendationList.value = normalizeQQTopLists(await getQQTopLists())
+                .slice(0, size)
+                .map(list => ({
+                    ...list,
+                    updateFrequency: list.listenCount > 0 ? `热度 ${list.listenCount}` : '',
+                }))
+        }
+    } catch (_) {
+        // 未登录（401）或上游不可用时只显示空态，绝不把异常抛进渲染
+        recommendationList.value = []
+    }
+    qqEmpty.value = recommendationList.value.length === 0
+  }
+
   //加载数据
   async function loadData(artistNation,limit,albumNation,recType) {
+    if (isQQSource.value) {
+        await loadQQData(limit, recType)
+        recommendationLoaded = true
+        loadedQQSource = true
+        return
+    }
+    qqEmpty.value = false
     if(recType == 0) {
         const listData = await getRecommendedSongList(limit)
         recommendationList.value = listData.result
@@ -71,10 +145,41 @@
         });;
     }
     recommendationLoaded = true
+    loadedQQSource = false
     // console.log(recommendationList.value)
   }
 
+  // QQ 推荐歌单的「更多」入口：进入 QQ 专属分类歌单页
+  const moreQQPlaylists = () => {
+    router.push({ name: 'qqPlaylistCategory' })
+  }
+
   const checkDetail = (id, item) => {
+    if (loadedQQSource) {
+      if (props.recType == 3) {
+        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq', type: 'toplist' } })
+        playerStore.forbidLastRouter = true
+        return
+      }
+      if (props.recType == 0) {
+        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq' } })
+        playerStore.forbidLastRouter = true
+        return
+      }
+      if (props.recType == 2) {
+        router.push({ path: `/mymusic/album/${id}`, query: { source: 'qq' } })
+        playerStore.forbidLastRouter = true
+        return
+      }
+      // QQ 的 recType 1 是「个性化推荐歌单」，与 recType 0 一样跳 QQ 歌单详情
+      if (props.recType == 1) {
+        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq' } })
+        playerStore.forbidLastRouter = true
+        return
+      }
+      playerStore.forbidLastRouter = true
+      return
+    }
     if (props.recType == 1) {
       openArtistRoute(router, item || { id }, {
         id,
@@ -94,7 +199,7 @@
   const checkArtist = (artist) => {
     openArtistRoute(router, artist, {
       playerStore,
-      source: artist?.source,
+      source: loadedQQSource ? 'qq' : artist?.source,
     })
   }
 </script>
@@ -105,16 +210,17 @@
         <div class="header">
             <div class="header-title-en">{{recTitleEN}}</div>
             <div class="line"></div>
-            <!-- <div class="header-more">查看更多</div> -->
+            <div class="header-more" v-if="isQQSource && recType == 0" @click="moreQQPlaylists">更多</div>
         </div>
         <div class="header-title-cn">{{recTitle}}</div>
     </div>
-    <div class="item-list">
+    <div class="item-empty" v-if="qqEmpty">{{ recType == 1 ? '登录 QQ 音乐后可查看个性化推荐' : '暂无 QQ 音乐数据' }}</div>
+    <div class="item-list" v-else>
         <div class="item" v-for="(item,index) in recommendationList">
-            <div class="item-img" :class="recType == 1 ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id, item)">
+            <div class="item-img" :class="(recType == 1 && !isQQSource) ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id, item)">
                 <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl) + '?param=450y450'" alt="">
             </div>
-            <div class="item-name" :class="{'item-name-center': recType == 1}">{{item.name}}</div>
+            <div class="item-name" :class="{'item-name-center': recType == 1 && !isQQSource}">{{item.name}}</div>
             <div class="item-sub" @click="checkArtist(item.artist)" v-if="item.artist">{{ item.artist.name }}</div>
             <div class="item-sub" v-else>{{ item.updateFrequency}}</div>
         </div>
@@ -163,6 +269,14 @@
             line-height: 2.5vw;
             color: black;
         }
+    }
+    // QQ 来源下的空态文案（未登录 / 上游不可用 / 无数据）
+    .item-empty{
+        margin-top: 13px;
+        padding: 18px 0;
+        text-align: left;
+        font: 1.4vw SourceHanSansCN-Bold;
+        color: rgb(109, 109, 109);
     }
     .item-list{
         margin-top: 13px;

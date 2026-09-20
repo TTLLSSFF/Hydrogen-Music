@@ -12,6 +12,7 @@ import { qqAccountStore } from '@/store/qqAccountStore'
 import { clearQQPlaybackState } from '@/utils/player/lazy'
 import Selector from '../components/Selector.vue'
 import FontSelector from '../components/FontSelector.vue'
+import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue'
 import { checkForUpdates as runAppUpdateCheck } from '@/utils/appUpdate'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout } from '@/utils/accountSession'
@@ -502,6 +503,12 @@ const clearFmRecent = () => {
                     <h2 class="item-title">其他</h2>
                     <div class="line"></div>
                     <div class="item-options">
+                        <div class="option">
+                            <div class="option-name">平台来源</div>
+                            <div class="option-operation">
+                                <PlatformSourceSwitch variant="toggle"></PlatformSourceSwitch>
+                            </div>
+                        </div>
                         <div class="option">
                             <div class="option-name">主题</div>
                             <div class="option-operation">

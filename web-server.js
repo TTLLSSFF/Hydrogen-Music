@@ -80,14 +80,24 @@ function serveStatic(req, res, distDir = DIST_DIR) {
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        // SPA 路由回退到 index.html
+        // 只有「导航请求」才回退到 index.html。构建后旧 index.html 会去请求已被
+        // 删除的带 hash 分块，如果这里对 .js 请求也返回 HTML，浏览器会把 HTML
+        // 当模块解析并抛出 SyntaxError，表现为某个路由整页空白且报错难懂。
+        // 静态资源缺失必须如实回 404。
+        const isAssetRequest = ext !== '' && ext !== '.html'
+        if (isAssetRequest) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+          res.end('Not found')
+          return
+        }
         const fallbackPath = resolveStaticPath('/index.html', distDir)
         fs.readFile(fallbackPath, (err2, content2) => {
           if (err2) {
             res.writeHead(404)
             res.end('Not found')
           } else {
-            res.writeHead(200, { 'Content-Type': 'text/html' })
+            // index.html 必须每次校验，否则重建后浏览器仍拿旧分块哈希。
+            res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache' })
             res.end(content2)
           }
         })
@@ -98,7 +108,12 @@ function serveStatic(req, res, distDir = DIST_DIR) {
       }
       return
     }
-    res.writeHead(200, { 'Content-Type': contentType })
+    // 带 hash 的静态资源可以长期缓存；index.html 永远不缓存（见上）。
+    const isHashedAsset = /-[A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(filePath)
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      ...(isHashedAsset ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : { 'Cache-Control': 'no-cache' }),
+    })
     res.end(content)
   })
 }

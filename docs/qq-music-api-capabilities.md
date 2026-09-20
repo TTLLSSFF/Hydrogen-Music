@@ -9,11 +9,16 @@
 - 公共歌手详情（无登录要求）：`/api/qq/getSingerInfo` 聚合描述、关注数、歌曲列表与 MV 列表。歌曲列表走 `musicu.fcg` 的歌手详情模块（`music.web_singer_info_svr` / `get_singer_detail_info`，按热度排序，单次上限 60 首），并回传 `total_song`/`total_album`/`total_mv` 供页头展示真实总量；旧 zhida 搜索结果仅在该接口不可用时兜底（约 10 首）。搜索歌手页可跳转歌手详情，歌曲列表可播放；MV 播放与收藏暂未开放。
 - 公共歌手歌曲分页（无登录要求）：`/api/qq/getSingerSongs`（`singermid` + `page`/`limit`，`page` 从 0 开始，`limit` 默认与上限均为 60）返回 `{ songs, totalSong }`，歌手页歌曲列表滚动到底自动请求下一页，按 `qq:` 歌曲标识去重后追加。
 - 公共歌手专辑列表（无登录要求）：`/api/qq/getSingerAlbums`（`singermid` + `page`/`limit`，`page` 从 0 开始，`limit` 默认 30、上限 100）返回 `{ albums, totalAlbum }`。上游走 `musicu.fcg` 的 `music.musichallAlbum.AlbumListServer` / `GetAlbumList`（`param.begin` 是偏移量而非页码，故服务端按 `page * limit` 换算），专辑页签滚动到底自动请求下一页，按专辑 mid 去重后追加。注意上游 `totalNum`（专辑曲目数）恒为 0，列表页据此隐藏曲目数而不是显示「0首」。
+- 公共首页推荐（无登录要求）：`/api/qq/getRecommendBanner`（轮播焦点图）、`/api/qq/getNewSongs`（最新歌曲）、`/api/qq/getTopLists`（榜单总榜）均为无参 `GET`；`/api/qq/getTopListDetail`（`topId` 仅数字，`page`/`limit` 固定 0/100）返回榜单详情，上游走 `musicu.fcg` 的 `musicToplist.ToplistInfoServer` / `GetDetail`，`period` 按 ISO 周计算。
+- 公共分类歌单（无登录要求）：`/api/qq/getPlaylistTags`（无参，返回分类标签）与 `/api/qq/getPlaylistsByTag`（`tagId` 纯数字 + `page`/`limit`，`page` 从 0 开始，`limit` 默认 20、上限 30；可选 `sortId` 1-5）。依赖包的 `playlist.web_srf` 模块（`get_tags` / `get_playlist_by_tag`）在上游已失效（稳定返回 `500003`/`860100005`），故服务端改用与真实 y.qq.com 歌单分类页一致的旧版 `c.y.qq.com` 固定参数模板直连；该接口默认回 gb2312，服务端已显式要求 `outCharset=utf-8`。
+- 公共数字专辑/新碟（无登录要求）：`/api/qq/getDigitalAlbums`（无参 `GET`），上游为 `musicmall.fcg`，真实数据位于 `data.content[].albumlist[]` 分组内。
+- 公共评论（无登录要求，只读）：`/api/qq/getComments`（`id` 为**数字歌曲 id**，即 `topid`，songmid 不被接受；`type` 仅 1/2/3；`page`/`pagesize`，`pagesize` 默认 20、上限 30；可选 `sortType` 1/2）。依赖包的 `comment.CommentReadServer` 模块同样已失效，服务端改用旧版 `c.y.qq.com` 评论接口，一次响应同时含 `comment.commentlist`（最新）与 `hot_comment.commentlist`（热门）。
+- 登录后个性化推荐：`/api/qq/getPersonalRecommend`。依赖包使用的 `music.web_srf_svr` / `get_recommend` 模块在上游已失效（稳定返回 `500003`/`860100005`），服务端改用仍可用的 `music.recommend.RecommendFeed` / `get_recommend_feed`，返回推荐**歌单**卡片（`v_shelf[].v_niche[].v_card[]`，`type=500`，`id` 即 dissid），前端归一化后复用现有 QQ 歌单详情链路。需要登录会话，无会话时服务端返回 `401`。QQ 侧没有可用的「每日歌曲列表」接口，首页每日推荐卡片因此指向个性化推荐歌单。
 - 登录会话状态、资料和头像。
 - 喜欢歌曲、自己创建的歌单、已收藏的歌单及歌单详情（歌曲列表）。
 - 歌曲播放地址和歌词；QQ 歌曲保留来源标识、曲绘和专辑基础展示字段。
 
-服务端 `/api/qq/*` 只放行以下上游路径（均为 `GET`，登录与退出使用专用会话路由）：
+服务端 `/api/qq/*` 只放行以下上游路径（除写操作探针外均为 `GET`，登录与退出使用专用会话路由）：
 
 ```text
 /getSearchByKey（公共搜索，仅 t=0/8/9/12）
@@ -21,6 +26,12 @@
 /getSingerInfo（公共歌手详情聚合：singermid + 可选 name/singerid）
 /getSingerSongs（公共歌手歌曲分页：singermid + page/limit）
 /getSingerAlbums（公共歌手专辑分页：singermid + page/limit）
+/getRecommendBanner / getNewSongs / getTopLists（公共首页，无参）
+/getTopListDetail（公共榜单详情，仅数字 topId）
+/getPlaylistTags / getPlaylistsByTag（公共分类歌单，旧版 c.y.qq.com 模板）
+/getDigitalAlbums（公共新碟）
+/getComments（公共评论，只读，topid 为数字歌曲 id）
+/getPersonalRecommend（需登录，RecommendFeed 歌单卡片）
 /getMusicPlay
 /getLyric
 /getSongListDetail
@@ -30,6 +41,8 @@
 /user/getUserPlaylists
 /user/getUserCollectedSongLists
 ```
+
+写操作探针（`/user/likeSong`、`/user/addSongList`、`/user/delSongList`）默认 **404**，仅在服务端以 `QQ_WRITE_SPIKE=1` 启动时放行且只接受 `POST`。它用于验证旧版未签名 `musicu.fcg` 的 `music.musicasset.PlaylistDetailWrite`（`AddSonglist` / `DelSonglist`，`dirId=201` 表示「我喜欢」）是否仍然可用，响应只回 `{ ok, code, message }`，不暴露任何上游原始数据或凭证。验证通过前不会接入任何 UI。
 
 QQ 下载、收藏或歌单写操作、好友/粉丝、勋章、听歌日历、音乐基因和不喜欢列表均明确禁用。`/getMusicPlay` 仅按当前登录账号自身的权益取流，账号有权播放的会员曲目可正常播放，但不提供任何 VIP 特权接口。前端适配器会返回"不支持"错误，服务端白名单也会以 `404` 拦截，避免旧调用绕过产品边界。QQ 歌曲不会触发网易云喜欢、歌单、评论或最近播放副作用。
 

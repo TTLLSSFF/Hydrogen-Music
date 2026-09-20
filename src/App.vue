@@ -1,10 +1,12 @@
 <script setup>
 import { defineAsyncComponent, computed, onMounted, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 import Home from './views/Home.vue';
 import Title from './components/Title.vue';
 import SearchInput from './components/SearchInput.vue';
 import MusicWidget from './components/MusicWidget.vue';
 import AudioVisualizer from './components/AudioVisualizer.vue';
+import PlatformSourceSwitch from './components/PlatformSourceSwitch.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
 import { usePlaylistSync } from './composables/usePlaylistSync';
 import { initKeyboardShortcuts, destroyKeyboardShortcuts } from './utils/keyboardShortcuts';
@@ -23,6 +25,13 @@ const Update = defineAsyncComponent(() => import('./components/Update.vue'));
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
 usePlaylistSync();
+
+// 平台来源开关跟随全局搜索框，只在首页与搜索页出现
+const router = useRouter();
+const showPlatformSwitch = computed(() => {
+    const name = String(router.currentRoute.value.name || '');
+    return name === 'homepage' || name === 'search';
+});
 
 // 音频可视化只在播放页（非挂件态）且有播放实例时显示
 const visualizerActive = computed(() => {
@@ -73,6 +82,7 @@ onUnmounted(() => {
         <div class="widget-search">
             <SearchInput></SearchInput>
         </div>
+        <PlatformSourceSwitch v-if="showPlatformSwitch" variant="menu" class="widget-source-switch"></PlatformSourceSwitch>
     </div>
     <div class="web-fullscreen" @click="toggleFullscreen()">
         <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
@@ -173,11 +183,21 @@ onUnmounted(() => {
         will-change: transform;
         pointer-events: auto;
     }
+    // 平台来源开关跟在搜索框右侧，与搜索框同步位移
+    .widget-source-switch {
+        margin-left: 14px;
+        flex-shrink: 0;
+        transform: translate3d(calc(-1 * var(--visualizer-shift)), 0, 0);
+        transition: transform 0.72s cubic-bezier(0.16, 1, 0.3, 1);
+        will-change: transform;
+        pointer-events: auto;
+    }
     .widget-visualizer {
         flex-shrink: 0;
     }
     &.visualizer-active {
-        .widget-search {
+        .widget-search,
+        .widget-source-switch {
             transform: translate3d(0, 0, 0);
         }
     }

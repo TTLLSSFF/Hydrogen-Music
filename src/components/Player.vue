@@ -214,10 +214,6 @@ const hasRomaLyric = computed(() => {
 const toAlbum = () => {
     const song = currentSong.value;
     if (!song) return;
-    if (isQQSong(song)) {
-        noticeOpen('QQ 音乐暂不支持专辑详情', 2);
-        return;
-    }
     // 电台节目：打开“收藏-电台”的大右侧详情界面
     if (isDjMode.value) {
         const rid = (listInfo.value && listInfo.value.id) || null;
@@ -809,19 +805,6 @@ const toggleDjSub = async isSubscribe => {
                     ></path>
                 </svg>
 
-                <svg
-                    v-show="isIntelligenceMode"
-                    @click="changePlayMode()"
-                    class="icon intelligence-mode-icon"
-                    viewBox="0 0 32 32"
-                    xmlns="http://www.w3.org/2000/svg"
-                    aria-label="心动模式"
-                >
-                    <path class="intelligence-heart" fill="none" d="M16 26.4S6.3 20.7 6.3 13.1c0-3.8 2.4-6.2 5.6-6.2 1.9 0 3.3 0.9 4.1 2.5 0.8-1.6 2.2-2.5 4.1-2.5 3.2 0 5.6 2.4 5.6 6.2 0 7.6-9.7 13.3-9.7 13.3Z" />
-                    <path class="intelligence-trace" fill="none" d="M3.5 17h6l2-4.2 3.5 8.1 3.1-6.2 2.1 4.1h6.3" />
-                    <path class="intelligence-spark" fill="none" d="M25.8 3.6v3.5M24 5.4h3.6" />
-                </svg>
-
                 <!-- 歌词/评论切换按钮：本地歌曲隐藏评论按钮 -->
                 <svg
                     v-if="showCommentPanelAction"
@@ -1250,16 +1233,6 @@ const toggleDjSub = async isSubscribe => {
             }
             &.is-intelligence-mode svg[t="1670376314067"] {
                 display: none !important;
-            }
-            .intelligence-mode-icon {
-                fill: none;
-                stroke: currentColor;
-                stroke-linecap: round;
-                stroke-linejoin: round;
-                path { fill: none !important; }
-                .intelligence-heart { stroke-width: 1.7; }
-                .intelligence-trace { stroke-width: 2; }
-                .intelligence-spark { stroke-width: 1.6; }
             }
         }
     }

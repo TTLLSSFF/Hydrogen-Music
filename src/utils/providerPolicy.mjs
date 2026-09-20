@@ -1,8 +1,11 @@
 import { normalizeMusicSource } from './musicSource.mjs'
 
+// QQ 评论读取（commentRead）已放行：服务端 `/getComments` 为公共只读端点。
+// 写入类动作仍全部阻止——上游没有写接口，点赞/回复/发评论一律降级提示。
 const QQ_BLOCKED_SONG_ACTIONS = new Set([
   'like',
-  'comment',
+  'commentWrite',
+  'commentLike',
   'download',
   'collect',
   'playlistMutation',
@@ -45,10 +48,19 @@ export function findProviderPlaylist(playlists, playlistId, provider = 'netease'
     .find(playlist => String(playlist.id) === normalizedId) || null
 }
 
-// QQ 公共搜索开放后，搜索来源由搜索页/路由显式传入并归一化；
-// 缺省仍为网易云。来源不持久化，也不强制跟随首页来源。
+// 平台来源（首页/搜索页/设置页共用同一份状态）统一经此归一化；
+// 非法或缺省值一律回退网易云。持久化由 otherStore 的 persist 负责。
 export function getSearchSource(value) {
   return normalizeMusicSource(value) === 'qq' ? 'qq' : 'netease'
+}
+
+// 平台来源解析：路由 query 显式带 source 时以其为准；未携带时保留当前来源
+// （可能来自持久化偏好），避免刷新、前进后退或首页跳转把偏好冲回网易云。
+export function resolvePlatformSource(querySource, current) {
+  const hasExplicitSource = querySource !== undefined
+    && querySource !== null
+    && String(querySource).trim() !== ''
+  return getSearchSource(hasExplicitSource ? querySource : current)
 }
 
 export function getHeartModeBlockReason(songs) {

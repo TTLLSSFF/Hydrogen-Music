@@ -3,6 +3,7 @@ import { search } from '../api/other';
 import { searchQQAll } from '../api/qqMusic'
 import { mapSongsPlayableStatus } from '../utils/songStatus';
 import { noticeOpen } from '../utils/dialog';
+import { getSearchSource } from '../utils/providerPolicy.mjs';
 
 export const useOtherStore = defineStore('otherStore', {
     state: () => {
@@ -133,6 +134,10 @@ export const useOtherStore = defineStore('otherStore', {
         }
     },
     actions: {
+        // 首页 / 搜索页 / 设置页共用的平台来源，写入前统一归一化
+        setSearchSource(source) {
+            this.searchSource = getSearchSource(source)
+        },
         // setRem() {
         //     const scale = this.screenWidth / 16
         //     const htmlWidth = document.documentElement.clientWidth || document.body.clientWidth
@@ -233,5 +238,9 @@ export const useOtherStore = defineStore('otherStore', {
                 }
             }
         },
+    },
+    persist: {
+        storage: localStorage,
+        pick: ['searchSource'],
     },
 })

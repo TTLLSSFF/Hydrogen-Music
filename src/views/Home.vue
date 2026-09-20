@@ -5,7 +5,6 @@ import { confirmAccountLogout } from '../utils/accountSession'
 import { isLogin } from '../utils/authority'
 import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
-import { toggleHeartMode } from '../utils/player/lazy'
 import { qqAccountStore } from '../store/qqAccountStore'
 
 const router = useRouter()
@@ -326,24 +325,6 @@ watch(
                                     </div>
                                 </transition>
                             </div>
-                            <svg
-                                t="1680000000000"
-                                @click="toggleHeartMode()"
-                                class="icon heart-mode-icon"
-                                viewBox="0 0 1024 1024"
-                                version="1.1"
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="200"
-                                height="200"
-                            >
-                                <path
-                                    d="M512 890.9L142.8 521.7C77.3 456.2 77.3 349.4 142.8 283.9s165.8-65.5 231.3 0L512 421.8l137.9-137.9c65.5-65.5 172.3-65.5 237.8 0s65.5 172.3 0 237.8L512 890.9z"
-                                    fill="none"
-                                    stroke="#000000"
-                                    stroke-width="64"
-                                    stroke-linejoin="round"
-                                />
-                            </svg>
                         </div>
                     </div>
                     <div
@@ -526,13 +507,6 @@ main {
                         left: $stylePosition;
                     }
                 }
-            }
-            .heart-mode-icon {
-                width: 22px;
-                height: 22px;
-                margin-left: 6px;
-                cursor: pointer;
-                flex-shrink: 0;
             }
         }
     }

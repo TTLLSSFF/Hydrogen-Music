@@ -10,7 +10,8 @@ import { readCommentCountCache, writeCommentCountCache } from '../utils/commentC
 import { buildCoverBackdropCandidates } from '../utils/coverBackdrop';
 import { getIndexedSongOrFirst } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
-import { canUseSongAction } from '../utils/providerPolicy.mjs'
+import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
+import { getQQComments, normalizeQQCommentList } from '../api/qqMusic';
 const playerStore = usePlayerStore();
 const Comments = defineAsyncComponent(() => import('../components/Comments.vue'));
 
@@ -71,9 +72,25 @@ const isCurrentSirenSong = computed(() => currentTrack.value?.source === 'siren'
 const commentCount = ref(0);
 const commentCountRequestSerial = ref(0);
 
+// QQ 歌曲以 songmid 作为评论资源 id，缺失时退回数字 id/mediaId。
+const getQQCommentId = track => {
+    if (!track) return '';
+    return track.songmid || track.songMid || track.mid || track.id || track.songId || track.musicId || '';
+};
+
 const commentTarget = computed(() => {
     const track = currentTrack.value;
-    if (!track || track.type === 'local' || track.source === 'siren' || !canUseSongAction(track, 'comment')) return null;
+    if (!track || track.type === 'local' || track.source === 'siren' || !canUseSongAction(track, 'commentRead')) return null;
+
+    if (isQQSong(track)) {
+        const qqId = getQQCommentId(track);
+        if (!qqId) return null;
+        return {
+            key: `qq:${qqId}`,
+            type: 'qq',
+            id: qqId,
+        };
+    }
 
     if (isDj.value) {
         const programId = track && (track.programId || track.programID || track.programid);
@@ -118,6 +135,20 @@ const fetchCommentCount = async target => {
     }
 
     try {
+        if (target.type === 'qq') {
+            const payload = await getQQComments({ id: target.id, type: 1, page: 0, pagesize: 1 });
+            if (serial !== commentCountRequestSerial.value) return;
+            const qqTotal = Number(normalizeQQCommentList(payload)?.total);
+            if (Number.isFinite(qqTotal) && qqTotal > 0) {
+                commentCount.value = Math.floor(qqTotal);
+                writeCommentCountCache(target.key, commentCount.value);
+            } else if (!hasCachedCount) {
+                commentCount.value = 0;
+                writeCommentCountCache(target.key, 0);
+            }
+            return;
+        }
+
         let response = null;
         if (target.type === 'dj') {
             response = await getDjProgramComments(target.id, { limit: 1, offset: 0 });
@@ -165,6 +196,9 @@ watch(
 const commentPanelKey = computed(() => {
     const track = currentTrack.value;
     const idx = typeof playerStore.currentIndex === 'number' ? playerStore.currentIndex : 0;
+    if (isQQSong(track)) {
+        return `comments-qq-${getQQCommentId(track) || 'none'}-${idx}`;
+    }
     if (isDj.value) {
         const pid = track && (track.programId || track.programID || track.programid);
         return `comments-dj-${pid || 'none'}-${idx}`;
@@ -175,7 +209,7 @@ const commentPanelKey = computed(() => {
 
 watch(currentTrack, (song) => {
     try {
-        if (song && (song.type === 'local' || song.source === 'siren' || !canUseSongAction(song, 'comment')) && rightPanelMode.value === 1) {
+        if (song && (song.type === 'local' || song.source === 'siren' || !canUseSongAction(song, 'commentRead')) && rightPanelMode.value === 1) {
             rightPanelMode.value = 0;
         }
     } catch (_) {}
@@ -216,7 +250,7 @@ watch(currentTrack, (song) => {
             <Transition name="panel-switch" mode="out-in">
                 <ProgramIntro v-if="rightPanelMode === 0 && isDj" key="program-intro" />
                 <Lyric class="lyric-container" v-else-if="rightPanelMode === 0" :key="`lyric-${lyricKey}`"></Lyric>
-                <Comments class="comments-container" v-else-if="rightPanelMode === 1 && currentTrack && canUseSongAction(currentTrack, 'comment')" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
+                <Comments class="comments-container" v-else-if="rightPanelMode === 1 && currentTrack && canUseSongAction(currentTrack, 'commentRead')" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
             </Transition>
         </div>
     </div>

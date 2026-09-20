@@ -179,7 +179,6 @@ test('QQ security middleware forwards only private My Music and playback routes'
   for (const path of [
     '/getMusicPlay?songmid=song-mid',
     '/getLyric?songmid=song-mid',
-    '/getSongListDetail?disstid=playlist-id',
     '/user/getUserDetail',
     '/user/getUserAvatar',
     '/user/getUserLikedSongs',
@@ -202,13 +201,53 @@ test('QQ capability boundary keeps read-only routes GET-only', async () => {
     getSession: () => ({ cookie: 'uin=24680', uin: '24680' }),
   })
 
-  for (const path of ['/getMusicPlay', '/getLyric', '/getSongListDetail', '/user/getUserPlaylists']) {
+  for (const path of ['/getMusicPlay', '/getLyric', '/user/getUserPlaylists']) {
     const context = createContext(path, { method: 'POST', body: {} })
     let reached = false
     await middleware(context, async () => { reached = true })
     assert.equal(reached, false, `${path} must reject mutating methods`)
     assert.equal(context.status, 404)
   }
+
+  // 歌单详情已改为公共只读端点，非 GET 由公共处理器直接拒绝。
+  const publicDetailContext = createContext('/getSongListDetail', { method: 'POST', body: {} })
+  let publicDetailReached = false
+  await middleware(publicDetailContext, async () => { publicDetailReached = true })
+  assert.equal(publicDetailReached, false, 'public playlist detail must reject mutating methods')
+  assert.equal(publicDetailContext.status, 405)
+})
+
+test('QQ public playlist detail is served without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    songListDetailService: async params => {
+      calls.push(params)
+      return {
+        status: 200,
+        body: {
+          response: {
+            code: 0,
+            data: { cdlist: [{ disstid: params.disstid, title: '公共歌单', songnum: 1, songlist: [{ mid: 'mid-1', name: '晴天' }] }] },
+          },
+        },
+      }
+    },
+  })
+
+  const context = createContext('/getSongListDetail?disstid=7707261125')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'playlist detail must be handled before the session-required boundary')
+  assert.deepEqual(calls, [{ disstid: '7707261125' }])
+  assert.equal(context.status, 200)
+  assert.equal(context.body.response.data.cdlist[0].title, '公共歌单')
+  assert.equal(context.body.response.data.cdlist[0].songlist.length, 1)
+
+  const invalidContext = createContext('/getSongListDetail?disstid=not-a-number')
+  await middleware(invalidContext, async () => {})
+  assert.equal(invalidContext.status, 400)
 })
 
 test('QQ public search forwards sanitized category params without a login session', async () => {

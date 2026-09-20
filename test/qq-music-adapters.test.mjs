@@ -790,6 +790,36 @@ test('QQ playlist detail falls back to the loaded song count', () => {
   assert.equal(detail.playlist.size, 2)
 })
 
+// 服务端 /getSongListDetail 现在用 CgiGetDiss 的 dirinfo + songlist 组装 cdlist，
+// 这里锁定该信封形状，避免服务端改动悄悄让歌单页变空。
+test('QQ playlist detail reads the CgiGetDiss cdlist envelope', () => {
+  const detail = normalizeQQPlaylistDetail({
+    response: {
+      code: 0,
+      data: {
+        cdlist: [{
+          id: 7707261125,
+          dirid: 31,
+          title: '甜度爆表 | 旋律说唱狙击少女心',
+          picurl: 'https://example.test/cover.jpg',
+          songnum: 2,
+          songlist: [
+            { id: 127404639, mid: 'song-mid-1', name: '你的', singer: [{ id: 1, mid: 'singer-mid-1', name: 'DouDou' }] },
+            { id: 127404640, mid: 'song-mid-2', name: 'Song 2', singer: [{ id: 2, mid: 'singer-mid-2', name: 'Singer 2' }] },
+          ],
+        }],
+      },
+    },
+  })
+
+  assert.equal(detail.playlist.id, '7707261125')
+  assert.equal(detail.playlist.name, '甜度爆表 | 旋律说唱狙击少女心')
+  assert.equal(detail.playlist.coverImgUrl, 'https://example.test/cover.jpg')
+  assert.equal(detail.playlist.trackCount, 2)
+  assert.equal(detail.songs.length, 2)
+  assert.equal(detail.songs[0].name, '你的')
+})
+
 test('QQ playlist detail normalizes nested cdlist songlist responses', () => {
   const detail = normalizeQQPlaylistDetail({
     response: {

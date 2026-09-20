@@ -6,7 +6,6 @@
   import LibrarySongList from '../components/LibrarySongList.vue';
   import LibraryAlbumList from '../components/LibraryAlbumList.vue';
   import SearchResultList from '../components/SearchResultList.vue';
-  import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue';
   import { resolvePlatformSource } from '../utils/providerPolicy.mjs'
   
   const otherStore = useOtherStore()
@@ -81,10 +80,8 @@
       <svg t="1669039513804" @click="routerChange(0)" class="router-last" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200"><path d="M716.608 1010.112L218.88 512.384 717.376 13.888l45.248 45.248-453.248 453.248 452.48 452.48z" p-id="1054"></path></svg>
       <svg t="1669039531646" @click="routerChange(1)" class="router-next" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1207" width="200" height="200"><path d="M264.896 1010.112l497.728-497.728L264.128 13.888 218.88 59.136l453.248 453.248-452.48 452.48z" p-id="1208"></path></svg>
       <span class="search-title">搜索内容：{{router.currentRoute.value.query.keywords}}</span>
-      <PlatformSourceSwitch variant="toggle" class="source-toggle"></PlatformSourceSwitch>
     </div>
-    <Transition name="fade">
-      <div class="search-container" ref="searchScroll" v-show="!sourceChanging">
+    <div class="search-container" :class="{ 'source-changing': sourceChanging }" ref="searchScroll">
         <div class="search-classify">
           <div class="classify-item">
             <div class="classify-title">歌曲</div>
@@ -120,7 +117,6 @@
           </div>
         </div>
       </div>
-    </Transition>
   </div>
 </template>
 
@@ -153,10 +149,7 @@
         font: 17Px SourceHanSansCN-Bold;
         color: black;
       }
-      // 来源开关：与设置页的开关同一套样式（组件内自带样式），这里只保留间距
-      .source-toggle{
-        margin-left: 30px;
-      }
+      // 平台来源开关已移到全局搜索框右侧（App.vue），这里不再重复渲染
       .router-last, .router-next{
         margin-right: 10Px;
       }
@@ -221,15 +214,16 @@
     }
   }
 
-  // 切换来源的渐入渐出：与「切换歌单」同一套动画
-  .fade-enter-active,
-  .fade-leave-active {
+  // 切换来源的渐入渐出：与「切换歌单」同一套动画。
+  // 用透明度 + 缩放而不是 v-show（display:none）：歌曲列表是虚拟滚动，
+  // 容器一旦 display:none 就测不到高度，切源后会残留上一个来源的行。
+  .search-container {
     transition: 0.3s cubic-bezier(.3,.79,.55,.99);
-  }
 
-  .fade-enter-from,
-  .fade-leave-to {
-    transform: scale(0.95);
-    opacity: 0;
+    &.source-changing {
+      transform: scale(0.95);
+      opacity: 0;
+      pointer-events: none;
+    }
   }
 </style>

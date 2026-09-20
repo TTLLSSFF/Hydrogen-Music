@@ -8,7 +8,8 @@ import { noticeOpen } from '../utils/dialog'
 import { getCommentScrollPosition, setCommentScrollPosition, getLastCommentTargetKey, setLastCommentTargetKey } from '../utils/commentScrollMemory'
 import { getIndexedSongOrFirst } from '../utils/songList'
 import { formatCommentTime } from '../utils/commentFormat'
-import { canUseSongAction } from '../utils/providerPolicy.mjs'
+import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
+import { getQQComments, normalizeQQCommentList } from '../api/qqMusic'
 
 const FLOOR_REPLY_LIMIT = 5
 const COMMENTS_PREFETCH_PX = 200
@@ -26,6 +27,22 @@ const getUserAvatar = (user, size = 40) => {
 const toPositiveInt = value => {
     const num = Number(value)
     return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0
+}
+
+// 把 QQ 评论适配成评论区（Comments.vue）既有的网易云结构：
+// normalizeQQCommentList 已提供 commentId/content/liked/likedCount/time(ms)/user，
+// 这里只补 showFloorComment——服务端不支持楼层，replyCount 固定为 0，
+// 因此 Comments.vue 不会渲染「展开回复」入口，也就不会发起必然失败的楼层请求。
+const normalizeQQCommentForPanel = comment => {
+    if (!comment || typeof comment !== 'object') return null
+    const commentId = comment.commentId ?? comment.id
+    if (commentId === undefined || commentId === null || commentId === '') return null
+    return {
+        ...comment,
+        commentId,
+        parentCommentId: null,
+        showFloorComment: { replyCount: 0 },
+    }
 }
 
 const createFloorState = replyCount => ({
@@ -46,14 +63,28 @@ export function useCommentsPanel({ emit } = {}) {
         return getIndexedSongOrFirst(songList.value, currentIndex.value)
     })
     const isDj = computed(() => listInfo.value && listInfo.value.type === 'dj')
+    const isQQTrack = computed(() => isQQSong(currentTrack.value))
     const programId = computed(() => {
         const cur = currentTrack.value
         return cur && (cur.programId || cur.programID || cur.programid)
     })
+    // 旧版评论接口的 topid 必须是数字歌曲 id，songmid 不被接受。
+    // 只接受数字形态的候选，取不到时返回 null（面板走空态）而不是发一个必然失败的请求。
+    const qqCommentId = computed(() => {
+        const cur = currentTrack.value
+        if (!cur) return null
+        const candidates = [cur.id, cur.songId, cur.song_id, cur.musicId, cur.mediaId]
+        for (const candidate of candidates) {
+            const value = String(candidate ?? '').trim()
+            if (/^\d{1,20}$/.test(value)) return value
+        }
+        return null
+    })
     const musicCommentId = computed(() => {
         if (isDj.value) return null
         const cur = currentTrack.value
-        if (cur?.source === 'siren' || !canUseSongAction(cur, 'comment')) return null
+        if (cur?.source === 'siren' || !canUseSongAction(cur, 'commentRead')) return null
+        if (isQQSong(cur)) return qqCommentId.value
         const curId = cur && (cur.id || cur.songId || cur.musicId)
         return curId || songId.value || null
     })
@@ -77,6 +108,9 @@ export function useCommentsPanel({ emit } = {}) {
     const commentTargetKey = computed(() => {
         if (isDj.value) {
             return programId.value ? `dj:${programId.value}` : ''
+        }
+        if (isQQTrack.value) {
+            return musicCommentId.value ? `qq:${musicCommentId.value}` : ''
         }
         return musicCommentId.value ? `song:${musicCommentId.value}` : ''
     })
@@ -228,9 +262,39 @@ export function useCommentsPanel({ emit } = {}) {
         return merged
     }
 
+    // QQ 评论：服务端为 0 基页码分页，一次 payload 同时含「最新」与「热门」两组，
+    // 这里按 sortType 各取一组，并适配成网易云评论面板的返回结构。
+    const requestQQCommentList = async ({ sortType, pageSize, pageNo } = {}) => {
+        const id = musicCommentId.value
+        if (!id) return null
+
+        const size = toPositiveInt(pageSize) || limit.value
+        const page = Math.max(toPositiveInt(pageNo) - 1, 0)
+        const isHotRequest = Number(sortType) === 2
+
+        try {
+            const payload = await getQQComments({ id, type: 1, page, pagesize: size })
+            const normalized = normalizeQQCommentList(payload) || {}
+            const list = isHotRequest ? normalized.hotComments : normalized.comments
+            return {
+                code: 200,
+                comments: (Array.isArray(list) ? list : []).map(normalizeQQCommentForPanel).filter(Boolean),
+                total: toPositiveInt(normalized.total),
+                hasMore: isHotRequest ? false : !!normalized.hasMore,
+                cursor: '',
+            }
+        } catch (error) {
+            console.error('获取QQ评论失败:', error)
+            return null
+        }
+    }
+
     const requestCommentList = async params => {
         if (isDj.value && programId.value) {
             return getDjProgramCommentsNew({ id: programId.value, ...params })
+        }
+        if (isQQTrack.value) {
+            return requestQQCommentList(params)
         }
         if (musicCommentId.value) {
             return getMusicCommentsNew({ id: musicCommentId.value, ...params })
@@ -239,6 +303,8 @@ export function useCommentsPanel({ emit } = {}) {
     }
 
     const requestCommentFloor = async params => {
+        // 服务端 QQ 评论不支持楼层，直接短路，避免发起必然 400 的请求。
+        if (isQQTrack.value) return null
         if (isDj.value && programId.value) {
             return getDjProgramCommentFloor({ id: programId.value, ...params })
         }
@@ -249,6 +315,7 @@ export function useCommentsPanel({ emit } = {}) {
     }
 
     const loadFloorReplies = async (comment, { forceFirstPage = false } = {}) => {
+        if (isQQTrack.value) return
         const state = ensureFloorState(comment)
         if (!state || state.loading) return
 
@@ -440,6 +507,12 @@ export function useCommentsPanel({ emit } = {}) {
     const submitComment = async () => {
         if (!newComment.value.trim() || submitting.value) return
 
+        // QQ 无写接口：发表评论一律降级提示。
+        if (!canUseSongAction(currentTrack.value, 'commentWrite')) {
+            noticeOpen('QQ 音乐暂不支持发表评论', 2)
+            return
+        }
+
         if (!userStore.user) {
             noticeOpen('请先登录', 2)
             return
@@ -479,6 +552,12 @@ export function useCommentsPanel({ emit } = {}) {
 
     // 点赞评论
     const toggleLikeComment = async comment => {
+        // QQ 无写接口：评论点赞一律降级提示。
+        if (!canUseSongAction(currentTrack.value, 'commentLike')) {
+            noticeOpen('QQ 音乐暂不支持点赞评论', 2)
+            return
+        }
+
         if (!userStore.user) {
             noticeOpen('请先登录', 2)
             return
@@ -506,6 +585,12 @@ export function useCommentsPanel({ emit } = {}) {
 
     // 回复评论
     const toggleReply = (comment, rootCommentId = null) => {
+        // QQ 无写接口：回复评论一律降级提示。
+        if (!canUseSongAction(currentTrack.value, 'commentWrite')) {
+            noticeOpen('QQ 音乐暂不支持回复评论', 2)
+            return
+        }
+
         const rootId = resolveReplyRootCommentId(comment, rootCommentId)
         if (!rootId) return
 

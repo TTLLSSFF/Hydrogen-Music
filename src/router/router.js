@@ -8,7 +8,7 @@ import { useLibraryStore } from '../store/libraryStore'
 import { storeToRefs } from 'pinia'
 import { useOtherStore } from '../store/otherStore'
 import { hasAnyMusicAccount, hasQQAccount } from '../utils/accountProviders.mjs'
-import { canAccessQQMyMusic, getSearchSource } from '../utils/providerPolicy.mjs'
+import { canAccessQQMyMusic, resolvePlatformSource } from '../utils/providerPolicy.mjs'
 
 function createRouteLoader(loader) {
     let promise = null
@@ -36,6 +36,7 @@ const RecommendSongs = createRouteLoader(() => import('../components/RecommendSo
 const SearchResult = createRouteLoader(() => import('../views/SearchResult.vue'))
 const Settings = createRouteLoader(() => import('../views/Settings.vue'))
 const RadioDetail = createRouteLoader(() => import('../components/RadioDetail.vue'))
+const QQPlaylistCategory = createRouteLoader(() => import('../views/QQPlaylistCategory.vue'))
 
 const userStore = useUserStore()
 const libraryStore = useLibraryStore()
@@ -226,7 +227,7 @@ const routes = [
         component: SearchResult,
         beforeEnter: (to, from, next) => {
             const searchStore = useOtherStore()
-            searchStore.searchSource = getSearchSource(to.query.source)
+            searchStore.setSearchSource(resolvePlatformSource(to.query.source, searchStore.searchSource))
             searchStore.getSearchInfo(to.query.keywords)
             next()
         }
@@ -238,6 +239,12 @@ const routes = [
         beforeEnter: (to, from, next) => {
             next()
         }
+    },
+    {
+        // QQ 专属分类歌单页，固定 QQ 来源，不参与全局平台来源切换
+        path: '/qq/playlists',
+        name: 'qqPlaylistCategory',
+        component: QQPlaylistCategory,
     },
 ]
 

@@ -2635,6 +2635,29 @@ export async function toggleHeartMode() {
     }
 }
 
+/**
+ * 拉取心动模式推荐（不改动播放器状态）。
+ * 私人漫游等没有歌单上下文的场景以当前正在播放的歌曲为种子，
+ * pid 退回「我喜欢的音乐」——上游只接受该类型的歌单。
+ */
+export async function fetchHeartModeRecommendations({ seedId, playlistId } = {}) {
+    const resolvedSeedId = seedId || songId.value
+    const resolvedPlaylistId = playlistId
+        || (listInfo.value?.type === 'playlist' ? listInfo.value.id : '')
+        || userStore.favoritePlaylistId
+    if (!resolvedSeedId || !resolvedPlaylistId) return []
+
+    try {
+        const result = await getIntelligenceList({ id: resolvedSeedId, pid: resolvedPlaylistId })
+        if (Number(result?.code) !== 200) return []
+        const items = Array.isArray(result?.data) ? result.data : []
+        return normalizeQueueSongs(items.map(item => item?.songInfo || item?.song).filter(Boolean))
+    } catch (error) {
+        console.error('心动模式推荐加载失败:', error)
+        return []
+    }
+}
+
 export function playAll(listType, list, listMeta = null) {
     const songs = preparePlayAllSongs(list, normalizeQueueSongs)
     if (songs.length === 0) {

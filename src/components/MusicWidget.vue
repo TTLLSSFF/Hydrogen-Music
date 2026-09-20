@@ -16,7 +16,6 @@
   import { getIndexedSong } from '../utils/songList'
   import { getSongCoverUrl, withCoverParam } from '../utils/coverBackdrop'
   import { useStableImageSource } from '../composables/useStableImageSource'
-  import { noticeOpen } from '../utils/dialog'
   import { isQQSong } from '../utils/providerPolicy.mjs'
   import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
   import { getActivePlaylistSurface } from '../utils/player/playlistRuntime.mjs'
@@ -146,10 +145,6 @@
   const toAlbum = () => {
     const cur = currentSong.value
     if (!cur) return
-    if (isQQSong(cur)) {
-      noticeOpen('QQ 音乐暂不支持专辑详情', 2)
-      return
-    }
     if (isDjMode.value) {
       const rid = (listInfo.value && listInfo.value.id) || null
       if (!rid) return

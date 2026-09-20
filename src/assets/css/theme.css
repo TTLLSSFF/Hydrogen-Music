@@ -1134,16 +1134,6 @@ body {
   stroke: var(--text) !important;
 }
 
-.dark .home-header .header-router .heart-mode-icon {
-  color: var(--text) !important;
-}
-
-.dark .home-header .header-router .heart-mode-icon svg path,
-.dark .home-header .header-router .heart-mode-icon path {
-  fill: none !important;
-  stroke: currentColor !important;
-}
-
 /* My Radio page */
 .dark .my-radio .radio-header .title-tip { background-color: var(--text) !important; }
 .dark .my-radio .radio-card { background-color: rgba(255,255,255,0.12) !important; }

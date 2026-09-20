@@ -75,6 +75,9 @@ const FORBIDDEN_CREDENTIAL_PATHS = new Set(['/user/getcookie', '/user/setcookie'
 // positive route allowlist here so adding a new upstream endpoint cannot
 // accidentally make public search, recommendation, album, MV, comment, or
 // download APIs reachable through `/api/qq`.
+//
+// 例外：首页推荐、分类歌单、评论等公共只读端点在上方以独立 handler 形式显式
+// 实现（严格参数校验 + 凭证脱敏），是刻意的扩展而非白名单放行。
 const QQ_ALLOWED_EXACT_PATHS = new Set([
   '/getmusicplay',
   '/getlyric',
@@ -84,6 +87,8 @@ const QQ_ALLOWED_EXACT_PATHS = new Set([
   '/user/getuserlikedsongs',
   '/user/getuserplaylists',
   '/user/getusercollectedsonglists',
+  // 需登录的个性化推荐：必须落在白名单内才能走到会话注入逻辑。
+  '/getpersonalrecommend',
 ])
 const QQ_ALLOWED_PATH_PATTERNS = Object.freeze([
   /^\/getmusicplay\/[^/]+$/i,
@@ -97,6 +102,23 @@ const QQ_PRIVATE_PATHS = new Set([
   '/session/logout',
 ])
 
+// —— QQ 写操作探针（默认关闭，独立于正式接口）——
+// 上游依赖包只有只读服务，写操作（喜欢 / 加入歌单）需要逆向旧版未签名的
+// musicu.fcg。在真实登录态验证通过之前，这三条路径一律 404，不对外暴露。
+const QQ_WRITE_SPIKE_ENV = 'QQ_WRITE_SPIKE'
+const QQ_WRITE_SPIKE_PATHS = new Set([
+  '/user/likesong',
+  '/user/addsonglist',
+  '/user/delsonglist',
+])
+// QQ 音乐「我喜欢」是 dirId 固定为 201 的特殊歌单。
+const QQ_MY_LIKE_DIR_ID = 201
+const QQ_WRITE_SPIKE_BODY_MAX_BYTES = 4096
+
+function isQQWriteSpikeEnabled() {
+  return String(process.env[QQ_WRITE_SPIKE_ENV] || '') === '1'
+}
+
 function normalizeQQPath(pathname) {
   return String(pathname || '').toLowerCase().replace(/\/$/, '') || '/'
 }
@@ -104,6 +126,7 @@ function normalizeQQPath(pathname) {
 function isQQPathAllowed(pathname) {
   const normalizedPath = normalizeQQPath(pathname)
   if (QQ_PRIVATE_PATHS.has(normalizedPath) || QQ_ALLOWED_EXACT_PATHS.has(normalizedPath)) return true
+  if (isQQWriteSpikeEnabled() && QQ_WRITE_SPIKE_PATHS.has(normalizedPath)) return true
   return QQ_ALLOWED_PATH_PATTERNS.some(pattern => pattern.test(normalizedPath))
 }
 const SENSITIVE_CANONICAL_KEYS = new Set([
@@ -483,6 +506,15 @@ const QQ_SEARCH_URL_TEMPLATE = 'https://c.y.qq.com/soso/fcgi-bin/client_search_c
 const QQ_SEARCH_CATEGORIES = new Set([0, 8, 9, 12])
 const QQ_SEARCH_MAX_PAGE_SIZE = 50
 
+// 分类歌单与评论分页的固定上限，避免把任意分页参数透传给上游。
+const QQ_PLAYLIST_TAG_PAGE_SIZE = 20
+const QQ_PLAYLIST_TAG_MAX_PAGE_SIZE = 30
+const QQ_COMMENT_PAGE_SIZE = 20
+const QQ_COMMENT_MAX_PAGE_SIZE = 30
+const QQ_COMMENT_TYPES = new Set([1, 2, 3])
+// 旧版评论接口的 topid 必须是数字歌曲 id。
+const QQ_COMMENT_ID_PATTERN = /^\d{1,20}$/
+
 async function searchQQMusicPublic({ keyword, category, limit, page, catZhida }) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10000)
@@ -511,6 +543,70 @@ async function searchQQMusicPublic({ keyword, category, limit, page, catZhida })
   }
 }
 
+// 周的 ISO 号用于构造榜单 period。复刻上游 getRanks 控制器（依赖包未导出
+// 该控制器，仅导出底层 UCommon_default 服务）的 getWeekNumber 算法，保证
+// 服务端默认实现与真实客户端请求一致。
+function getWeekNumber(d) {
+  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 864e5 + 1) / 7)
+}
+
+// 写操作探针需要读取 JSON body。本中间件 unshift 在最前面，上游 body parser
+// 不会执行，因此这里直接消费请求流是安全的；带大小上限防止滥用。
+function readQQProbeJsonBody(req) {
+  return new Promise(resolve => {
+    const chunks = []
+    let size = 0
+    let settled = false
+    const finish = value => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    req.on('data', chunk => {
+      size += chunk.length
+      if (size > QQ_WRITE_SPIKE_BODY_MAX_BYTES) {
+        finish(null)
+        req.destroy?.()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (chunks.length === 0) return finish({})
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        finish(parsed && typeof parsed === 'object' ? parsed : null)
+      } catch (_) {
+        finish(null)
+      }
+    })
+    req.on('error', () => finish(null))
+  })
+}
+
+// 分类歌单：依赖包的 playlist.web_srf 模块（get_tags / get_playlist_by_tag）
+// 已失效——上游稳定返回 500003 / 860100005。这里改用与真实 y.qq.com 歌单分类页
+// 一致的旧版 c.y.qq.com 固定参数模板，与搜索、歌手描述走同一套直连方式。
+// 注意：具体请求函数定义在 createQQSecurityMiddleware 内部，因为
+// fetchQQUpstreamJson 是该中间件的函数级声明，模块作用域看不到它。
+// 这两个端点默认回 gb2312，必须显式要求 utf-8，否则中文会乱码。
+const QQ_PLAYLIST_TAG_URL = 'https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_diss_tag_conf.fcg?format=json&outCharset=utf-8&utf8=1'
+const QQ_PLAYLIST_BY_TAG_URL_TEMPLATE = 'https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_diss_by_tag.fcg?format=json&outCharset=utf-8&utf8=1&categoryId=___CAT___&sortId=___SORT___&sin=___SIN___&ein=___EIN___&rnd=___RND___'
+const QQ_PLAYLIST_SORT_IDS = new Set([1, 2, 3, 4, 5])
+const QQ_PLAYLIST_DEFAULT_SORT_ID = 5
+
+// 评论：依赖包的 comment.CommentReadServer 模块同样已失效（500003 / 860100005），
+// 改用与真实客户端一致的旧版 c.y.qq.com 评论接口固定参数模板。
+// 响应同时含 comment.commentlist（最新）与 hot_comment.commentlist（热门）。
+// topid 必须是数字歌曲 id，songmid 不被接受。
+const QQ_COMMENT_URL_TEMPLATE = 'https://c.y.qq.com/base/fcgi-bin/fcg_global_comment_h5.fcg?g_tk=5381&loginUin=0&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0&cid=205360772&reqtype=2&biztype=___BIZ___&topid=___TOPID___&cmd=8&needmusiccrit=0&pagenum=___PAGE___&pagesize=___SIZE___&sorttype=___SORT___'
+const QQ_COMMENT_SORT_TYPES = new Set([1, 2])
+const QQ_COMMENT_DEFAULT_SORT_TYPE = 1
+
 function createQQSecurityMiddleware(options = {}) {
   const getLoginQr = options.getLoginQr || (async () => qqServices.getQQLoginQr({}))
   const checkLoginQr = options.checkLoginQr || checkQQLoginQrWithStatus
@@ -528,9 +624,128 @@ function createQQSecurityMiddleware(options = {}) {
     params: { albummid, format: 'json', outCharset: 'utf-8' },
     option: {},
   }))
+  const bannerService = options.bannerService || (async () => qqServices.getRecommendBanner_default({
+    method: 'get',
+    params: {},
+    option: {},
+  }))
+  // 上游 getNewSongs 是位置参数签名 (areaId, limit)，不接收 koa 控制器风格的
+  // props 对象；不传参即使用上游默认歌单分类与条数。
+  const newSongsService = options.newSongsService || (async () => qqServices.getNewSongs())
+  const topListsService = options.topListsService || (async () => qqServices.getTopLists_default({
+    method: 'get',
+    params: {},
+    option: {},
+  }))
+  // 榜单详情是只读公共接口。依赖包未导出 getRanks 控制器（只导出了底层
+  // UCommon_default 服务），故在此复刻上游 getRanks 控制器的精确请求。
+  // topId 由中间件校验为纯数字，page/limit 固定为 0/100（与简报约定一致）。
+  const topListDetailService = options.topListDetailService || (async ({ topId, page, limit }) => {
+    const date = new Date()
+    const week = getWeekNumber(date)
+    const data = {
+      comm: { ct: 24, cv: 4747474, format: 'json', inCharset: 'utf-8', needNewCode: 1, uin: 0 },
+      req_1: {
+        module: 'musicToplist.ToplistInfoServer',
+        method: 'GetDetail',
+        param: {
+          topId: +topId,
+          offset: +page || 0,
+          num: +limit || 100,
+          period: `${date.getFullYear()}_${week}`,
+        },
+      },
+    }
+    const props = {
+      method: 'get',
+      params: { format: 'json', data: JSON.stringify(data) },
+      option: {},
+    }
+    const responseData = (await qqServices.UCommon_default(props)).data
+    // 与依赖控制器最终响应信封保持一致：body 形如 { response: responseData }
+    return { status: 200, body: { response: responseData } }
+  })
+  // 分类歌单：依赖包的 playlist 模块已失效，改用旧版 c.y.qq.com 固定模板直连。
+  const playlistTagsService = options.playlistTagsService || fetchQQPlaylistTags
+  const playlistsByTagService = options.playlistsByTagService || fetchQQPlaylistsByTag
+  const digitalAlbumService = options.digitalAlbumService || (async () => qqServices.getDigitalAlbumLists_default({
+    method: 'get',
+    params: {},
+    option: {},
+  }))
+  // 评论：依赖包的评论模块已失效，改用旧版 c.y.qq.com 固定模板直连。
+  async function fetchQQComments({
+    id,
+    type = 1,
+    page = 0,
+    pagesize = QQ_COMMENT_PAGE_SIZE,
+    sortType = QQ_COMMENT_DEFAULT_SORT_TYPE,
+  }) {
+    const url = QQ_COMMENT_URL_TEMPLATE
+      .replace('___BIZ___', String(type))
+      .replace('___TOPID___', String(id))
+      .replace('___PAGE___', String(Math.max(Number(page) || 0, 0)))
+      .replace('___SIZE___', String(pagesize))
+      .replace('___SORT___', String(QQ_COMMENT_SORT_TYPES.has(sortType) ? sortType : QQ_COMMENT_DEFAULT_SORT_TYPE))
+    return fetchQQUpstreamJson(url)
+  }
+  const commentsService = options.commentsService || fetchQQComments
+  // 个性化推荐（猜你喜欢）：依赖包用的 music.web_srf_svr / get_recommend 模块
+  // 在上游已失效（稳定返回 500003 / 860100005），改用仍然可用的
+  // music.recommend.RecommendFeed / get_recommend_feed。
+  // 返回的是推荐「歌单」卡片（v_shelf[].v_niche[].v_card[]，type=500，id 即 dissid），
+  // 可复用现有 QQ 歌单详情链路。带登录态时上游会返回个性化结果。
+  async function fetchQQPersonalRecommend({ uin, num = 20 }) {
+    const data = {
+      comm: {
+        ct: 24,
+        cv: 0,
+        format: 'json',
+        ...(uin ? { uin: Number(uin) } : {}),
+      },
+      recommend: {
+        module: 'music.recommend.RecommendFeed',
+        method: 'get_recommend_feed',
+        param: { Page: 0, Num: num, ExtParams: {} },
+      },
+    }
+    const props = {
+      method: 'get',
+      params: { format: 'json', data: JSON.stringify(data) },
+      option: {},
+    }
+    const parsed = (await qqServices.UCommon_default(props)).data
+    return { status: 200, body: parsed && typeof parsed === 'object' ? parsed : {} }
+  }
+  const personalRecommendService = options.personalRecommendService || fetchQQPersonalRecommend
   const singerService = options.singerService || fetchQQSingerInfo
   const singerSongsService = options.singerSongsService || fetchQQSingerSongsPage
   const singerAlbumsService = options.singerAlbumsService || fetchQQSingerAlbumsPage
+  // 歌单详情：依赖包的 playlist 模块已失效，改用 CgiGetDiss（无需登录）。
+  const songListDetailService = options.songListDetailService || fetchQQSongListDetail
+
+  // 分类标签（无参）：返回 { data: { categories: [{ categoryGroupName, items: [...] }] } }。
+  async function fetchQQPlaylistTags() {
+    return fetchQQUpstreamJson(QQ_PLAYLIST_TAG_URL)
+  }
+
+  // 分类歌单列表：categoryId 为纯数字，sin/ein 为闭区间偏移（ein = sin + limit - 1）。
+  async function fetchQQPlaylistsByTag({
+    tagId,
+    page = 0,
+    limit = QQ_PLAYLIST_TAG_PAGE_SIZE,
+    sortId = QQ_PLAYLIST_DEFAULT_SORT_ID,
+  }) {
+    const sin = Math.max(Number(page) || 0, 0) * limit
+    const ein = sin + limit - 1
+    const url = QQ_PLAYLIST_BY_TAG_URL_TEMPLATE
+      .replace('___CAT___', String(tagId))
+      .replace('___SORT___', String(sortId))
+      .replace('___SIN___', String(sin))
+      .replace('___EIN___', String(ein))
+      .replace('___RND___', String(Math.random()))
+    return fetchQQUpstreamJson(url)
+  }
 
 // —— 公共歌手详情聚合 ——
 // 热门歌曲无专用上游接口，明星页面用「歌手名搜索 → zhida_singer.hotsong」填充；
@@ -620,6 +835,51 @@ async function fetchQQSingerAlbumsPage({ singermid, page = 0, limit = QQ_SINGER_
     body: payload && typeof payload === 'object'
       ? { albumList: Array.isArray(payload.albumList) ? payload.albumList : [], total: Number(payload.total ?? 0) }
       : { albumList: [], total: 0 },
+  }
+}
+
+// 歌单详情上游。依赖包的 playlist.web_srf 模块在上游已失效（稳定返回 500003 /
+// 860100005），改用仍然可用的 music.srfDissInfo.DissInfo / CgiGetDiss——与真实客户端
+// 一致，且公开歌单无需登录。返回体重排为 { response: { data: { ...dirinfo, songlist } } }，
+// 与前端 normalizeQQPlaylistDetail 的解析路径对齐（歌名/封面/曲目数都取自 dirinfo）。
+const QQ_SONGLIST_DETAIL_MAX_SONGS = 1000
+
+async function fetchQQSongListDetail({ disstid }) {
+  const num = QQ_SONGLIST_DETAIL_MAX_SONGS
+  const data = {
+    comm: { ct: 24, cv: 0, format: 'json' },
+    req_1: {
+      module: 'music.srfDissInfo.DissInfo',
+      method: 'CgiGetDiss',
+      param: {
+        disstid: Number(disstid),
+        dirid: 0,
+        onlysong: 0,
+        num,
+        page: 0,
+        song_begin: 0,
+        song_num: num,
+        tag: 1,
+        userinfo: 1,
+        encoding: 'utf-8',
+        inCharset: 'utf-8',
+        outCharset: 'utf-8',
+      },
+    },
+  }
+  const props = {
+    method: 'get',
+    params: { format: 'json', data: JSON.stringify(data) },
+    option: {},
+  }
+  const parsed = (await qqServices.UCommon_default(props)).data
+  const payload = parsed?.req_1?.data
+  const dirinfo = payload?.dirinfo && typeof payload.dirinfo === 'object' ? payload.dirinfo : {}
+  const songlist = Array.isArray(payload?.songlist) ? payload.songlist : []
+  // 沿用旧版 /getSongListDetail 的 cdlist 信封，前端 normalizeQQPlaylistDetail 直接可用。
+  return {
+    status: 200,
+    body: { response: { code: Number(payload?.code ?? 0), data: { cdlist: [{ ...dirinfo, songlist }] } } },
   }
 }
 
@@ -856,6 +1116,171 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       return
     }
 
+    // 公共首页数据（无登录要求）：轮播焦点图、最新歌曲、榜单总榜。
+    // 三个端点均为无参 GET，响应在到达前端前经过凭证脱敏。
+    const PUBLIC_HOME_SERVICES = {
+      '/getrecommendbanner': { service: bannerService, error: 'QQ Music banner unavailable' },
+      '/getnewsongs': { service: newSongsService, error: 'QQ Music new songs unavailable' },
+      '/gettoplists': { service: topListsService, error: 'QQ Music top lists unavailable' },
+    }
+    if (PUBLIC_HOME_SERVICES[normalizedPath]) {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const entry = PUBLIC_HOME_SERVICES[normalizedPath]
+      try {
+        const { status, body } = unwrapServiceResponse(await entry.service())
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: entry.error })
+      }
+      return
+    }
+
+    // 公共榜单详情（无登录要求）：只放行纯数字 topId，page/limit 固定 0/100。
+    // 响应在到达前端前经过凭证脱敏。
+    if (normalizedPath === '/gettoplistdetail') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const topId = getSingleValue(ctx.query?.topId).trim().replace(/[^0-9]/g, '')
+      if (!topId) {
+        writeJson(ctx, 400, { error: 'topId is required' })
+        return
+      }
+      try {
+        const { status, body } = unwrapServiceResponse(await topListDetailService({ topId, page: 0, limit: 100 }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music toplist detail unavailable' })
+      }
+      return
+    }
+
+    // 公共歌单分类标签（无登录要求）：无参 GET，分类页左侧标签栏用。
+    if (normalizedPath === '/getplaylisttags') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      try {
+        const { status, body } = unwrapServiceResponse(await playlistTagsService())
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music playlist tags unavailable' })
+      }
+      return
+    }
+
+    // 公共分类歌单列表（无登录要求）：tagId 为纯数字，page 从 0 开始，
+    // limit 上限 30。响应在到达前端前经过凭证脱敏。
+    if (normalizedPath === '/getplaylistsbytag') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const tagId = getSingleValue(ctx.query?.tagId || ctx.query?.tagid).trim().replace(/[^0-9]/g, '')
+      if (!tagId) {
+        writeJson(ctx, 400, { error: 'tagId is required' })
+        return
+      }
+      const requestedLimit = Number(ctx.query?.limit)
+      const limit = Math.min(
+        Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_PLAYLIST_TAG_PAGE_SIZE, 1),
+        QQ_PLAYLIST_TAG_MAX_PAGE_SIZE,
+      )
+      const requestedPage = Number(ctx.query?.page)
+      const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 0, 0)
+      const requestedSortId = Number(ctx.query?.sortId)
+      const sortId = QQ_PLAYLIST_SORT_IDS.has(requestedSortId) ? requestedSortId : QQ_PLAYLIST_DEFAULT_SORT_ID
+      try {
+        const { status, body } = unwrapServiceResponse(await playlistsByTagService({ tagId, page, limit, sortId }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music playlists by tag unavailable' })
+      }
+      return
+    }
+
+    // 公共歌单详情（无登录要求）：依赖包的 playlist 模块已失效，改用 CgiGetDiss。
+    // disstid 只放行纯数字；响应重排为前端 normalizeQQPlaylistDetail 可解析的形状。
+    if (normalizedPath === '/getsonglistdetail') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const disstid = getSingleValue(ctx.query?.disstid || ctx.query?.dissid || ctx.query?.id).trim().replace(/[^0-9]/g, '')
+      if (!disstid) {
+        writeJson(ctx, 400, { error: 'disstid is required' })
+        return
+      }
+      try {
+        const { status, body } = unwrapServiceResponse(await songListDetailService({ disstid }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music playlist detail unavailable' })
+      }
+      return
+    }
+
+    // 公共数字专辑/新碟列表（无登录要求）：无参 GET，首页「新碟」区块用。
+    if (normalizedPath === '/getdigitalalbums') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      try {
+        const { status, body } = unwrapServiceResponse(await digitalAlbumService())
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music digital albums unavailable' })
+      }
+      return
+    }
+
+    // 公共评论列表（无登录要求，只读）：id 为资源 id（歌曲/歌单/专辑），
+    // type 只放行 1/2/3，page/pagesize 数值夹取。响应经凭证脱敏。
+    if (normalizedPath === '/getcomments') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const commentId = getSingleValue(ctx.query?.id || ctx.query?.topid).trim()
+      if (!QQ_COMMENT_ID_PATTERN.test(commentId)) {
+        writeJson(ctx, 400, { error: 'a valid comment id is required' })
+        return
+      }
+      const commentType = Number(ctx.query?.type ?? 1)
+      if (!QQ_COMMENT_TYPES.has(commentType)) {
+        writeJson(ctx, 400, { error: 'unsupported comment type' })
+        return
+      }
+      const requestedPageSize = Number(ctx.query?.pagesize)
+      const pagesize = Math.min(
+        Math.max(Number.isFinite(requestedPageSize) && requestedPageSize > 0 ? Math.trunc(requestedPageSize) : QQ_COMMENT_PAGE_SIZE, 1),
+        QQ_COMMENT_MAX_PAGE_SIZE,
+      )
+      const requestedPage = Number(ctx.query?.page)
+      const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 0, 0)
+      const requestedSortType = Number(ctx.query?.sortType)
+      const sortType = QQ_COMMENT_SORT_TYPES.has(requestedSortType) ? requestedSortType : QQ_COMMENT_DEFAULT_SORT_TYPE
+      try {
+        const { status, body } = unwrapServiceResponse(await commentsService({
+          id: commentId,
+          type: commentType,
+          page,
+          pagesize,
+          sortType,
+        }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music comments unavailable' })
+      }
+      return
+    }
+
     // 公共歌手详情聚合（无登录要求）：描述 + 关注数 + 歌曲列表 + MV 列表。
     if (normalizedPath === '/getsingerinfo') {
       if (ctx.method !== 'GET') {
@@ -950,7 +1375,10 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
 
     // The retained QQ surface is read-only. Reject non-GET methods even when
     // an upstream package later adds a handler under an existing path.
-    if (String(ctx.method || 'GET').toUpperCase() !== 'GET') {
+    // 唯一的例外是显式开启的写操作探针，且只接受 POST。
+    const requestMethod = String(ctx.method || 'GET').toUpperCase()
+    const isWriteSpikeRequest = isQQWriteSpikeEnabled() && QQ_WRITE_SPIKE_PATHS.has(normalizedPath)
+    if (isWriteSpikeRequest ? requestMethod !== 'POST' : requestMethod !== 'GET') {
       writeJson(ctx, 404, { error: 'Not found' })
       return
     }
@@ -1006,6 +1434,73 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
         const uin = normalizeQQUin(activeSession.uin || activeSession.loginUin || clientUin || parseCookieUin(activeSession.cookie))
         if (uin) ctx.query.uin = uin
       }
+    }
+
+    // 需登录的个性化推荐（只读）。会话已在上方注入 global.userInfo，这里显式
+    // 传入 uin 保证上游按账号返回个性化结果；无会话时上面已返回 401。
+    if (normalizedPath === '/getpersonalrecommend') {
+      const recommendUin = normalizeQQUin(
+        activeSession?.uin || activeSession?.loginUin || clientUin || parseCookieUin(activeSession?.cookie),
+      )
+      try {
+        const { status, body } = unwrapServiceResponse(await personalRecommendService({ uin: recommendUin }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music recommendation unavailable' })
+      }
+      return
+    }
+
+    // 写操作探针（默认关闭）：验证旧版 musicu.fcg 的 PlaylistDetailWrite 是否
+    // 仍然可用。响应只回状态码，不暴露任何上游原始数据或凭证。
+    if (isWriteSpikeRequest) {
+      const probeBody = await readQQProbeJsonBody(ctx.req)
+      if (!probeBody) {
+        writeJson(ctx, 400, { ok: false, code: 'INVALID_BODY', message: 'a JSON body is required' })
+        return
+      }
+      const songmid = getSingleValue(probeBody.songmid).trim()
+      if (!/^[A-Za-z0-9]{8,20}$/.test(songmid)) {
+        writeJson(ctx, 400, { ok: false, code: 'INVALID_SONGMID', message: 'songmid is invalid' })
+        return
+      }
+      const isLikePath = normalizedPath === '/user/likesong'
+      const dirId = isLikePath ? QQ_MY_LIKE_DIR_ID : Math.trunc(Number(probeBody.dirId))
+      if (!Number.isFinite(dirId) || dirId <= 0) {
+        writeJson(ctx, 400, { ok: false, code: 'INVALID_DIRID', message: 'dirId is invalid' })
+        return
+      }
+      const isRemove = normalizedPath === '/user/delsonglist'
+        || (isLikePath && String(probeBody.op || '').toLowerCase() === 'del')
+      const probeData = {
+        comm: { ct: 24, cv: 0, format: 'json' },
+        req_1: {
+          module: 'music.musicasset.PlaylistDetailWrite',
+          method: isRemove ? 'DelSonglist' : 'AddSonglist',
+          param: {
+            dirId,
+            v_songInfo: [{ songMid: songmid, songType: 0 }],
+          },
+        },
+      }
+      try {
+        const probeProps = {
+          method: 'get',
+          params: { format: 'json', data: JSON.stringify(probeData) },
+          option: {},
+        }
+        const probeRaw = (await qqServices.UCommon_default(probeProps)).data
+        const probeResult = probeRaw?.req_1 || {}
+        const probeCode = Number(probeResult?.code ?? -1)
+        writeJson(ctx, 200, {
+          ok: probeCode === 0,
+          code: probeCode,
+          message: String(probeResult?.subcode ?? probeResult?.msg ?? '').slice(0, 200),
+        })
+      } catch (_) {
+        writeJson(ctx, 502, { ok: false, code: 'UPSTREAM_ERROR', message: 'QQ Music write probe failed' })
+      }
+      return
     }
 
     await next()
