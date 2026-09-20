@@ -1489,6 +1489,11 @@ body {
   color: rgba(255, 255, 255, 0.08) !important;
 }
 
+/* Changelog watermark text (same treatment as the add-to-playlist watermark) */
+.dark .update-changelog .changelog-style5 {
+  color: rgba(255, 255, 255, 0.08) !important;
+}
+
 /* Generic inputs/buttons */
 .dark input,
 .dark textarea,

@@ -1,4 +1,3 @@
-import { version as currentVersion } from '../../package.json'
 import pinia from '../store/pinia'
 import { useOtherStore } from '../store/otherStore'
 
@@ -16,8 +15,10 @@ const LAST_SEEN_BUILD_KEY = 'hydrogen:lastSeenBuild'
 const MAX_LOG_COMMITS = 8
 const REQUEST_TIMEOUT_MS = 8000
 
-// 构建时注入的短 SHA（见 vite.config.js 的 define）；没有 git 信息时退回版本号
-const BUILD_ID = typeof __APP_COMMIT__ === 'string' && __APP_COMMIT__ ? __APP_COMMIT__ : `v${currentVersion}`
+// 构建标识由 vite.config.js 注入（提交短 SHA，无 git 时为构建时间戳）。
+// 项目已弃用语义化版本号，一律用该标识区分构建版本。
+const BUILD_ID = typeof __APP_BUILD_ID__ === 'string' && __APP_BUILD_ID__ ? __APP_BUILD_ID__ : 'dev'
+// 标识是提交 SHA 时可在提交列表里精确定位，时间戳标识只能退化为取最近若干条
 const BUILD_ID_IS_COMMIT = /^[0-9a-f]{7,40}$/i.test(BUILD_ID)
 
 const otherStore = useOtherStore(pinia)
@@ -128,7 +129,7 @@ export function getCommitsPageUrl() {
 // 检查更新。alwaysShow 为 true（设置里的手动检查）时点击即弹出页面：先展示当前构建
 // 信息，拉到提交后再填充日志；为 false（首次打开静默检查）时仅在有新版本才弹出。
 export async function checkForUpdates({ alwaysShow = true } = {}) {
-  const buildVersion = BUILD_ID_IS_COMMIT ? BUILD_ID : `v${currentVersion}`
+  const buildVersion = BUILD_ID
   if (alwaysShow) showUpdatePage({ version: buildVersion, commits: [] })
 
   try {
@@ -159,16 +160,16 @@ async function showBuildChangelog(previousBuildId) {
     const commits = await fetchCommits()
     const buildCommits = takeBuildCommits(commits, previousBuildId)
     showUpdatePage({
-      version: BUILD_ID_IS_COMMIT ? BUILD_ID : `v${currentVersion}`,
+      version: BUILD_ID,
       commits: buildCommits,
     })
     return
   } catch (_) {
-    // 拉取失败时退化为只显示版本号
+    // 拉取失败时退化为只显示构建标识
   }
 
   showUpdatePage({
-    version: BUILD_ID_IS_COMMIT ? BUILD_ID : `v${currentVersion}`,
+    version: BUILD_ID,
     commits: [],
   })
 }

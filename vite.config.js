@@ -6,17 +6,17 @@ import http from 'http'
 import https from 'https'
 import { pipeline } from 'stream'
 
-// 构建标识：优先取当前提交的短 SHA，供「新版本追加」判断网页是否已更新；
-// 没有 git 信息（例如打包机未装 git）时退回空串，运行时再退化为版本号。
-function resolveAppCommit() {
+// 构建标识：优先取当前提交的短 SHA；没有 git 信息（例如打包机未装 git）时退回构建时间戳，
+// 保证每次构建仍有唯一标识。项目已弃用语义化版本号，统一用构建标识区分版本。
+function resolveAppBuildId() {
   try {
-    return execSync('git rev-parse --short HEAD', {
+    const commit = execSync('git rev-parse --short HEAD', {
       cwd: __dirname,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim()
-  } catch (_) {
-    return ''
-  }
+    if (commit) return commit
+  } catch (_) {}
+  return `t${Date.now().toString(36)}`
 }
 
 // 可选 GitHub Token：与 web-server.js 用同一组环境变量，用于提高「检查更新」接口限额
@@ -118,7 +118,7 @@ export default defineConfig({
   plugins: [vue(), downloadProxyPlugin()],
   base: './',
   define: {
-    __APP_COMMIT__: JSON.stringify(resolveAppCommit()),
+    __APP_BUILD_ID__: JSON.stringify(resolveAppBuildId()),
   },
   build: {
     target: 'es2018',

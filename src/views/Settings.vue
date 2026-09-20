@@ -19,7 +19,6 @@ import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } f
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
 import settingsSchema from '@/shared/settingsSchema.js'
-import { version } from '../../package.json'
 
 const { MUSIC_LEVEL_OPTIONS, normalizeSettings } = settingsSchema
 
@@ -572,7 +571,6 @@ const clearFmRecent = () => {
                 <div class="app-icon">
                     <img src="../assets/icon/icon.ico" alt="" />
                 </div>
-                <div class="version">V{{ version }}</div>
                 <div class="update-check">
                     <button class="check-update-btn" @click="checkForUpdates">检查更新</button>
                 </div>
@@ -960,10 +958,6 @@ const clearFmRecent = () => {
                     width: 100%;
                     height: 100%;
                 }
-            }
-            .version {
-                font: 14px Geometos;
-                color: black;
             }
             .update-check {
                 margin: 8px 0;
