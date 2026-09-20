@@ -1,12 +1,13 @@
 <script setup>
-  import { ref, onActivated } from 'vue'
+  import { ref, onActivated, onDeactivated, watch } from 'vue'
   import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router';
   import { useOtherStore } from '../store/otherStore';
   import { storeToRefs } from 'pinia';
   import LibrarySongList from '../components/LibrarySongList.vue';
   import LibraryAlbumList from '../components/LibraryAlbumList.vue';
   import SearchResultList from '../components/SearchResultList.vue';
-  import { getSearchSource } from '../utils/providerPolicy.mjs'
+  import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue';
+  import { resolvePlatformSource } from '../utils/providerPolicy.mjs'
   
   const otherStore = useOtherStore()
   const { getSearchInfo } = otherStore
@@ -16,34 +17,58 @@
   const searchScroll = ref()
   // 切换来源时的渐入渐出（复用「切换歌单」的 fade）
   const sourceChanging = ref(false)
+  // 路由驱动的来源同步（前进后退 / 显式 ?source=）不需要动画，页面本身正在切换
+  let syncingSourceFromRoute = false
+  // 开关触发的 query 同步：拉取与渐显统一交给 switchSearchSource，避免重复请求
+  let programmaticSourceReplace = false
+  // keep-alive 下组件可能在后台仍存活，只有搜索页可见时才响应来源变化
+  let pageActive = false
 
   const routerChange = (operation) => {
     if(operation) router.forward()
     else router.back()
   }
   onActivated(() => {
+    pageActive = true
     searchScroll.value.scrollTop = scrollTop.value
   })
+  onDeactivated(() => {
+    pageActive = false
+  })
   onBeforeRouteUpdate((to, from, next) => {
-      otherStore.searchSource = getSearchSource(to.query.source)
+      if (programmaticSourceReplace) {
+          next()
+          return
+      }
+      const resolved = resolvePlatformSource(to.query.source, otherStore.searchSource)
+      if (resolved !== otherStore.searchSource) {
+          syncingSourceFromRoute = true
+          otherStore.setSearchSource(resolved)
+      }
       getSearchInfo(to.query.keywords)
       next()
   })
-  const switchSearchSource = async (source) => {
-      const nextSource = getSearchSource(source)
-      if (otherStore.searchSource === nextSource) return
-      // 先淡出当前结果，切换来源并取回数据后再淡入
+  // 来源开关（PlatformSourceSwitch）写入 store 后统一走这里：
+  // 先淡出当前结果，切换来源并取回数据后再淡入。
+  // 注意：进入本函数时 store 已经是新值（由 watch 触发），因此不能再做
+  // 「值相同就 return」的短路，否则永远不会刷新结果。
+  const switchSearchSource = async (nextSource) => {
       sourceChanging.value = true
       await new Promise(resolve => setTimeout(resolve, 300))
-      otherStore.searchSource = nextSource
+      programmaticSourceReplace = true
       await router.replace({ query: { ...router.currentRoute.value.query, source: nextSource } }).catch(() => {})
+      programmaticSourceReplace = false
       await getSearchInfo(router.currentRoute.value.query.keywords).catch(() => {})
       sourceChanging.value = false
   }
-  // 开关：网易云为关，QQ音乐为开
-  const toggleSearchSource = () => {
-      switchSearchSource(otherStore.searchSource === 'qq' ? 'netease' : 'qq')
-  }
+  watch(() => otherStore.searchSource, nextSource => {
+      if (syncingSourceFromRoute) {
+          syncingSourceFromRoute = false
+          return
+      }
+      if (!pageActive) return
+      void switchSearchSource(nextSource)
+  })
   onBeforeRouteLeave((to, from, next) => {
     scrollTop.value = searchScroll.value.scrollTop
     next()
@@ -56,14 +81,7 @@
       <svg t="1669039513804" @click="routerChange(0)" class="router-last" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200"><path d="M716.608 1010.112L218.88 512.384 717.376 13.888l45.248 45.248-453.248 453.248 452.48 452.48z" p-id="1054"></path></svg>
       <svg t="1669039531646" @click="routerChange(1)" class="router-next" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1207" width="200" height="200"><path d="M264.896 1010.112l497.728-497.728L264.128 13.888 218.88 59.136l453.248 453.248-452.48 452.48z" p-id="1208"></path></svg>
       <span class="search-title">搜索内容：{{router.currentRoute.value.query.keywords}}</span>
-      <div class="source-toggle" @click="toggleSearchSource()">
-        <div class="toggle-off" :class="{ 'toggle-on-in': otherStore.searchSource == 'qq' }">
-          {{ otherStore.searchSource == 'qq' ? 'QQ音乐' : '网易云音乐' }}
-        </div>
-        <Transition name="toggle">
-          <div class="toggle-on" v-show="otherStore.searchSource == 'qq'"></div>
-        </Transition>
-      </div>
+      <PlatformSourceSwitch variant="toggle" class="source-toggle"></PlatformSourceSwitch>
     </div>
     <Transition name="fade">
       <div class="search-container" ref="searchScroll" v-show="!sourceChanging">
@@ -135,39 +153,9 @@
         font: 17Px SourceHanSansCN-Bold;
         color: black;
       }
-      // 来源开关：与设置页的开关同一套样式，网易云=关、QQ音乐=开
+      // 来源开关：与设置页的开关同一套样式（组件内自带样式），这里只保留间距
       .source-toggle{
         margin-left: 30px;
-        width: 200px;
-        height: 34px;
-        position: relative;
-        overflow: hidden;
-        isolation: isolate;
-        &:hover{
-          cursor: pointer;
-        }
-        .toggle-on, .toggle-off{
-          padding: 5px 10px;
-          width: 100%;
-          height: 100%;
-          font: 13px SourceHanSansCN-Bold;
-          transition: 0.2s;
-          line-height: 24px;
-        }
-        .toggle-off{
-          background-color: rgba(255, 255, 255, 0.35);
-        }
-        .toggle-on{
-          background-color: black;
-          position: absolute;
-          top: 0;
-          left: 0;
-          z-index: -1;
-        }
-        .toggle-on-in{
-          color: white;
-          background-color: transparent;
-        }
       }
       .router-last, .router-next{
         margin-right: 10Px;
@@ -243,15 +231,5 @@
   .fade-leave-to {
     transform: scale(0.95);
     opacity: 0;
-  }
-
-  // 开关滑块：与设置页一致
-  .toggle-enter-active,
-  .toggle-leave-active {
-    transition: 0.1s;
-  }
-  .toggle-enter-from,
-  .toggle-leave-to {
-    transform: translateX(-100%);
   }
 </style>
