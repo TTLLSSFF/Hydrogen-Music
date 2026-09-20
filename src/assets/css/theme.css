@@ -1484,13 +1484,11 @@ body {
   color: rgba(255, 255, 255, 0.12) !important;
 }
 
-/* Add-to-playlist watermark text */
-.dark .context-menu .add-to-playlist .add-style5 {
-  color: rgba(255, 255, 255, 0.08) !important;
-}
-
-/* Changelog watermark text (same treatment as the add-to-playlist watermark) */
-.dark .update-changelog .changelog-style5 {
+/* 弹窗水印（ADD / DOWNLOAD / LOG）：深色模式下需压过 `.dark *` 的白色文字覆盖，
+   才能保持贴在容器底色上的浅色效果 */
+.dark .add-style5,
+.dark .download-style5,
+.dark .changelog-style5 {
   color: rgba(255, 255, 255, 0.08) !important;
 }
 

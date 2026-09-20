@@ -86,29 +86,33 @@
         </div>
 
         <!-- 更新日志：展开动画复用「添加到歌单」 -->
-        <div class="update-changelog" v-if="showChangelog" @click="closeChangelog">
-            <div class="changelog-container" @click.stop>
-                <span class="changelog-title">更新日志</span>
-                <div class="changelog-list">
-                    <template v-for="(line, index) in changelogLines" :key="`changelog-${index}`">
-                        <div v-if="line.type === 'heading'" class="changelog-heading">{{ line.text }}</div>
-                        <div v-else-if="line.type === 'bullet'" class="changelog-bullet">{{ line.text }}</div>
-                        <div v-else-if="line.type === 'gap'" class="changelog-gap"></div>
-                        <div v-else class="changelog-text">{{ line.text }}</div>
-                    </template>
-                    <div class="changelog-empty" v-if="!changelogLines.length">该版本暂无更新说明，可前往 GitHub 查看</div>
+        <Transition name="add-fade">
+            <div class="update-changelog" v-if="showChangelog" @click="closeChangelog">
+                <div class="changelog-container" @click.stop>
+                    <div class="changelog-body">
+                        <span class="changelog-title">更新日志</span>
+                        <div class="changelog-list">
+                            <template v-for="(line, index) in changelogLines" :key="`changelog-${index}`">
+                                <div v-if="line.type === 'heading'" class="changelog-heading">{{ line.text }}</div>
+                                <div v-else-if="line.type === 'bullet'" class="changelog-bullet">{{ line.text }}</div>
+                                <div v-else-if="line.type === 'gap'" class="changelog-gap"></div>
+                                <div v-else class="changelog-text">{{ line.text }}</div>
+                            </template>
+                            <div class="changelog-empty" v-if="!changelogLines.length">该版本暂无更新说明，可前往 GitHub 查看</div>
+                        </div>
+                        <div class="changelog-footer">
+                            <div class="changelog-github" @click="toReleasesPage()">在 GitHub 查看</div>
+                            <div class="changelog-back" @click="closeChangelog()">返回</div>
+                        </div>
+                        <span class="changelog-style5">LOG</span>
+                    </div>
+                    <span class="changelog-style changelog-style1"></span>
+                    <span class="changelog-style changelog-style2"></span>
+                    <span class="changelog-style changelog-style3"></span>
+                    <span class="changelog-style changelog-style4"></span>
                 </div>
-                <div class="changelog-footer">
-                    <div class="changelog-github" @click="toReleasesPage()">在 GitHub 查看</div>
-                    <div class="changelog-back" @click="closeChangelog()">返回</div>
-                </div>
-                <span class="changelog-style changelog-style1"></span>
-                <span class="changelog-style changelog-style2"></span>
-                <span class="changelog-style changelog-style3"></span>
-                <span class="changelog-style changelog-style4"></span>
-                <span class="changelog-style5">LOG</span>
             </div>
-        </div>
+        </Transition>
     </div>
 </template>
 
@@ -350,11 +354,8 @@
     height: 100%;
     background-color: rgba(0, 0, 0, 0.55);
     z-index: 10;
-    animation: changelog-backdrop-in 0.2s forwards;
-    @keyframes changelog-backdrop-in {
-      0%{opacity: 0;}
-      100%{opacity: 1;}
-    }
+    // 裁剪放在遮罩层：容器保持 visible，四角装饰才能露出容器边缘
+    overflow: hidden;
     .changelog-container{
       width: 0;
       height: 0;
@@ -365,12 +366,19 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      overflow: hidden;
       animation: changelog-container-in 0.6s 0.3s forwards;
       @keyframes changelog-container-in {
         0%{width: 0;height: 0;}
         50%{width: 620px;height: 0;}
         100%{width: 620px;height: 460px;}
+      }
+      // 内容裁剪层：横向展开阶段容器高度为 0，内容需随之裁掉，
+      // 四角装饰位于容器外侧（-4px），故不放进该层
+      .changelog-body{
+        width: 100%;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
       }
       .changelog-title{
         position: relative;
@@ -441,6 +449,13 @@
         flex-direction: row;
         align-items: center;
         justify-content: center;
+        // 与标题同一时序：内容在容器长高时才被揭示，无需额外延迟
+        opacity: 0;
+        animation: changelog-footer-in 0.3s 0.5s forwards;
+        @keyframes changelog-footer-in {
+          0%{opacity: 0;}
+          100%{opacity: 1;}
+        }
         .changelog-github, .changelog-back{
           padding: 0.6vh 1.6vh;
           font: 13px SourceHanSansCN-Bold;
@@ -497,7 +512,7 @@
       }
       .changelog-style5{
         font: 55px Gilroy-ExtraBold;
-        color: rgb(37, 37, 37);
+        color: rgba(255, 255, 255, 0.08);
         position: absolute;
         top: 10px;
         left: 20px;

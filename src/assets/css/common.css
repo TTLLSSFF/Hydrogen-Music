@@ -4,3 +4,15 @@ html, body{
 *{
     box-sizing: border-box;
 }
+
+/* 「添加到歌单」「下载音质」「更新日志」三个弹窗共用的遮罩进出场过渡 */
+.add-fade-enter-active {
+    transition: 0.2s;
+}
+.add-fade-leave-active {
+    transition: 0.1s;
+}
+.add-fade-enter-from,
+.add-fade-leave-to {
+    opacity: 0;
+}

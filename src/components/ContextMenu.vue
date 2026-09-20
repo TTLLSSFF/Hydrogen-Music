@@ -468,37 +468,39 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     <Transition name="add-fade">
       <div class="add-to-playlist" v-if="otherStore.addPlaylistShow" @click="otherStore.addPlaylistShow = false;createActive = false;newPlaylistTitle = '';">
         <div class="playlist-container" :class="{'playlist-container-newPlaylist': justNewPlaylist}" @click.stop>
-          <span class="add-title">{{justNewPlaylist ? '添加歌单' : '添加到我的歌单'}}</span>
-          <div class="my-playlist">
-            <div class="create-playlist" v-show="!justNewPlaylist" :style="{background: createActive ? 'rgba(53, 53, 53, 0.7)' : 'none'}" @click="createActive = !createActive">
-              <div class="list-img">
-                <svg t="1671329712143" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2116" width="200" height="200"><path d="M939.939489 459.072557 562.339502 459.072557 562.339502 83.519182 462.055494 83.519182 462.055494 459.072557 84.455507 459.072557 84.455507 559.356564 462.055494 559.356564 462.055494 939.003164 562.339502 939.003164 562.339502 559.356564 939.939489 559.356564Z" fill="#ffffff" p-id="2117"></path></svg>
-              </div>
-              <span class="list-name">创建新歌单并添加</span>
-            </div>
-            <div class="create-playlist create-playlist-active" :class="{'create-playlist-active2': createActive || justNewPlaylist}">
-              <input type="text" v-model="newPlaylistTitle" placeholder="请输入新歌单标题">
-              <div class="checkbox" @click="isPrivacy = !isPrivacy">
-                <div class="box" :class="{'box-selected': isPrivacy}">
-                  <svg t="1671347600812" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4196" width="200" height="200"><path d="M155.644361 439.225533 376.468722 660.086733l486.86146-490.229161 95.379301 95.352695-585.574692 588.933183L65.289494 546.298154 155.644361 439.225533 155.644361 439.225533zM155.644361 439.225533" fill="#272636" p-id="4197"></path></svg>
+          <div class="add-body">
+            <span class="add-title">{{justNewPlaylist ? '添加歌单' : '添加到我的歌单'}}</span>
+            <div class="my-playlist">
+              <div class="create-playlist" v-show="!justNewPlaylist" :style="{background: createActive ? 'rgba(53, 53, 53, 0.7)' : 'none'}" @click="createActive = !createActive">
+                <div class="list-img">
+                  <svg t="1671329712143" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2116" width="200" height="200"><path d="M939.939489 459.072557 562.339502 459.072557 562.339502 83.519182 462.055494 83.519182 462.055494 459.072557 84.455507 459.072557 84.455507 559.356564 462.055494 559.356564 462.055494 939.003164 562.339502 939.003164 562.339502 559.356564 939.939489 559.356564Z" fill="#ffffff" p-id="2117"></path></svg>
                 </div>
-                <span class="box-label">设置为隐私歌单</span>
+                <span class="list-name">创建新歌单并添加</span>
               </div>
-              <div class="create-confirm" @click="createAndAdd()">完成</div>
-              <div class="create-cancel" @click="createCancel()">取消</div>
-            </div>
-            <div class="list" @click="addToMyPlaylist(item)" v-show="!justNewPlaylist" v-for="(item, index) in neteaseWritablePlaylists" :key="`netease-playlist-${item.id}`">
-              <div class="list-img">
-                <img :src="getPlaylistCover(item)" alt="">
+              <div class="create-playlist create-playlist-active" :class="{'create-playlist-active2': createActive || justNewPlaylist}">
+                <input type="text" v-model="newPlaylistTitle" placeholder="请输入新歌单标题">
+                <div class="checkbox" @click="isPrivacy = !isPrivacy">
+                  <div class="box" :class="{'box-selected': isPrivacy}">
+                    <svg t="1671347600812" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4196" width="200" height="200"><path d="M155.644361 439.225533 376.468722 660.086733l486.86146-490.229161 95.379301 95.352695-585.574692 588.933183L65.289494 546.298154 155.644361 439.225533 155.644361 439.225533zM155.644361 439.225533" fill="#272636" p-id="4197"></path></svg>
+                  </div>
+                  <span class="box-label">设置为隐私歌单</span>
+                </div>
+                <div class="create-confirm" @click="createAndAdd()">完成</div>
+                <div class="create-cancel" @click="createCancel()">取消</div>
               </div>
-              <span class="list-name">{{(item.name ?? item.title)}}</span>
+              <div class="list" @click="addToMyPlaylist(item)" v-show="!justNewPlaylist" v-for="(item, index) in neteaseWritablePlaylists" :key="`netease-playlist-${item.id}`">
+                <div class="list-img">
+                  <img :src="getPlaylistCover(item)" alt="">
+                </div>
+                <span class="list-name">{{(item.name ?? item.title)}}</span>
+              </div>
             </div>
+            <span class="add-style5">ADD</span>
           </div>
           <span class="add-style add-style1"></span>
           <span class="add-style add-style2"></span>
           <span class="add-style add-style3"></span>
           <span class="add-style add-style4"></span>
-          <span class="add-style5">ADD</span>
         </div>
       </div>
     </Transition>
@@ -661,6 +663,14 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
           0%{width: 0;height: 0;}
           50%{width: 300Px;height: 0;}
           100%{width: 300Px;height: 500Px;}
+        }
+        // 内容裁剪层：横向展开阶段容器高度为 0，内容需随之裁掉，
+        // 四角装饰位于容器外侧（-4Px），故不放进该层
+        .add-body{
+          width: 100%;
+          height: 100%;
+          position: relative;
+          overflow: hidden;
         }
         .add-title{
           display: inline-block;
@@ -825,7 +835,7 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
         }
         .add-style5{
           font: 55Px Gilroy-ExtraBold;
-          color: rgb(37, 37, 37);
+          color: rgba(255, 255, 255, 0.08);
           position: absolute;
           top: 10Px;
           left: 20Px;
@@ -846,17 +856,6 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
           100%{width: 300Px;height: 240Px;}
         }
       }
-    }
-    .add-fade-enter-active {
-      transition: 0.2s;
-    }
-    .add-fade-leave-active {
-      transition: 0.1s;
-    }
-
-    .add-fade-enter-from,
-    .add-fade-leave-to {
-      opacity: 0;
     }
   }
 </style>

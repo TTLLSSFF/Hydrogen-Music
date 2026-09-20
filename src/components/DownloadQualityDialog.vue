@@ -57,25 +57,27 @@ const startDownload = async level => {
     <Transition name="add-fade">
         <div class="download-quality-dialog" v-if="otherStore.downloadQualityShow" @click="closeDialog">
             <div class="download-container" @click.stop>
-                <span class="download-title">{{ dialogTitle }}</span>
-                <div class="download-quality-list">
-                    <button
-                        class="quality-item"
-                        v-for="item in MUSIC_LEVEL_OPTIONS"
-                        :key="item.value"
-                        :disabled="downloading"
-                        @click="startDownload(item.value)"
-                    >
-                        <span class="quality-name">{{ item.label }}</span>
-                        <span class="quality-code">{{ item.value }}</span>
-                    </button>
+                <div class="download-body">
+                    <span class="download-title">{{ dialogTitle }}</span>
+                    <div class="download-quality-list">
+                        <button
+                            class="quality-item"
+                            v-for="item in MUSIC_LEVEL_OPTIONS"
+                            :key="item.value"
+                            :disabled="downloading"
+                            @click="startDownload(item.value)"
+                        >
+                            <span class="quality-name">{{ item.label }}</span>
+                            <span class="quality-code">{{ item.value }}</span>
+                        </button>
+                    </div>
+                    <span class="download-progress" v-if="progressText">{{ progressText }}</span>
+                    <span class="download-style5">DOWNLOAD</span>
                 </div>
-                <span class="download-progress" v-if="progressText">{{ progressText }}</span>
                 <span class="download-style download-style1"></span>
                 <span class="download-style download-style2"></span>
                 <span class="download-style download-style3"></span>
                 <span class="download-style download-style4"></span>
-                <span class="download-style5">DOWNLOAD</span>
             </div>
         </div>
     </Transition>
@@ -99,9 +101,6 @@ const startDownload = async level => {
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        overflow: hidden;
-        isolation: isolate;
-        z-index: 0;
         animation: download-container-in 0.6s 0.3s forwards;
         @keyframes download-container-in {
             0% {
@@ -116,6 +115,14 @@ const startDownload = async level => {
                 width: 300px;
                 height: 460px;
             }
+        }
+        // 内容裁剪层：横向展开阶段容器高度为 0，内容需随之裁掉，
+        // 否则带 padding 的列表会露出 padding box 那一段
+        .download-body {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
         }
         .download-title {
             display: inline-block;
@@ -257,14 +264,15 @@ const startDownload = async level => {
             bottom: $position;
             left: $position;
         }
+        // 与「添加到歌单」「更新日志」的水印同一套参数，仅字号按 300px 容器宽度收窄
         .download-style5 {
             max-width: calc(100% - 32px);
             font: 36px Gilroy-ExtraBold;
-            color: rgba(255, 255, 255, 0.08) !important;
+            color: rgba(255, 255, 255, 0.08);
             position: absolute;
-            top: 12px;
-            left: 16px;
-            z-index: 0;
+            top: 10px;
+            left: 20px;
+            z-index: -1;
             white-space: nowrap;
             overflow: hidden;
             pointer-events: none;
