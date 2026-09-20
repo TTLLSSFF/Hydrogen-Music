@@ -1,15 +1,45 @@
 <script setup>
-  import { ref } from 'vue'
+  import { computed, ref } from 'vue'
   import { useOtherStore } from '../store/otherStore';
+  import { getCommitsPageUrl } from '../utils/appUpdate';
   const otherStore = useOtherStore()
   const show = ref(true)
-  const toUpdate = () => {
-    const url = "https://github.com/ldx123000/Hydrogen-Music/releases"
-    if (typeof windowApi !== 'undefined' && windowApi?.toRegister) {
-      windowApi.toRegister(url)
-    } else {
-      window.open(url, '_blank')
-    }
+  const showChangelog = ref(false)
+
+  const stripMarkdown = value => String(value || '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .trim()
+
+  const changelogLines = computed(() => {
+    const raw = String(otherStore.updateChangelog || '').trim()
+    if (!raw) return []
+
+    return raw.split(/\r?\n/).map(line => {
+      const text = line.trim()
+      if (!text || /^[-*_]{3,}$/.test(text)) return { type: 'gap', text: '' }
+
+      const heading = text.match(/^#{1,6}\s*(.+)$/)
+      if (heading) return { type: 'heading', text: stripMarkdown(heading[1]) }
+
+      const bullet = text.match(/^(?:[-*+]|\d+[.、)])\s*(.+)$/)
+      if (bullet) return { type: 'bullet', text: stripMarkdown(bullet[1]) }
+
+      return { type: 'text', text: stripMarkdown(text) }
+    })
+  })
+
+  const changelogUrl = computed(() => otherStore.updateReleaseUrl || getCommitsPageUrl())
+
+  const openChangelog = () => {
+    showChangelog.value = true
+  }
+  const closeChangelog = () => {
+    showChangelog.value = false
+  }
+  const toReleasesPage = () => {
+    window.open(changelogUrl.value, '_blank')
   }
   const close = () => {
     show.value = !show.value
@@ -47,11 +77,36 @@
                         <div class="version">{{ otherStore.newVersion }}</div>
                     </div>
                     <div class="update-option">
-                        <div class="to-update" @click="toUpdate()">前往GitHub更新</div>
+                        <div class="to-update" @click="openChangelog()">查看更新日志</div>
                         <div class="close" @click="close()">不要了，走了</div>
                         <svg t="1676132470655" class="close-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2020" width="200" height="200"><path d="M745.610572 75.641771l-496.221642 0c-28.741601 0-51.259454 25.084305-51.259454 57.107649l0 789.362029 74.170257 0 0-772.299421 445.333648 0-331.506183 29.153994 0 766.881015 336.575642-27.442002 0 3.706415 74.170257 0L796.873096 132.74942C796.875143 100.725052 774.35729 75.641771 745.610572 75.641771zM428.767344 533.386076c-11.995195 0-21.719674-9.724479-21.719674-21.719674 0-11.995195 9.724479-21.719674 21.719674-21.719674 11.995195 0 21.719674 9.724479 21.719674 21.719674C450.487018 523.661597 440.763562 533.386076 428.767344 533.386076z" fill="#ffffff" p-id="2021"></path></svg>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 更新日志：展开动画复用「添加到歌单」 -->
+        <div class="update-changelog" v-if="showChangelog" @click="closeChangelog">
+            <div class="changelog-container" @click.stop>
+                <span class="changelog-title">更新日志</span>
+                <div class="changelog-list">
+                    <template v-for="(line, index) in changelogLines" :key="`changelog-${index}`">
+                        <div v-if="line.type === 'heading'" class="changelog-heading">{{ line.text }}</div>
+                        <div v-else-if="line.type === 'bullet'" class="changelog-bullet">{{ line.text }}</div>
+                        <div v-else-if="line.type === 'gap'" class="changelog-gap"></div>
+                        <div v-else class="changelog-text">{{ line.text }}</div>
+                    </template>
+                    <div class="changelog-empty" v-if="!changelogLines.length">该版本暂无更新说明，可前往 GitHub 查看</div>
+                </div>
+                <div class="changelog-footer">
+                    <div class="changelog-github" @click="toReleasesPage()">在 GitHub 查看</div>
+                    <div class="changelog-back" @click="closeChangelog()">返回</div>
+                </div>
+                <span class="changelog-style changelog-style1"></span>
+                <span class="changelog-style changelog-style2"></span>
+                <span class="changelog-style changelog-style3"></span>
+                <span class="changelog-style changelog-style4"></span>
+                <span class="changelog-style5">LOG</span>
             </div>
         </div>
     </div>
@@ -220,7 +275,8 @@
                         line-height: 6.4vh !important;
                         padding: 2px 6px;
                         font: 6.4vh SourceHanSansCN-Heavy;
-                        color: rgba(0, 0, 0, 0.95);
+                        // 同样需要 !important：白色滑入背景上的黑字在深色模式下会被 `.dark *` 冲掉
+                        color: rgba(0, 0, 0, 0.95) !important;
                         position: relative;
                         overflow: hidden;
                         opacity: 0;
@@ -264,9 +320,10 @@
                         font: 2vh SourceHanSansCN-Bold;
                         color: rgba(255, 255, 255, 0.95);
                         border: 1px solid white;
+                        // 反色 hover 需要 !important：深色模式下 theme.css 的 `.dark *` 会把文字压回白色
                         &:hover{
                             background-color: rgba(255, 255, 255, 0.95);
-                            color: black;
+                            color: black !important;
                             cursor: pointer;
                         }
                     }
@@ -281,6 +338,177 @@
                 }
             }
         }
+    }
+  }
+
+  // 更新日志面板：容器展开、四角闪烁、水印与标题渐入均复用「添加到歌单」的动画节奏
+  .update-changelog{
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.55);
+    z-index: 10;
+    animation: changelog-backdrop-in 0.2s forwards;
+    @keyframes changelog-backdrop-in {
+      0%{opacity: 0;}
+      100%{opacity: 1;}
+    }
+    .changelog-container{
+      width: 0;
+      height: 0;
+      max-width: 92vw;
+      max-height: 76vh;
+      background-color: rgb(15, 15, 15);
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      overflow: hidden;
+      animation: changelog-container-in 0.6s 0.3s forwards;
+      @keyframes changelog-container-in {
+        0%{width: 0;height: 0;}
+        50%{width: 620px;height: 0;}
+        100%{width: 620px;height: 460px;}
+      }
+      .changelog-title{
+        position: relative;
+        z-index: 1;
+        display: inline-block;
+        padding: 10px 0;
+        font: 16px SourceHanSansCN-Bold;
+        color: white;
+        opacity: 0;
+        animation: changelog-title-in 0.3s 0.5s forwards;
+        @keyframes changelog-title-in {
+          0%{opacity: 0;}
+          100%{opacity: 1;}
+        }
+      }
+      .changelog-list{
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        height: calc(100% - 96px);
+        padding: 0 22px;
+        overflow-y: auto;
+        text-align: left;
+        &::-webkit-scrollbar{
+          width: 4px;
+        }
+        &::-webkit-scrollbar-thumb{
+          background-color: rgba(255, 255, 255, 0.25);
+        }
+        .changelog-heading{
+          margin: 8px 0 4px;
+          font: 15px SourceHanSansCN-Bold;
+          color: white;
+        }
+        .changelog-bullet{
+          padding-left: 12px;
+          font: 13px SourceHanSansCN-Bold;
+          color: rgba(255, 255, 255, 0.85);
+          line-height: 1.7;
+          &::before{
+            content: '>';
+            margin-right: 6px;
+            color: rgba(255, 255, 255, 0.5);
+          }
+        }
+        .changelog-text{
+          font: 13px SourceHanSansCN-Bold;
+          color: rgba(255, 255, 255, 0.85);
+          line-height: 1.7;
+        }
+        .changelog-gap{
+          height: 6px;
+        }
+        .changelog-empty{
+          padding-top: 20px;
+          font: 13px SourceHanSansCN-Bold;
+          color: rgba(255, 255, 255, 0.6);
+        }
+      }
+      .changelog-footer{
+        position: absolute;
+        z-index: 1;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        padding: 0 0 12px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        .changelog-github, .changelog-back{
+          padding: 0.6vh 1.6vh;
+          font: 13px SourceHanSansCN-Bold;
+          color: rgba(255, 255, 255, 0.95);
+          border: 1px solid white;
+          // 反色 hover 同样补 !important，避免深色模式下文字被压回白色
+          &:hover{
+            background-color: rgba(255, 255, 255, 0.95);
+            color: black !important;
+            cursor: pointer;
+          }
+        }
+        .changelog-back{
+          margin-left: 16px;
+        }
+      }
+      .changelog-style{
+        width: 9px;
+        height: 9px;
+        background-color: rgb(247, 247, 247);
+        position: absolute;
+        opacity: 0;
+        animation: changelog-style-in 0.4s forwards;
+        @keyframes changelog-style-in {
+          0%{opacity: 0;}
+          10%{opacity: 1;}
+          20%{opacity: 0;}
+          30%{opacity: 1;}
+          40%{opacity: 0;}
+          50%{opacity: 1;}
+          60%{opacity: 0;}
+          70%{opacity: 1;}
+          80%{opacity: 0;}
+          90%{opacity: 0;}
+          100%{opacity: 1;}
+        }
+      }
+      $changelogPosition: -4px;
+      .changelog-style1{
+        top: $changelogPosition;
+        left: $changelogPosition;
+      }
+      .changelog-style2{
+        top: $changelogPosition;
+        right: $changelogPosition;
+      }
+      .changelog-style3{
+        bottom: $changelogPosition;
+        right: $changelogPosition;
+      }
+      .changelog-style4{
+        bottom: $changelogPosition;
+        left: $changelogPosition;
+      }
+      .changelog-style5{
+        font: 55px Gilroy-ExtraBold;
+        color: rgb(37, 37, 37);
+        position: absolute;
+        top: 10px;
+        left: 20px;
+        z-index: -1;
+        opacity: 0;
+        animation: changelog-style5-in 0.3s 0.6s forwards;
+        @keyframes changelog-style5-in {
+          0%{opacity: 0;}
+          100%{opacity: 1;}
+        }
+      }
     }
   }
 </style>

@@ -286,21 +286,120 @@ function proxyToSiren(req, res) {
   })
 }
 
-function createWebServer({ distDir = DIST_DIR } = {}) {
-  return http.createServer((req, res) => {
+// 只读转发 GitHub 接口：Token 只留在服务端，避免暴露给浏览器并提高接口限额
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GITHUB_API_TOKEN || ''
+const GITHUB_API_HOST = 'api.github.com'
+const GITHUB_ALLOWED_PATHS = [
+  /^\/repos\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/commits$/,
+]
+const GITHUB_PROXY_TIMEOUT_MS = 10000
+
+function sendGithubProxyError(res, status, message) {
+  if (res.destroyed || res.writableEnded || res.headersSent) return
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify({ message }))
+}
+
+function proxyToGithub(req, res) {
+  let targetPath = ''
+  try {
+    const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+    targetPath = requestUrl.pathname.replace(/^\/github-api/, '')
+
+    if (!GITHUB_ALLOWED_PATHS.some(pattern => pattern.test(targetPath))) {
+      sendGithubProxyError(res, 403, 'github proxy path not allowed')
+      return
+    }
+
+    const perPage = Math.min(Math.max(Number(requestUrl.searchParams.get('per_page')) || 20, 1), 100)
+    targetPath = `${targetPath}?per_page=${perPage}`
+  } catch (_) {
+    sendGithubProxyError(res, 400, 'invalid github proxy request')
+    return
+  }
+
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'HydrogenMusic-Web',
+  }
+  // 未配置 Token 时按匿名请求转发（GitHub 限额较低，仍可正常工作）
+  if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`
+
+  const proxyReq = https.request({
+    hostname: GITHUB_API_HOST,
+    port: 443,
+    path: targetPath,
+    method: 'GET',
+    headers,
+    timeout: GITHUB_PROXY_TIMEOUT_MS,
+  }, (proxyRes) => {
+    if (res.destroyed || res.writableEnded) {
+      proxyRes.destroy()
+      return
+    }
+
+    res.writeHead(proxyRes.statusCode || 502, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    })
+    pipeToResponse(proxyRes, res)
+  })
+
+  res.on('close', () => proxyReq.destroy())
+  proxyReq.on('timeout', () => proxyReq.destroy())
+  proxyReq.on('error', (err) => {
+    if (err.code !== 'ECONNRESET') console.error('GitHub proxy error:', err)
+    sendGithubProxyError(res, 502, 'github service unavailable')
+  })
+  proxyReq.end()
+}
+
+function createWebServer({ distDir = DIST_DIR, tls = null } = {}) {
+  const handleRequest = (req, res) => {
     if (req.url.startsWith('/api/') || req.url === '/api') {
       proxyToApi(req, res)
     } else if (req.url.startsWith('/siren-api/') || req.url === '/siren-api') {
       proxyToSiren(req, res)
+    } else if (req.url.startsWith('/github-api/') || req.url === '/github-api') {
+      proxyToGithub(req, res)
     } else if (req.url.startsWith('/download-proxy?')) {
       proxyDownload(req, res)
     } else {
       serveStatic(req, res, distDir)
     }
-  })
+  }
+
+  return tls ? https.createServer(tls, handleRequest) : http.createServer(handleRequest)
 }
 
-const server = createWebServer()
+// 可选 HTTPS：设置 TLS_CERT_FILE / TLS_KEY_FILE，或直接把证书放到 certs/server.crt 与
+// certs/server.key。浏览器只有在证书受信任时才会显示安全标志，本地自签证书需先被系统信任。
+const TLS_CERT_FILE = process.env.TLS_CERT_FILE || path.join(__dirname, 'certs', 'server.crt')
+const TLS_KEY_FILE = process.env.TLS_KEY_FILE || path.join(__dirname, 'certs', 'server.key')
+
+function resolveTlsOptions() {
+  const hasCertFile = fs.existsSync(TLS_CERT_FILE)
+  const hasKeyFile = fs.existsSync(TLS_KEY_FILE)
+  if (!hasCertFile && !hasKeyFile) return null
+
+  if (!hasCertFile || !hasKeyFile) {
+    console.error(`HTTPS 未启用：证书与私钥必须同时提供（${TLS_CERT_FILE} / ${TLS_KEY_FILE}），已回退到 HTTP`)
+    return null
+  }
+
+  try {
+    return {
+      cert: fs.readFileSync(TLS_CERT_FILE),
+      key: fs.readFileSync(TLS_KEY_FILE),
+    }
+  } catch (error) {
+    console.error(`HTTPS 未启用：读取证书失败（${error.message}），已回退到 HTTP`)
+    return null
+  }
+}
+
+const tlsOptions = resolveTlsOptions()
+const server = createWebServer({ tls: tlsOptions })
 
 async function ensureXeapiPublicKey() {
   const keyPath = path.resolve(os.tmpdir(), 'xeapi_public_key')
@@ -356,8 +455,12 @@ async function startWebServer() {
   }
 
   server.listen(WEB_PORT, () => {
-    console.log(`Hydrogen Music web server listening on port ${WEB_PORT}`)
-    console.log(`Open http://localhost:${WEB_PORT} in your browser`)
+    const scheme = tlsOptions ? 'https' : 'http'
+    console.log(`Hydrogen Music web server listening on port ${WEB_PORT} (${scheme.toUpperCase()})`)
+    console.log(`Open ${scheme}://localhost:${WEB_PORT} in your browser`)
+    if (!tlsOptions) {
+      console.log('提示：把证书放到 certs/server.crt 与 certs/server.key（或设置 TLS_CERT_FILE / TLS_KEY_FILE）即可启用 HTTPS')
+    }
   })
 }
 

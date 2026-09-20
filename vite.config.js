@@ -1,9 +1,28 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
 import http from 'http'
 import https from 'https'
 import { pipeline } from 'stream'
+
+// 构建标识：优先取当前提交的短 SHA，供「新版本追加」判断网页是否已更新；
+// 没有 git 信息（例如打包机未装 git）时退回空串，运行时再退化为版本号。
+function resolveAppCommit() {
+  try {
+    return execSync('git rev-parse --short HEAD', {
+      cwd: __dirname,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim()
+  } catch (_) {
+    return ''
+  }
+}
+
+// 可选 GitHub Token：与 web-server.js 用同一组环境变量，用于提高「检查更新」接口限额
+function resolveGithubToken() {
+  return process.env.GITHUB_TOKEN || process.env.GITHUB_API_TOKEN || ''
+}
 
 function sanitizeDownloadFileName(value) {
   return String(value || 'Hydrogen Music')
@@ -98,6 +117,9 @@ function downloadProxyPlugin() {
 export default defineConfig({
   plugins: [vue(), downloadProxyPlugin()],
   base: './',
+  define: {
+    __APP_COMMIT__: JSON.stringify(resolveAppCommit()),
+  },
   build: {
     target: 'es2018',
     rollupOptions: {
@@ -164,6 +186,13 @@ export default defineConfig({
         target: 'https://monster-siren.hypergryph.com/api',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/siren-api/, '')
+      },
+      // 开发环境与 web-server.js 保持一致的 GitHub 只读代理（可选携带 Token）
+      '/github-api': {
+        target: 'https://api.github.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/github-api/, ''),
+        headers: resolveGithubToken() ? { Authorization: `Bearer ${resolveGithubToken()}` } : {}
       }
     }
   },

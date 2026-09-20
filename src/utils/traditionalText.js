@@ -25,11 +25,13 @@ const TRADITIONAL_TEXT_TARGETS = new Set(['hk', 'tw', 'twp', 't'])
 let enabled = false
 let currentTarget = ''
 let converter = null
-let observer = null
 let applyingConversion = false
 let openccModulePromise = null
 let modeToken = 0
 let originalHtmlLang = null
+// 主文档之外的转换根（例如桌面歌词窗口的文档），由调用方注册/注销
+const extraRoots = new Set()
+const rootObservers = new Map()
 const originalTextByNode = new WeakMap()
 const convertedTextNodes = new Set()
 const originalAttributesByElement = new WeakMap()
@@ -81,6 +83,19 @@ function getTraditionalTextTargetForFont(fontName = '', fontLabel = '') {
 function getRootElement() {
     if (typeof document === 'undefined') return null
     return document.body || document.documentElement
+}
+
+// 主文档根 + 已注册的额外根（桌面歌词窗口关闭后其文档会脱离，自动跳过）
+function getRootElements() {
+    const roots = []
+    const mainRoot = getRootElement()
+    if (mainRoot) roots.push(mainRoot)
+
+    for (const root of extraRoots) {
+        if (root?.isConnected) roots.push(root)
+    }
+
+    return roots
 }
 
 function getElementForNode(node) {
@@ -169,17 +184,25 @@ function convertTree(root) {
 
     if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return
 
+    // 转换根可能来自桌面歌词窗口等独立文档，TreeWalker 必须由该文档创建
+    const ownerDocument = root.nodeType === Node.DOCUMENT_NODE ? root : (root.ownerDocument || document)
+    if (!ownerDocument?.createTreeWalker) return
+
     if (root.nodeType === Node.ELEMENT_NODE) convertElementAttributes(root)
 
-    const elementWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
+    const elementWalker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
     while (elementWalker.nextNode()) {
         convertElementAttributes(elementWalker.currentNode)
     }
 
-    const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    const textWalker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT)
     while (textWalker.nextNode()) {
         convertTextNode(textWalker.currentNode)
     }
+}
+
+function convertAllRoots() {
+    for (const root of getRootElements()) convertTree(root)
 }
 
 function restoreConvertedContent() {
@@ -206,16 +229,21 @@ function restoreConvertedContent() {
     }
 }
 
-function disconnectObserver() {
-    observer?.disconnect()
-    observer = null
+function disconnectRootObserver(root) {
+    rootObservers.get(root)?.disconnect()
+    rootObservers.delete(root)
+}
+
+function disconnectAllObservers() {
+    for (const observer of rootObservers.values()) observer.disconnect()
+    rootObservers.clear()
 }
 
 function observeMutations(root) {
-    disconnectObserver()
+    disconnectRootObserver(root)
     if (typeof MutationObserver === 'undefined' || !root) return
 
-    observer = new MutationObserver(mutations => {
+    const observer = new MutationObserver(mutations => {
         if (applyingConversion || !enabled) return
 
         for (const mutation of mutations) {
@@ -240,6 +268,28 @@ function observeMutations(root) {
         attributes: true,
         attributeFilter: CONVERTIBLE_ATTRIBUTES,
     })
+    rootObservers.set(root, observer)
+}
+
+function observeAllRoots() {
+    for (const root of getRootElements()) observeMutations(root)
+}
+
+// 注册主文档之外的转换根（例如桌面歌词窗口的 document.body）。
+// 返回注销函数：注销后该根不再跟随简繁切换，调用方负责销毁对应 DOM。
+export function registerTraditionalTextRoot(root) {
+    if (!root) return () => {}
+
+    extraRoots.add(root)
+    if (enabled && converter) {
+        convertTree(root)
+        observeMutations(root)
+    }
+
+    return () => {
+        extraRoots.delete(root)
+        disconnectRootObserver(root)
+    }
 }
 
 function setHtmlLang(target) {
@@ -260,25 +310,23 @@ function restoreHtmlLang() {
 function setTraditionalTextMode(target = '') {
     const normalizedTarget = TRADITIONAL_TEXT_TARGETS.has(target) ? target : ''
     const token = ++modeToken
-    const root = getRootElement()
-    if (!root) return
 
     if (!normalizedTarget) {
         enabled = false
         currentTarget = ''
         converter = null
-        disconnectObserver()
+        disconnectAllObservers()
         restoreConvertedContent()
         restoreHtmlLang()
         return
     }
 
     if (enabled && currentTarget === normalizedTarget && converter) {
-        convertTree(root)
+        convertAllRoots()
         return
     }
 
-    disconnectObserver()
+    disconnectAllObservers()
     restoreConvertedContent()
 
     currentTarget = normalizedTarget
@@ -289,12 +337,9 @@ function setTraditionalTextMode(target = '') {
         .then(OpenCC => {
             if (token !== modeToken || !enabled || currentTarget !== normalizedTarget) return
 
-            const nextRoot = getRootElement()
-            if (!nextRoot) return
-
             converter = OpenCC.Converter({ from: 'cn', to: currentTarget })
-            convertTree(nextRoot)
-            observeMutations(nextRoot)
+            convertAllRoots()
+            observeAllRoots()
         })
         .catch(() => {
             if (token !== modeToken) return

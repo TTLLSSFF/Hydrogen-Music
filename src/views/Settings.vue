@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onActivated, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onActivated, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { noticeOpen, dialogOpen } from '@/utils/dialog'
 import { applySettingsSnapshot, initSettings } from '@/utils/initApp'
@@ -12,7 +12,7 @@ import { qqAccountStore } from '@/store/qqAccountStore'
 import { clearQQPlaybackState } from '@/utils/player/lazy'
 import Selector from '../components/Selector.vue'
 import FontSelector from '../components/FontSelector.vue'
-import UpdateDialog from '../components/UpdateDialog.vue'
+import { checkForUpdates as runAppUpdateCheck } from '@/utils/appUpdate'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout } from '@/utils/accountSession'
 import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from '@/utils/settingsSnapshot'
@@ -60,10 +60,6 @@ const fontOptions = computed(() =>
 )
 
 // 更新相关状态
-const showUpdateDialog = ref(false)
-const newVersion = ref('')
-let updateListenersInitialized = false
-let removeUpdateListeners = null
 const PERFORMANCE_CONFIRM_MESSAGE = '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？'
 const GAPLESS_CONFIRM_MESSAGE = '开启后会提前预缓冲下一首音频，可能增加网络流量和内存占用，确定开启吗？'
 
@@ -96,6 +92,7 @@ const applySettingsToForm = settings => {
     searchAssistLimit.value = normalizedSettings.music.searchAssistLimit
     playerStore.showSongTranslation = normalizedSettings.music.showSongTranslation !== false
     playerStore.gaplessPlayback = normalizedSettings.music.gaplessPlayback === true
+    playerStore.audioVisualizer = normalizedSettings.music.audioVisualizer === true
     shortcutsList.value = normalizedSettings.shortcuts
     customFont.value = normalizedSettings.other.customFont
     customFontLabel.value = normalizedSettings.other.customFontLabel
@@ -114,9 +111,6 @@ onActivated(() => {
 
     void loadVipInfo()
     void qqAccountStore.restoreSession()
-
-    // 设置更新事件监听器
-    setupUpdateListeners()
 })
 
 const loginQQAccount = () => router.push({ path: '/login/account', query: { mode: 2, from: 'settings' } })
@@ -170,25 +164,6 @@ watch(
     }
 )
 
-// 设置更新监听器
-const setupUpdateListeners = () => {
-    if (updateListenersInitialized) return
-    updateListenersInitialized = true
-    // 监听手动更新检查结果（不显示大窗弹出）
-    if (typeof windowApi !== 'undefined' && windowApi?.manualUpdateAvailable) {
-        removeUpdateListeners = windowApi.manualUpdateAvailable(version => {
-            newVersion.value = version
-            // 手动检查时直接在UpdateDialog中显示结果，不触发大窗弹出
-        })
-    }
-}
-
-onBeforeUnmount(() => {
-    removeUpdateListeners?.()
-    removeUpdateListeners = null
-    updateListenersInitialized = false
-})
-
 watch(
     () => userStore.user?.userId ?? null,
     (nextUserId, previousUserId) => {
@@ -212,6 +187,7 @@ const setAppSettings = () => {
             searchAssistLimit: searchAssistLimit.value,
             showSongTranslation: playerStore.showSongTranslation,
             gaplessPlayback: playerStore.gaplessPlayback,
+            audioVisualizer: playerStore.audioVisualizer,
         },
         shortcuts: shortcutsList.value,
         other: {
@@ -312,6 +288,7 @@ const setConfirmedPlayerFlag = (key, message) => {
 const setLyricBlur = () => setConfirmedPlayerFlag('lyricBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setCoverBlur = () => setConfirmedPlayerFlag('coverBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setGaplessPlayback = () => setConfirmedPlayerFlag('gaplessPlayback', GAPLESS_CONFIRM_MESSAGE)
+const setAudioVisualizer = () => setConfirmedPlayerFlag('audioVisualizer', PERFORMANCE_CONFIRM_MESSAGE)
 const confirmLogout = () => {
     confirmAccountLogout(router)
 }
@@ -329,45 +306,14 @@ const toGithub = () => {
     }
 }
 
-// 检查更新功能
-const checkForUpdates = () => {
-    showUpdateDialog.value = true
-    if (typeof windowApi !== 'undefined' && windowApi?.checkForUpdate) {
-        windowApi.checkForUpdate()
-    } else {
-        noticeOpen('网页版暂不支持自动更新', 2)
+// 检查更新：有新版本时弹出「新版本追加」页并附带更新日志
+const checkForUpdates = async () => {
+    const result = await runAppUpdateCheck()
+    if (result === 'latest') {
+        noticeOpen('当前已是最新版本', 2)
+    } else if (result === 'error') {
+        noticeOpen('检查更新失败，请稍后重试', 2)
     }
-}
-
-// 更新对话框事件处理
-const handleUpdateDownload = () => {
-    if (typeof windowApi !== 'undefined' && windowApi?.downloadUpdate) {
-        windowApi.downloadUpdate()
-    }
-}
-
-const handleUpdateInstall = () => {
-    if (typeof windowApi !== 'undefined' && windowApi?.installUpdate) {
-        windowApi.installUpdate()
-    }
-}
-
-const handleUpdateCancel = () => {
-    if (typeof windowApi !== 'undefined' && windowApi?.cancelUpdate) {
-        windowApi.cancelUpdate()
-    }
-}
-
-const handleUpdateRetry = () => {
-    if (typeof windowApi !== 'undefined' && windowApi?.checkForUpdate) {
-        windowApi.checkForUpdate()
-    } else {
-        noticeOpen('网页版暂不支持自动更新', 2)
-    }
-}
-
-const closeUpdateDialog = () => {
-    showUpdateDialog.value = false
 }
 
 // 清空当前账号的“私人漫游”近期去重队列
@@ -492,6 +438,17 @@ const clearFmRecent = () => {
                                     <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.gaplessPlayback }">{{ playerStore.gaplessPlayback ? '已开启' : '已关闭' }}</div>
                                     <Transition name="toggle">
                                         <div class="toggle-on" v-show="playerStore.gaplessPlayback"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option">
+                            <div class="option-name">音频可视化</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="setAudioVisualizer()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.audioVisualizer }">{{ playerStore.audioVisualizer ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="playerStore.audioVisualizer"></div>
                                     </Transition>
                                 </div>
                             </div>
@@ -624,17 +581,6 @@ const clearFmRecent = () => {
                 <div class="app-author" @click="toGithub()">Made by ldx123000/TTLLSSFF | Modified from Hydrogen Music</div>
             </div>
         </div>
-
-        <!-- 更新对话框 -->
-        <UpdateDialog
-            :visible="showUpdateDialog"
-            :new-version="newVersion"
-            @close="closeUpdateDialog"
-            @download="handleUpdateDownload"
-            @install="handleUpdateInstall"
-            @cancel="handleUpdateCancel"
-            @retry="handleUpdateRetry"
-        />
     </div>
 </template>
 

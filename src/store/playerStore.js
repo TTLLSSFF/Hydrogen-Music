@@ -82,7 +82,7 @@ const playerPersistStorage = createDedupedLocalStorage()
 
 // 播放器持久化字段（对应旧 pinia-plugin-persistedstate 的 pick 清单，结构保持不变：
 // 同一 key「playerStore」下只存这些字段，不含巨大队列以免拖垮序列化性能）。
-const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur']
+const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur','audioVisualizer']
 
 function readPersistedPlayerState() {
     try {
@@ -146,6 +146,7 @@ export const usePlayerStore = defineStore('playerStore', {
             gaplessPlayback: toBoolean(persisted.gaplessPlayback, false), // 是否预缓冲下一首以减少切歌空隙
             isDesktopLyricOpen: false, // 桌面歌词是否打开
             coverBlur: toBoolean(persisted.coverBlur, false), // 播放页使用封面模糊背景
+            audioVisualizer: toBoolean(persisted.audioVisualizer, false), // 顶部音频可视化
         }
     },
     actions: {
@@ -189,6 +190,7 @@ export function initPlayerPersistence() {
             showSongTranslation: store.showSongTranslation,
             gaplessPlayback: store.gaplessPlayback,
             coverBlur: store.coverBlur,
+            audioVisualizer: store.audioVisualizer,
         }))
     }
     watch(

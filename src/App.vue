@@ -1,11 +1,13 @@
 <script setup>
-import { defineAsyncComponent, onMounted, onUnmounted } from 'vue';
+import { defineAsyncComponent, computed, onMounted, onUnmounted } from 'vue';
 import Home from './views/Home.vue';
 import Title from './components/Title.vue';
 import SearchInput from './components/SearchInput.vue';
 import MusicWidget from './components/MusicWidget.vue';
+import AudioVisualizer from './components/AudioVisualizer.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
 import { initKeyboardShortcuts, destroyKeyboardShortcuts } from './utils/keyboardShortcuts';
+import { initAppUpdateCheck } from './utils/appUpdate';
 
 import { usePlayerStore, initPlayerPersistence } from './store/playerStore';
 import { useOtherStore } from './store/otherStore';
@@ -15,9 +17,15 @@ const ContextMenu = defineAsyncComponent(() => import('./components/ContextMenu.
 const GlobalDialog = defineAsyncComponent(() => import('./components/GlobalDialog.vue'));
 const GlobalNotice = defineAsyncComponent(() => import('./components/GlobalNotice.vue'));
 const DownloadQualityDialog = defineAsyncComponent(() => import('./components/DownloadQualityDialog.vue'));
+const Update = defineAsyncComponent(() => import('./components/Update.vue'));
 
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
+
+// 音频可视化只在播放页（非挂件态）且有播放实例时显示
+const visualizerActive = computed(() => {
+    return playerStore.audioVisualizer && playerStore.playerShow && !playerStore.widgetState && !!playerStore.currentMusic
+});
 
 const toggleFullscreen = async () => {
     if (!document.fullscreenElement) {
@@ -41,6 +49,7 @@ onMounted(() => {
     initPlayerPersistence();
     document.addEventListener('contextmenu', preventBrowserContextMenu);
     initKeyboardShortcuts();
+    initAppUpdateCheck();
 });
 
 onUnmounted(() => {
@@ -56,8 +65,9 @@ onUnmounted(() => {
             <Home class="home" v-show="playerStore.widgetState"></Home>
         </Transition>
     </div>
-    <div class="globalWidget">
+    <div class="globalWidget" :class="{ 'visualizer-active': visualizerActive }">
         <Title class="widget-title"></Title>
+        <AudioVisualizer class="widget-visualizer"></AudioVisualizer>
         <div class="widget-search">
             <SearchInput></SearchInput>
         </div>
@@ -87,6 +97,11 @@ onUnmounted(() => {
     <div class="globalNotice">
         <GlobalNotice v-if="otherStore.noticeShow"></GlobalNotice>
     </div>
+    <Transition name="fade">
+        <div class="update" v-if="otherStore.toUpdate">
+            <Update></Update>
+        </div>
+    </Transition>
 </template>
 
 <style lang="scss">
@@ -128,6 +143,10 @@ onUnmounted(() => {
     }
 }
 .globalWidget {
+    --visualizer-width: clamp(260px, 28vw, 340px);
+    --visualizer-gap: 24px;
+    --visualizer-shift: calc(var(--visualizer-width) + var(--visualizer-gap));
+
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -146,7 +165,19 @@ onUnmounted(() => {
     }
     .widget-search {
         margin-left: 30px;
+        // 可视化条出现时把搜索框推回原位
+        transform: translate3d(calc(-1 * var(--visualizer-shift)), 0, 0);
+        transition: transform 0.72s cubic-bezier(0.16, 1, 0.3, 1);
+        will-change: transform;
         pointer-events: auto;
+    }
+    .widget-visualizer {
+        flex-shrink: 0;
+    }
+    &.visualizer-active {
+        .widget-search {
+            transform: translate3d(0, 0, 0);
+        }
     }
 }
 .web-fullscreen {
@@ -228,5 +259,14 @@ onUnmounted(() => {
 .fade-enter-from,
 .fade-leave-to {
     opacity: 0;
+}
+
+// 新版本追加页：弹出时压暗背景
+.update {
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.62);
+    position: fixed;
+    z-index: 999;
 }
 </style>

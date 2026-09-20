@@ -11,6 +11,9 @@ lerna-debug.log*
 dist-ssr
 .qq-music-session/
 
+# 本地 HTTPS 证书与私钥
+certs/
+
 # Editor directories and files
 node_modules/*
 release/*

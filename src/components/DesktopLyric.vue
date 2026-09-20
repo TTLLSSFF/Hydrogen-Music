@@ -62,7 +62,6 @@
                     <div
                         class="current-lyric"
                         ref="lyricElementRef"
-                        :data-lyric="currentLyricText"
                         :class="{ 'line-scan-active': lineScanActive }"
                         :style="{
                             fontSize: lyricFontSize + 'px',
@@ -70,7 +69,9 @@
                             height: currentLyricBoxHeight > 0 ? (currentLyricBoxHeight + 'px') : undefined,
                         }"
                     >
-                        {{ currentLyricText }}
+                        <span class="current-lyric-text">{{ currentLyricText }}</span>
+                        <!-- 扫光层：用真实元素承载，简繁转换时与主文字保持同一份文本 -->
+                        <span class="current-lyric-scan-text" aria-hidden="true">{{ currentLyricText }}</span>
                     </div>
                 </div>
 
@@ -1113,8 +1114,7 @@ onUnmounted(() => {
                 will-change: transform;
             }
 
-            &.line-scan-active::before {
-                content: attr(data-lyric);
+            .current-lyric-scan-text {
                 position: absolute;
                 inset: 0;
                 z-index: 2;

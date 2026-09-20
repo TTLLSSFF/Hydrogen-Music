@@ -127,6 +127,8 @@ export const useOtherStore = defineStore('otherStore', {
           searchRequestToken: 0,
           toUpdate: false,
           newVersion: null,
+          updateChangelog: '',
+          updateReleaseUrl: '',
           searchSource: 'netease',
         }
     },

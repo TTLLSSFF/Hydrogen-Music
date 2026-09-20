@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import pinia from '../store/pinia'
 import { usePlayerStore } from '../store/playerStore'
+import { registerTraditionalTextRoot } from './traditionalText'
 
 // 网页版桌面歌词窗口。参考桌面端实现（Electron 无边框置顶窗口 + IPC 推送歌词数据），
 // 这里改用 Document Picture-in-Picture（系统级置顶浮窗）承载，不支持该 API 的浏览器
@@ -22,6 +23,7 @@ let lyricWindow = null
 let lyricContainer = null
 let lyricApp = null
 let themeObserver = null
+let unregisterTraditionalTextRoot = null
 let windowListeners = []
 
 const playerStore = usePlayerStore(pinia)
@@ -152,6 +154,9 @@ function forgetLyricWindow() {
   themeObserver?.disconnect()
   themeObserver = null
 
+  unregisterTraditionalTextRoot?.()
+  unregisterTraditionalTextRoot = null
+
   windowListeners.forEach(remove => remove())
   windowListeners = []
 
@@ -207,6 +212,9 @@ async function openDesktopLyricWindow() {
   lyricApp = createApp(DesktopLyric, { onClose: closeDesktopLyric })
   lyricApp.use(pinia)
   lyricApp.mount(container)
+
+  // 歌词窗口是独立文档，注册为繁体转换的额外根，跟随主窗口的简繁设置
+  unregisterTraditionalTextRoot = registerTraditionalTextRoot(targetDocument.body)
 
   const handleWindowClosed = () => forgetLyricWindow()
   addWindowListener(targetWindow, 'pagehide', handleWindowClosed)

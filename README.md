@@ -160,6 +160,33 @@ npm run serve
 
 本地服务会同时处理 `/api`、`/siren-api` 和 `/download-proxy`。可通过 `PORT` 环境变量修改 Web 服务端口。
 
+### 启用 HTTPS
+
+默认是明文 HTTP，用内网 IP 或域名访问时浏览器会在地址栏提示「不安全」，并且桌面歌词只能降级为普通弹窗（置顶浮窗需要安全上下文）。本地服务支持直接以 HTTPS 启动：
+
+1. 先创建证书目录 `certs`，把证书与私钥放到 `certs/server.crt` 与 `certs/server.key`（也可以改用 `TLS_CERT_FILE`、`TLS_KEY_FILE` 环境变量指定路径）。
+2. 重新运行 `npm run serve`，启动日志会显示 `(HTTPS)`，用 `https://` 访问即可。
+
+证书说明：
+
+- 想让浏览器显示安全标志，证书必须是受信任的。推荐用 [mkcert](https://github.com/FiloSottile/mkcert) 生成本地受信任证书：`mkcert -install` 之后执行 `mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 <你的内网IP>`。
+- 自签证书（例如 `openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/server.key -out certs/server.crt -days 365 -subj "/CN=localhost"`）虽然同样是 HTTPS，但浏览器仍会提示不安全，需要先手动信任该证书。
+- 也可以用 Nginx/Caddy 等反向代理终止 TLS，此时无需上面的证书配置——但请确保代理只转发 `/api`、`/siren-api`、`/download-proxy` 与静态资源，浏览器侧的全部请求都会以同源 HTTPS 发出。
+
+### 提高「检查更新」限额（可选）
+
+「新版本追加」的更新日志取自本仓库的提交记录，前端通过同源只读代理 `/github-api` 请求，由服务端转发（Vite 开发服务器同样支持该代理）。未配置 Token 时按匿名请求转发，GitHub 限制约 60 次/小时/IP；配置 Token 后提高到 5000 次/小时，更适合多人共用同一出口 IP 的部署：
+
+```shell
+# PowerShell
+$env:GITHUB_TOKEN='你的token'; npm run serve
+
+# Linux / macOS
+GITHUB_TOKEN=你的token npm run serve
+```
+
+Token 只需要公开仓库的只读权限（classic PAT 可不勾选任何 scope，fine-grained PAT 勾选 public repositories 的 Contents 只读即可）。Token 只在服务端使用，不会下发到浏览器；也可以改用 `GITHUB_API_TOKEN` 变量名。
+
 ### 构建前端资源
 
 ```shell

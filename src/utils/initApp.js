@@ -14,7 +14,7 @@ import { qqAccountStore } from '../store/qqAccountStore'
 const { normalizeSettings } = settingsSchema
 
 const playerStore = usePlayerStore()
-const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime, searchAssistLimit, showSongTranslation, gaplessPlayback } = storeToRefs(playerStore)
+const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime, searchAssistLimit, showSongTranslation, gaplessPlayback, audioVisualizer } = storeToRefs(playerStore)
 const userStore = useUserStore()
 
 let baseInitPromise = null
@@ -41,6 +41,7 @@ export function applySettingsSnapshot(settings, options = {}) {
     searchAssistLimit.value = normalizedSettings?.music?.searchAssistLimit
     showSongTranslation.value = normalizedSettings?.music?.showSongTranslation !== false
     gaplessPlayback.value = normalizedSettings?.music?.gaplessPlayback === true
+    audioVisualizer.value = normalizedSettings?.music?.audioVisualizer === true
     applyCustomFontSetting(normalizedSettings)
 
     return normalizedSettings
