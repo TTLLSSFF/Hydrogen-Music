@@ -511,17 +511,6 @@ async function searchQQMusicPublic({ keyword, category, limit, page, catZhida })
   }
 }
 
-// 周的 ISO 号用于构造榜单 period。复刻上游 getRanks 控制器（依赖包未导出
-// 该控制器，仅导出底层 UCommon_default 服务）的 getWeekNumber 算法，保证
-// 服务端默认实现与真实客户端请求一致。
-function getWeekNumber(d) {
-  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-  const dayNum = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return Math.ceil(((d.getTime() - yearStart.getTime()) / 864e5 + 1) / 7)
-}
-
 function createQQSecurityMiddleware(options = {}) {
   const getLoginQr = options.getLoginQr || (async () => qqServices.getQQLoginQr({}))
   const checkLoginQr = options.checkLoginQr || checkQQLoginQrWithStatus
@@ -539,49 +528,6 @@ function createQQSecurityMiddleware(options = {}) {
     params: { albummid, format: 'json', outCharset: 'utf-8' },
     option: {},
   }))
-  const bannerService = options.bannerService || (async () => qqServices.getRecommendBanner_default({
-    method: 'get',
-    params: {},
-    option: {},
-  }))
-  const newSongsService = options.newSongsService || (async () => qqServices.getNewSongs({
-    method: 'get',
-    params: {},
-    option: {},
-  }))
-  const topListsService = options.topListsService || (async () => qqServices.getTopLists_default({
-    method: 'get',
-    params: {},
-    option: {},
-  }))
-  // 榜单详情是只读公共接口。依赖包未导出 getRanks 控制器（只导出了底层
-  // UCommon_default 服务），故在此复刻上游 getRanks 控制器的精确请求。
-  // topId 由中间件校验为纯数字，page/limit 固定为 0/100（与简报约定一致）。
-  const topListDetailService = options.topListDetailService || (async ({ topId, page, limit }) => {
-    const date = new Date()
-    const week = getWeekNumber(date)
-    const data = {
-      comm: { ct: 24, cv: 4747474, format: 'json', inCharset: 'utf-8', needNewCode: 1, uin: 0 },
-      req_1: {
-        module: 'musicToplist.ToplistInfoServer',
-        method: 'GetDetail',
-        param: {
-          topId: +topId,
-          offset: +page || 0,
-          num: +limit || 100,
-          period: `${date.getFullYear()}_${week}`,
-        },
-      },
-    }
-    const props = {
-      method: 'get',
-      params: { format: 'json', data: JSON.stringify(data) },
-      option: {},
-    }
-    const responseData = (await qqServices.UCommon_default(props)).data
-    // 与依赖控制器最终响应信封保持一致：body 形如 { response: responseData }
-    return { status: 200, body: { response: responseData } }
-  })
   const singerService = options.singerService || fetchQQSingerInfo
   const singerSongsService = options.singerSongsService || fetchQQSingerSongsPage
   const singerAlbumsService = options.singerAlbumsService || fetchQQSingerAlbumsPage
@@ -624,7 +570,7 @@ async function fetchQQUpstreamJson(url) {
 // 每次只回约 10 条且无法翻页，歌手页因此只显示 10 首。这里改用真实客户端使用的
 // musicu.fcg 歌手详情模块（sort=5 为热度排序）：sin/num 可翻页，单次最多 60 条，
 // 并回传 total_song 真实总量。上游对该接口的封装（getSingerHotsong）只导出了
-// 底层 UCommon_default 服务，故与 topListDetailService 一样在此复刻请求构造。
+// 底层 UCommon_default 服务，故在此复刻请求构造。
 const QQ_SINGER_SONGS_MAX_LIMIT = 60
 
 async function fetchQQSingerSongsPage({ singermid, page = 0, limit = QQ_SINGER_SONGS_MAX_LIMIT }) {
@@ -910,28 +856,6 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       return
     }
 
-    // 公共首页数据（无登录要求）：轮播焦点图、最新歌曲、榜单总榜。
-    // 三个端点均为无参 GET，响应在到达前端前经过凭证脱敏。
-    const PUBLIC_HOME_SERVICES = {
-      '/getrecommendbanner': { service: bannerService, error: 'QQ Music banner unavailable' },
-      '/getnewsongs': { service: newSongsService, error: 'QQ Music new songs unavailable' },
-      '/gettoplists': { service: topListsService, error: 'QQ Music top lists unavailable' },
-    }
-    if (PUBLIC_HOME_SERVICES[normalizedPath]) {
-      if (ctx.method !== 'GET') {
-        writeJson(ctx, 405, { error: 'Method not allowed' })
-        return
-      }
-      const entry = PUBLIC_HOME_SERVICES[normalizedPath]
-      try {
-        const { status, body } = unwrapServiceResponse(await entry.service())
-        writeJson(ctx, status, sanitizeQQResponseBody(body))
-      } catch (_) {
-        writeJson(ctx, 502, { error: entry.error })
-      }
-      return
-    }
-
     // 公共歌手详情聚合（无登录要求）：描述 + 关注数 + 歌曲列表 + MV 列表。
     if (normalizedPath === '/getsingerinfo') {
       if (ctx.method !== 'GET') {
@@ -1012,27 +936,6 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
         }))
       } catch (_) {
         writeJson(ctx, 502, { error: 'QQ Music singer albums unavailable' })
-      }
-      return
-    }
-
-    // 公共榜单详情（无登录要求）：只放行纯数字 topId，page/limit 固定 0/100。
-    // 响应在到达前端前经过凭证脱敏。
-    if (normalizedPath === '/gettoplistdetail') {
-      if (ctx.method !== 'GET') {
-        writeJson(ctx, 405, { error: 'Method not allowed' })
-        return
-      }
-      const topId = getSingleValue(ctx.query?.topId).trim().replace(/[^0-9]/g, '')
-      if (!topId) {
-        writeJson(ctx, 400, { error: 'topId is required' })
-        return
-      }
-      try {
-        const { status, body } = unwrapServiceResponse(await topListDetailService({ topId, page: 0, limit: 100 }))
-        writeJson(ctx, status, sanitizeQQResponseBody(body))
-      } catch (_) {
-        writeJson(ctx, 502, { error: 'QQ Music toplist detail unavailable' })
       }
       return
     }

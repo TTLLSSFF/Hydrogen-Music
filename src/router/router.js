@@ -138,8 +138,7 @@ const routes = [
                 beforeEnter: (to, from, next) => {
                     const source = String(to.query.source || 'netease').toLowerCase()
                     const type = String(to.query.type || '').toLowerCase()
-                    const isQQTopList = source === 'qq' && type === 'toplist'
-                    if (!isQQTopList && !canAccessQQMyMusic(source, hasQQAccount())) {
+                    if (!canAccessQQMyMusic(source, hasQQAccount())) {
                         noticeOpen('请先登录 QQ 音乐', 2)
                         next({ name: 'mymusic' })
                         return

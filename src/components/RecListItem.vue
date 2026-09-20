@@ -4,14 +4,11 @@
   import { getNewAlbum } from '../api/album';
   import { getRecommendedArtists } from '../api/artist';
   import { getRecommendedSongList, getTopList } from '../api/playlist'
-  import { getQQTopLists, normalizeQQTopLists } from '../api/qqMusic';
-  import { useUserStore } from '../store/userStore'
   import { useLibraryStore } from '../store/libraryStore'
   import { usePlayerStore } from '../store/playerStore';
   import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
   const libraryStore = useLibraryStore()
   const playerStore = usePlayerStore()
-  const userStore = useUserStore()
   const router = useRouter()
   //0为歌单,1为歌手,2为专辑,3为排行榜
   const props = defineProps(['recType'])
@@ -20,11 +17,9 @@
   const recTitleEN = ref('')
   const recommendationList = ref([{}])
   let recommendationLoaded = false
-  let loadedQQSource = false
 
   onActivated(() => {
-    const qqSource = userStore.homeSource === 'qq'
-    if (recommendationLoaded && loadedQQSource === qqSource && Array.isArray(recommendationList.value) && recommendationList.value.length > 0) return
+    if (recommendationLoaded && Array.isArray(recommendationList.value) && recommendationList.value.length > 0) return
     /**
      * 第一个参数为推荐歌手的国家,第二个为推荐歌单请求数量，第三个为最新专辑的国家，
      * 最后为当前列表的类型
@@ -51,21 +46,6 @@
 
   //加载数据
   async function loadData(artistNation,limit,albumNation,recType) {
-    const qqSource = userStore.homeSource === 'qq'
-    if (qqSource && recType == 3) {
-        const payload = await getQQTopLists()
-        // 榜单条目兼容模板字段：name/coverImgUrl/updateFrequency（热度）
-        recommendationList.value = normalizeQQTopLists(payload)
-          .slice(0, 10)
-          .map(list => ({
-            ...list,
-            updateFrequency: list.listenCount > 0 ? `热度 ${list.listenCount}` : '',
-          }))
-        setTitle("排行榜", "TOP LIST")
-        recommendationLoaded = true
-        loadedQQSource = qqSource
-        return
-    }
     if(recType == 0) {
         const listData = await getRecommendedSongList(limit)
         recommendationList.value = listData.result
@@ -91,32 +71,18 @@
         });;
     }
     recommendationLoaded = true
-    loadedQQSource = qqSource
     // console.log(recommendationList.value)
   }
 
   const checkDetail = (id, item) => {
-    if (loadedQQSource && recType.value == 3) {
-      router.push({
-        path: `/mymusic/playlist/${id}`,
-        query: { source: 'qq', type: 'toplist' },
-      })
-      playerStore.forbidLastRouter = true
-      return
-    }
     if (props.recType == 1) {
       openArtistRoute(router, item || { id }, {
         id,
         playerStore,
-        source: item?.source || (loadedQQSource ? 'qq' : ''),
+        source: item?.source,
         name: item?.name,
         singerid: item?.singerid || item?.singerID,
       })
-      return
-    }
-    // QQ banner/video 等其它入口仍不开放详情跳转
-    if (loadedQQSource) {
-      playerStore.forbidLastRouter = true
       return
     }
     libraryStore.libraryInfo = null
@@ -128,7 +94,7 @@
   const checkArtist = (artist) => {
     openArtistRoute(router, artist, {
       playerStore,
-      source: loadedQQSource ? 'qq' : artist?.source,
+      source: artist?.source,
     })
   }
 </script>

@@ -100,12 +100,15 @@ body {
   box-shadow: 0 0 0 1px var(--text) !important;
 }
 
-/* Settings toggles: enabled state should be white bg with black text in dark mode */
-.dark .settings-page .toggle .toggle-on {
+/* Settings toggles: enabled state should be white bg with black text in dark mode.
+   搜索页的来源开关复用同一套样式，故一并覆盖 */
+.dark .settings-page .toggle .toggle-on,
+.dark .search-page .source-toggle .toggle-on {
   background-color: rgba(255, 255, 255, 0.86) !important;
 }
 
-.dark .settings-page .toggle .toggle-on-in {
+.dark .settings-page .toggle .toggle-on-in,
+.dark .search-page .source-toggle .toggle-on-in {
   color: #000000 !important;
   background-color: transparent !important;
 }
@@ -405,6 +408,12 @@ body {
 }
 
 .dark .library-song-list .list-item-playing {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* 「选择」子菜单与全选/取消：深色模式下沿用歌曲行同一档浅色遮罩 */
+.dark .library-detail .selection-menu-expanded .selection-menu-item:hover,
+.dark .library-detail .operation-download-select button:hover {
   background-color: rgba(255, 255, 255, 0.06) !important;
 }
 

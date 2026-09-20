@@ -7,14 +7,11 @@ import {
   getQQMv,
   getQQMvPlay,
   getQQSongListDetail,
-  getQQTopListDetail,
   normalizeQQAlbumDetail,
   normalizeQQLyricPayload,
   normalizeQQLikedPlaylist,
-  normalizeQQNewSongs,
   normalizeQQPlaylist,
   normalizeQQPlaylistDetail,
-  normalizeQQRecommendBanner,
   normalizeQQSearchAlbums,
   normalizeQQSearchArtists,
   normalizeQQSearchMvs,
@@ -24,8 +21,6 @@ import {
   normalizeQQSingerSongs,
   normalizeQQSingerAlbums,
   normalizeQQSong,
-  normalizeQQTopListDetail,
-  normalizeQQTopLists,
   QQ_PUBLIC_API_DISABLED_CODE,
   searchQQAll,
   searchQQCategory,
@@ -318,132 +313,6 @@ test('QQ album detail normalizes the live response into the shared album contrac
   assert.equal(detail.songs[0].id, '001Bbywq2gicae')
   assert.equal(detail.songs[0].source, 'qq')
   assert.equal(detail.songs[0].dt, 240000)
-})
-
-test('QQ banner normalizes focus content into the shared banner contract', () => {
-  const banners = normalizeQQRecommendBanner({
-    response: {
-      focus: {
-        data: {
-          content: [
-            {
-              id: 55886,
-              title: '焦点标题',
-              sub_title: '',
-              type: 10002,
-              pic_info: { url: 'http://y.gtimg.cn/music/common/upload/MUSIC_FOCUS/7032830.png' },
-              jump_info: { url: '003ryYZm47hg1r', mid: '' },
-            },
-          ],
-        },
-      },
-    },
-  })
-  assert.equal(banners.length, 1)
-  assert.equal(banners[0].pic, 'http://y.gtimg.cn/music/common/upload/MUSIC_FOCUS/7032830.png')
-  assert.equal(banners[0].title, '焦点标题')
-  assert.equal(banners[0].jumpUrl, '003ryYZm47hg1r')
-})
-
-test('QQ new songs normalizes the live songlist through the song adapter', () => {
-  const songs = normalizeQQNewSongs({
-    response: {
-      new_song: {
-        data: {
-          songlist: [{ mid: 'new-mid', name: '新歌', interval: '200', singer: [{ mid: 's1', name: '歌手' }] }],
-        },
-      },
-    },
-  })
-  assert.equal(songs.length, 1)
-  assert.equal(songs[0].id, 'new-mid')
-  assert.equal(songs[0].name, '新歌')
-  assert.equal(songs[0].source, 'qq')
-  assert.equal(songs[0].dt, 200000)
-})
-
-test('QQ top lists normalize the live topList array', () => {
-  const lists = normalizeQQTopLists({
-    response: {
-      data: {
-        topList: [{ id: 4, topTitle: '巅峰榜·流行指数', picUrl: 'http://y.gtimg.cn/pic.jpg', listenCount: 7953220, songList: [{ songname: 'A' }] }],
-      },
-    },
-  })
-  assert.equal(lists.length, 1)
-  assert.equal(lists[0].id, '4')
-  assert.equal(lists[0].name, '巅峰榜·流行指数')
-  assert.equal(lists[0].source, 'qq')
-  assert.equal(lists[0].listenCount, 7953220)
-  assert.equal(lists[0].tracks.length, 1)
-})
-
-test('QQ top list detail request carries topId and never disstid', async () => {
-  const originalFetch = globalThis.fetch
-  let requestUrl = ''
-  globalThis.fetch = async url => {
-    requestUrl = String(url)
-    return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ response: { code: 0, req_1: { code: 0, data: {} } } }) }
-  }
-  try {
-    await getQQTopListDetail('4')
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-  assert.match(requestUrl, /\/getTopListDetail/)
-  assert.match(requestUrl, /topId=4/)
-  assert.doesNotMatch(requestUrl, /disstid/)
-  assert.throws(() => getQQTopListDetail(''), /top list id is required/)
-})
-
-test('QQ top list detail normalizes the response.req_1 envelope with songInfo nesting', () => {
-  const detail = normalizeQQTopListDetail({
-    response: {
-      code: 0,
-      req_1: {
-        code: 0,
-        data: {
-          data: {
-            songInfoList: [{
-              rank: 1,
-              songInfo: {
-                mid: '001Bbywq2gicae',
-                name: '晴天',
-                singer: [{ name: '周杰伦' }],
-                interval: 269,
-              },
-            }],
-          },
-          title: '巅峰榜·流行指数',
-          songNum: 100,
-        },
-      },
-    },
-  }, '4')
-
-  assert.equal(detail.playlist.id, '4')
-  assert.equal(detail.playlist.source, 'qq')
-  assert.equal(detail.playlist.name, '巅峰榜·流行指数')
-  assert.equal(detail.songs.length, 1)
-  assert.equal(detail.songs[0].source, 'qq')
-  assert.equal(detail.songs[0].sourceKey, 'qq:001Bbywq2gicae')
-  assert.equal(detail.songs[0].name, '晴天')
-  assert.equal(detail.songs[0].dt, 269000)
-  assert.equal(detail.playlist.trackCount, 100)
-  assert.equal(detail.playlist.size, 100)
-})
-
-test('QQ top list detail degrades to an empty legal playlist', () => {
-  const empty = normalizeQQTopListDetail({ response: { code: 0 } }, '9')
-  assert.deepEqual(empty.songs, [])
-  assert.equal(empty.playlist.id, '9')
-  assert.equal(empty.playlist.source, 'qq')
-  assert.equal(empty.playlist.name, '')
-  assert.equal(empty.playlist.trackCount, 0)
-
-  const malformed = normalizeQQTopListDetail({ request: 'nonsense' }, '')
-  assert.deepEqual(malformed.songs, [])
-  assert.equal(malformed.playlist.name, '')
 })
 
 test('QQ singer detail parses the zhida hotsong f field and aggregates mvs', () => {

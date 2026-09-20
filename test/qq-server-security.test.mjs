@@ -301,27 +301,6 @@ test('QQ public album info rejects missing albummid and non-GET methods', async 
   assert.equal(post.status, 405)
 })
 
-test('QQ public home endpoints forward without a login session', async () => {
-  const middleware = createQQSecurityMiddleware({
-    getSession: () => null,
-    bannerService: async () => ({ status: 200, body: { response: { focus: { data: { content: [{ id: 1 }] } } } } }),
-    newSongsService: async () => ({ status: 200, body: { response: { new_song: { data: { songlist: [1] } } } } }),
-    topListsService: async () => ({ status: 200, body: { response: { data: { topList: [2] } } } }),
-  })
-
-  for (const path of ['/getRecommendBanner', '/getNewSongs', '/getTopLists']) {
-    const context = createContext(path)
-    let reached = false
-    await middleware(context, async () => { reached = true })
-    assert.equal(reached, false, `${path} must be handled before the session-required boundary`)
-    assert.equal(context.status, 200)
-  }
-
-  const post = createContext('/getNewSongs', { method: 'POST', body: {} })
-  await middleware(post, async () => {})
-  assert.equal(post.status, 405)
-})
-
 test('QQ public singer info forwards sanitized params without a login session', async () => {
   const calls = []
   const middleware = createQQSecurityMiddleware({
@@ -476,58 +455,6 @@ test('QQ public singer albums clamps paging params and rejects missing singermid
   assert.deepEqual(calls[1], { singermid: 's-mid', page: 0, limit: 100 })
 
   const post = createContext('/getSingerAlbums?singermid=s-mid', { method: 'POST', body: {} })
-  await middleware(post, async () => {})
-  assert.equal(post.status, 405)
-})
-
-test('QQ public toplist detail forwards fixed topId/page/limit without a login session', async () => {
-  const calls = []
-  const middleware = createQQSecurityMiddleware({
-    getSession: () => null,
-    topListDetailService: async params => {
-      calls.push(params)
-      return {
-        status: 200,
-        body: {
-          response: { code: 0, data: { song: [{ songname: '晴天', token: 'stale-token' }] } },
-          cookie: 'uin=must-not-leak',
-        },
-      }
-    },
-  })
-
-  const context = createContext('/getTopListDetail?topId=4')
-  let reached = false
-  await middleware(context, async () => { reached = true })
-
-  assert.equal(reached, false, 'toplist detail must be handled before the session-required boundary')
-  assert.equal(context.status, 200)
-  assert.deepEqual(calls, [{ topId: '4', page: 0, limit: 100 }])
-  assert.equal(context.body.response.code, 0)
-  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
-  assert.equal(JSON.stringify(context.body).includes('stale-token'), false)
-})
-
-test('QQ public toplist detail only accepts a numeric topId and blocks non-GET methods', async () => {
-  const calls = []
-  const middleware = createQQSecurityMiddleware({
-    getSession: () => null,
-    topListDetailService: async params => {
-      calls.push(params)
-      return { status: 200, body: {} }
-    },
-  })
-
-  const missing = createContext('/getTopListDetail')
-  await middleware(missing, async () => {})
-  assert.equal(missing.status, 400)
-
-  const dirty = createContext('/getTopListDetail?topId=abc4def')
-  await middleware(dirty, async () => {})
-  assert.equal(dirty.status, 200)
-  assert.deepEqual(calls[0], { topId: '4', page: 0, limit: 100 })
-
-  const post = createContext('/getTopListDetail?topId=4', { method: 'POST', body: {} })
   await middleware(post, async () => {})
   assert.equal(post.status, 405)
 })

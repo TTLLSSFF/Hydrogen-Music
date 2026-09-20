@@ -2,8 +2,6 @@
   import { onActivated, ref } from 'vue'
   import { useRouter } from 'vue-router';
   import { getNewestSong } from '../api/song';
-  import { getQQNewSongs, normalizeQQNewSongs } from '../api/qqMusic';
-  import { useUserStore } from '../store/userStore';
   import { addToNext, startMusic, pauseMusic } from '../utils/player/lazy';
   import { usePlayerStore } from '../store/playerStore';
   import { storeToRefs } from 'pinia';
@@ -12,36 +10,19 @@
 
   const router = useRouter()
   const playerStore = usePlayerStore()
-  const userStore = useUserStore()
   const { songId, playing, showSongTranslation } = storeToRefs(playerStore)
   const newestSongList = ref()
   let newestSongLoaded = false
-  let loadedQQSource = false
 
   onActivated(() => {
-      const qqSource = userStore.homeSource === 'qq'
-      if (newestSongLoaded && loadedQQSource === qqSource && Array.isArray(newestSongList.value) && newestSongList.value.length > 0) return
+      if (newestSongLoaded && Array.isArray(newestSongList.value) && newestSongList.value.length > 0) return
       //参数:limit限制数量，默认为10
       loadData(10)
   })
   async function loadData(limit) {
-    const qqSource = userStore.homeSource === 'qq'
-    if (qqSource) {
-      const payload = await getQQNewSongs()
-      // QQ 歌曲归一化为组件消费的 { picUrl, name, song: { artists } } 结构
-      newestSongList.value = normalizeQQNewSongs(payload)
-        .slice(0, Math.max(1, limit))
-        .map(song => ({
-          ...song,
-          picUrl: song.al?.picUrl || song.coverUrl || '',
-          song: { artists: Array.isArray(song.ar) ? song.ar : [] },
-        }))
-    } else {
-      const listData = await getNewestSong(limit)
-      newestSongList.value = listData.result
-    }
+    const listData = await getNewestSong(limit)
+    newestSongList.value = listData.result
     newestSongLoaded = true
-    loadedQQSource = qqSource
   }
   const getImgUrl = (item) => {
     let img = item.picUrl || item.blurPicUrl
@@ -67,7 +48,7 @@
     openArtistRoute(router, singer, {
       song,
       playerStore,
-      source: loadedQQSource ? 'qq' : song?.source,
+      source: song?.source,
     })
   }
 </script>

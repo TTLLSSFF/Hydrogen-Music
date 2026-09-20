@@ -279,18 +279,16 @@ const songSearchEmptyDescription = computed(() => {
     if (isSongSearchFailed.value) return '剩余歌曲加载失败，结果可能不完整';
     return '';
 });
-// QQ 歌手页歌曲分页：搜索态下列表是过滤结果，不做「加载更多」
+// QQ 歌手页歌曲分页：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
 const isQQSingerSongsPaging = computed(() => isArtistTopSongRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
-const showQQSingerLoadMore = computed(() => isQQSingerSongsPaging.value && (qqSingerSongsHasMore.value || qqSingerSongsLoading.value));
 const loadMoreQQSingerSongs = () => {
-    if (!showQQSingerLoadMore.value || qqSingerSongsLoading.value) return;
+    if (!isQQSingerSongsPaging.value || !qqSingerSongsHasMore.value || qqSingerSongsLoading.value) return;
     void libraryStore.loadMoreQQSingerSongs();
 };
-// QQ 歌手页专辑分页：搜索态下列表是过滤结果，不做「加载更多」
+// QQ 歌手页专辑分页：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
 const isQQSingerAlbumsPaging = computed(() => isArtistAlbumRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
-const showQQSingerAlbumsLoadMore = computed(() => isQQSingerAlbumsPaging.value && (qqSingerAlbumsHasMore.value || qqSingerAlbumsLoading.value));
 const loadMoreQQSingerAlbums = () => {
-    if (!showQQSingerAlbumsLoadMore.value || qqSingerAlbumsLoading.value) return;
+    if (!isQQSingerAlbumsPaging.value || !qqSingerAlbumsHasMore.value || qqSingerAlbumsLoading.value) return;
     void libraryStore.loadMoreQQSingerAlbums();
 };
 
@@ -365,8 +363,7 @@ onBeforeRouteUpdate(async (to, from, next) => {
     const normalizedToName = normalizeRouteName(to.name);
     const requestedSource = String(to.query.source || 'netease').toLowerCase();
     const requestedType = String(to.query.type || '').toLowerCase();
-    const isQQTopList = requestedSource === 'qq' && requestedType === 'toplist';
-    if (normalizedToName == 'playlist' && !isQQTopList && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
+    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
         noticeOpen('请先登录 QQ 音乐', 2);
         next({ name: 'mymusic' });
         return;
@@ -947,10 +944,6 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         @load-more="loadMoreQQSingerSongs"
                         class="library-content"
                     ></LibrarySongList>
-                    <div class="library-load-more" v-if="showQQSingerLoadMore" @click="loadMoreQQSingerSongs">
-                        <span v-if="qqSingerSongsLoading">正在加载更多...</span>
-                        <span v-else>加载更多</span>
-                    </div>
                 </template>
                 <template v-else-if="artistPageType == 1">
                     <div class="library-search-empty" v-if="showSongSearchEmpty">
@@ -965,10 +958,6 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         @load-more="loadMoreQQSingerAlbums"
                         class="library-content3"
                     ></LibraryAlbumList>
-                    <div class="library-load-more" v-if="showQQSingerAlbumsLoadMore" @click="loadMoreQQSingerAlbums">
-                        <span v-if="qqSingerAlbumsLoading">正在加载更多...</span>
-                        <span v-else>加载更多</span>
-                    </div>
                 </template>
                 <template v-else-if="artistPageType == 2">
                     <div class="library-search-empty" v-if="showSongSearchEmpty">
@@ -998,8 +987,6 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
     --ld-overlay-border: rgba(255, 255, 255, 0.12);
     --ld-overlay-text: rgba(255, 255, 255, 0.92);
     --ld-overlay-corner: rgba(247, 247, 247, 0.9);
-    --ld-selection-bg: #000000;
-    --ld-selection-text: #ffffff;
 
     width: 100%;
     height: 100%;
@@ -1239,21 +1226,14 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                             opacity: 0;
                             transform: translateX(-20px);
                             z-index: 1;
-                            overflow: hidden;
-                            //直接在元素上改变背景绘制区域，避免零宽 transform 伪元素仍保留合成层
-                            background-image: linear-gradient(var(--ld-selection-bg), var(--ld-selection-bg));
-                            background-position: left center;
-                            background-repeat: no-repeat;
-                            background-size: 0 100%;
-                            transition: color 0.2s ease, background-size 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
+                            transition: background-color 0.2s ease;
                             &:hover {
                                 cursor: pointer;
                             }
                         }
-                        //背景与反色只在展开状态下响应悬停
+                        // 悬停复用歌单歌曲行的浅色遮罩，只在展开状态下响应
                         .selection-menu-expanded .selection-menu-item:hover {
-                            color: var(--ld-selection-text) !important;
-                            background-size: 100% 100%;
+                            background-color: rgba(0, 0, 0, 0.045);
                         }
                         .selection-menu-expanded .selection-menu-item,
                         .selection-menu-expanded .operation-download-select {
@@ -1279,8 +1259,6 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         }
                         .selection-menu:not(.selection-menu-expanded) .selection-menu-item {
                             pointer-events: none;
-                            color: var(--ld-text) !important;
-                            background-image: none;
                         }
                         .selection-menu:not(.selection-menu-expanded) .selection-menu-item,
                         .selection-menu:not(.selection-menu-expanded) .operation-download-select {
@@ -1333,15 +1311,15 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                 min-width: 38px;
                                 height: 22px;
                                 padding: 0 8px;
-                                border: 1px solid var(--ld-border);
+                                border: 0;
                                 background: transparent;
                                 color: var(--ld-text);
                                 font: 11px SourceHanSansCN-Bold;
                                 transition: 0.2s;
                                 &:hover {
                                     cursor: pointer;
-                                    background-color: var(--ld-btn-bg);
-                                    color: var(--ld-btn-text);
+                                    // 与「选择」子项一致：浅色遮罩
+                                    background-color: rgba(0, 0, 0, 0.045);
                                 }
                                 &:active {
                                     transform: scale(0.94);
@@ -1586,21 +1564,6 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
         min-height: 0;
         overflow: hidden;
     }
-    .library-load-more {
-        flex: 0 0 auto;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font: 12px SourceHanSansCN-Bold;
-        color: var(--ld-muted);
-        cursor: pointer;
-        user-select: none;
-        transition: 0.2s;
-        &:hover {
-            color: var(--ld-text);
-        }
-    }
     .library-content3 {
         height: 100%;
         min-height: 0;
@@ -1646,8 +1609,6 @@ html.dark .library-detail,
     --ld-overlay-border: rgba(255, 255, 255, 0.18);
     --ld-overlay-text: rgba(241, 243, 245, 0.92);
     --ld-overlay-corner: rgba(241, 243, 245, 0.72);
-    --ld-selection-bg: #ffffff;
-    --ld-selection-text: #0f1114;
 }
 
 .metro-enter-active {
