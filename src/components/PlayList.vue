@@ -25,6 +25,7 @@ import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
     const songs = Array.isArray(songList.value) ? songList.value : []
     return getPlaylistItems(songs)
   })
+  const isIntelligenceMode = computed(() => listInfo.value?.type === 'intelligence')
 
   const clearPlaylist = () => {
     playlistWidgetShow.value = false
@@ -122,6 +123,10 @@ import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
         <div class="playlist-widget-info">
           <span class="info-title">当前播放</span>
           <span class="info-num">({{songList.length}})</span>
+          <span v-if="isIntelligenceMode" class="intelligence-badge">
+            <span class="badge-heart">♥</span>
+            心动模式
+          </span>
         </div>
         <div>
           <svg t="1676113510483" @click="getPositon()" class="playlist-widget-position" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2631" width="200" height="200"><path d="M927.282215 479.83544l-83.4629 0c-15.068184-158.75777-141.389194-285.078781-300.146964-300.146964L543.67235 95.835695c0-17.622356-14.285355-31.907711-31.907711-31.907711-17.622356 0-31.907711 14.285355-31.907711 31.907711l0 83.85278c-158.75777 15.068184-285.078781 141.389194-300.146964 300.146964l-83.826174 0c-17.622356 0-31.907711 14.285355-31.907711 31.907711 0 17.622356 14.285355 31.907711 31.907711 31.907711l83.826174 0c15.068184 158.75777 141.389194 285.078781 300.146964 300.146964l0 83.946924c0 17.622356 14.285355 31.907711 31.907711 31.907711 17.622356 0 31.907711-14.285355 31.907711-31.907711l0-83.946924c158.75777-15.068184 285.078781-141.389194 300.146964-300.146964l83.4629 0c17.622356 0 31.907711-14.285355 31.907711-31.907711C959.189925 494.120794 944.904571 479.83544 927.282215 479.83544zM511.76464 793.112446c-155.396209 0-281.369296-125.973086-281.369296-281.369296s125.973086-281.369296 281.369296-281.369296 281.369296 125.973086 281.369296 281.369296S667.159826 793.112446 511.76464 793.112446z" fill="#000000" p-id="2632"></path><path d="M511.76464 511.74315m-69.616544 0a68.031 68.031 0 1 0 139.233088 0 68.031 68.031 0 1 0-139.233088 0Z" fill="#000000" p-id="2633"></path></svg>
@@ -173,6 +178,8 @@ import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
       justify-content: space-between;
       align-items: center;
       .playlist-widget-info{
+        display: flex;
+        align-items: center;
         .info-title{
           font: 16Px SourceHanSansCN-Bold;
           color: black;
@@ -180,6 +187,20 @@ import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
         .info-num{
           font: 12Px SourceHanSansCN-Bold;
           color: rgb(118, 118, 118);
+        }
+        .intelligence-badge {
+          margin-left: 8Px;
+          padding: 3Px 7Px;
+          border-radius: 9Px;
+          background: rgba(232, 60, 60, 0.12);
+          color: #e83c3c;
+          font: 9Px SourceHanSansCN-Bold;
+          line-height: 1;
+          white-space: nowrap;
+          .badge-heart {
+            margin-right: 3Px;
+            font-size: 8Px;
+          }
         }
       }
       .playlist-widget-position, .playlist-widget-delete{

@@ -178,6 +178,7 @@ import {
     likeSong as likePlayerSong,
     playResolvedPlaybackInfo,
     preloadGaplessSongPlayback,
+    prepareResolvedPlaybackSongSwitch,
     setSongLevel,
 } from '../utils/player/lazy'
 import { storeToRefs } from 'pinia'
@@ -1093,6 +1094,7 @@ const togglePlay = async () => {
             ]
 
             // 设置播放器状态
+            await prepareResolvedPlaybackSongSwitch()
             playerStore.songId = targetSongId
             playerStore.currentIndex = 0
             playerStore.songList = fmSongList

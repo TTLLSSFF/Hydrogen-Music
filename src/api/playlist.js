@@ -71,6 +71,26 @@ export function getRecommendSongs(params) {
 }
 
 /**
+ * 获取心动模式/智能播放列表（需要登录）
+ * @param {object} params
+ * @param {number|string} params.id - 作为推荐种子的歌曲 id
+ * @param {number|string} params.pid - 我喜欢的音乐歌单 id
+ * @param {number|string} [params.sid] - 队列开始播放的歌曲 id
+ * @param {number|string} [params.count] - 推荐批次
+ * @returns
+ */
+export function getIntelligenceList(params) {
+    return request({
+      url: '/playmode/intelligence/list',
+      method: 'get',
+      params: {
+        ...params,
+        timestamp: Date.now(),
+      },
+    });
+}
+
+/**
  * 获取历史日推可用日期列表
  * @returns
  */

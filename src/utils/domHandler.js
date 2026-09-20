@@ -1,14 +1,14 @@
-export const absolutePosition = (element, target) => {
+export const absolutePosition = (element, target, horizontalAlign = 'auto', horizontalTarget = target) => {
     if (element) {
         let elementDimensions = {
-            width: element.offsetWidth,
+            width: element.getBoundingClientRect().width,
             height: element.offsetHeight || Math.min(parseInt(element.style.maxHeight.slice(0, -2)), element.scrollHeight + 16),
         };
         let elementOuterHeight = elementDimensions.height;
         let elementOuterWidth = elementDimensions.width;
         let targetOuterHeight = target.offsetHeight;
-        let targetOuterWidth = target.offsetWidth;
         let targetOffset = target.getBoundingClientRect();
+        let horizontalTargetOffset = horizontalTarget.getBoundingClientRect();
         let windowScrollTop = getWindowScrollTop();
         let windowScrollLeft = getWindowScrollLeft();
         let viewport = getViewport();
@@ -29,15 +29,14 @@ export const absolutePosition = (element, target) => {
             element.style.transformOrigin = "top";
         }
 
-        if (targetOffset.left + elementOuterWidth > viewport.width)
+        if (horizontalAlign == 'right' || horizontalTargetOffset.left + elementOuterWidth > viewport.width)
             left = Math.max(
                 0,
-                targetOffset.left +
-                windowScrollLeft +
-                targetOuterWidth -
+                horizontalTargetOffset.right +
+                windowScrollLeft -
                 elementOuterWidth
             );
-        else left = targetOffset.left + windowScrollLeft;
+        else left = horizontalTargetOffset.left + windowScrollLeft;
 
         element.style.top = top + "px";
         element.style.left = left + "px";

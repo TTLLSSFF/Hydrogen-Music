@@ -154,6 +154,29 @@ export const useLibraryStore = defineStore('libraryStore', {
                 this.libraryInfo = updateItem(this.libraryInfo)
             }
         },
+        setPlaylistOverviewTrackCount(playlistId, trackCount) {
+            const normalizedPlaylistId = String(playlistId ?? '')
+            const normalizedTrackCount = Math.max(0, Number(trackCount))
+            if (!normalizedPlaylistId || !Number.isFinite(normalizedTrackCount)) return
+
+            const updateItem = item => {
+                if (String(item?.id ?? '') != normalizedPlaylistId) return item
+
+                const nextItem = { ...item }
+                for (const key of PLAYLIST_OVERVIEW_COUNT_FIELDS) {
+                    if (!isBlankValue(nextItem[key])) nextItem[key] = normalizedTrackCount
+                }
+                return nextItem
+            }
+            const updateList = list => Array.isArray(list) ? list.map(updateItem) : list
+
+            this.playlistUserCreated = updateList(this.playlistUserCreated)
+            this.playlistUserSub = updateList(this.playlistUserSub)
+            this.libraryList = updateList(this.libraryList)
+            if (this.libraryInfo && String(this.libraryInfo.id ?? '') == normalizedPlaylistId) {
+                this.libraryInfo = updateItem(this.libraryInfo)
+            }
+        },
         resetPlaylistHydration() {
             this.playlistHydration = createPlaylistHydrationState()
             this.playlistHydrationToken = null
@@ -499,10 +522,12 @@ export const useLibraryStore = defineStore('libraryStore', {
                 .then(remainingSongs => {
                     if (this.playlistHydrationToken != token) return
                     this.appendHydratedPlaylistSongs(remainingSongs)
+                    const hydratedTrackCount = Array.isArray(this.librarySongs) ? this.librarySongs.length : totalTracks
+                    this.setPlaylistOverviewTrackCount(playlistId, hydratedTrackCount)
                     this.playlistHydration = createPlaylistHydrationState({
                         id: playlistId,
-                        total: totalTracks,
-                        loaded: totalTracks,
+                        total: hydratedTrackCount,
+                        loaded: hydratedTrackCount,
                         status: 'completed',
                         source: normalizedSource,
                     })
@@ -542,7 +567,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                 })
                 this.playlistHydrationToken = null
                 this.playlistHydrationPromise = null
-                if (playlistId) this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
+                if (playlistId) {
+                    this.setPlaylistOverviewTrackCount(playlistId, loadedTracks)
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
+                }
                 return
             }
 
@@ -685,6 +713,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                 this.librarySongs = firstBatchSongs
                 this.indexLibrarySongs(firstBatchSongs)
                 if (this.libraryInfo) this.libraryInfo.followed = !!playlistDynamicResult?.subscribed
+                this.setPlaylistOverviewTrackCount(playlistId, totalTracks)
 
                 if (totalTracks <= loadedTracks) {
                     this.playlistHydration = createPlaylistHydrationState({

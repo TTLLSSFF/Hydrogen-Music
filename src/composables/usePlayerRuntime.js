@@ -126,7 +126,7 @@ export function initLyricRuntime() {
     initialized = true;
 
     unwatchSongSignature = watch(
-        () => [songId.value, currentIndex.value],
+        () => songId.value,
         () => {
             playerStore.lyricsObjArr = null;
             applyCurrentLyricIndex(-1);

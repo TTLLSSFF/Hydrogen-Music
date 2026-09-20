@@ -54,6 +54,7 @@ export const changeProgressByDragStart = lazyPlayerExport('changeProgressByDragS
 export const changeProgressByDragEnd = lazyPlayerExport('changeProgressByDragEnd');
 export const changePlayMode = lazyPlayerExport('changePlayMode');
 export const toggleHeartMode = lazyPlayerExport('toggleHeartMode');
+export const prefetchIntelligenceMode = lazyPlayerExport('prefetchIntelligenceMode');
 export const playAll = lazyPlayerExport('playAll');
 export const setShuffledList = lazyPlayerExport('setShuffledList');
 export const getLikeActionErrorMessage = lazyPlayerExport('getLikeActionErrorMessage');

@@ -1,5 +1,5 @@
 <script setup>
-  import { onMounted, ref } from 'vue'
+  import { onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
   import { playAll } from '../utils/player/lazy';
   import { useRouter } from 'vue-router';
   import { useLibraryStore } from '../store/libraryStore'
@@ -7,16 +7,44 @@
   import { noticeOpen } from '../utils/dialog';
   const libraryStore = useLibraryStore()
   const router = useRouter()
-  const recTime = ref()
+  const recTime = ref('')
   const showMore = ref(false)
   const showMoreTitle = ref('每 日推 荐')
-  let m = new Date().getMonth() + 1
-  let d = new Date().getDate()
+  let dateRefreshTimer = null
+
+  const scheduleDateRefresh = () => {
+    if(dateRefreshTimer) clearTimeout(dateRefreshTimer)
+
+    const now = new Date()
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    const delay = Math.max(nextMidnight.getTime() - now.getTime() + 100, 1000)
+    dateRefreshTimer = setTimeout(refreshRecommendationDate, delay)
+  }
+
+  const refreshRecommendationDate = () => {
+    const now = new Date()
+    const month = `${now.getMonth() + 1}`.padStart(2, '0')
+    const day = `${now.getDate()}`.padStart(2, '0')
+    recTime.value = `${month} ${day}`
+    scheduleDateRefresh()
+  }
+
+  const handleVisibilityChange = () => {
+    if(document.visibilityState == 'visible') refreshRecommendationDate()
+  }
 
   onMounted(() => {
-    if(m < 10) m = '0' + m
-    if(d < 10) d = '0' + d
-    recTime.value = m + ' ' + d
+    refreshRecommendationDate()
+    window.addEventListener('focus', refreshRecommendationDate)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  })
+
+  onActivated(refreshRecommendationDate)
+
+  onBeforeUnmount(() => {
+    if(dateRefreshTimer) clearTimeout(dateRefreshTimer)
+    window.removeEventListener('focus', refreshRecommendationDate)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   })
 
   const more = (flag) => {

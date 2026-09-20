@@ -32,7 +32,14 @@ const inputValue = computed({
 </script>
 
 <template>
-    <div class="song-filter-input" :class="{ 'song-filter-input-compact': compact, 'song-filter-input-with-icon': showIcon }">
+    <div
+        class="song-filter-input"
+        :class="{
+            'song-filter-input-compact': compact,
+            'song-filter-input-with-icon': showIcon,
+            'song-filter-input-with-trailing': $slots.trailing,
+        }"
+    >
         <span v-if="showIcon" class="search-icon" aria-hidden="true"></span>
         <input
             v-model="inputValue"
@@ -41,6 +48,9 @@ const inputValue = computed({
             :placeholder="placeholder"
             spellcheck="false"
         />
+        <div v-if="$slots.trailing" class="filter-trailing">
+            <slot name="trailing"></slot>
+        </div>
         <span class="search-border search-border1"></span>
         <span class="search-border search-border2"></span>
         <span class="search-border search-border3"></span>
@@ -68,6 +78,10 @@ $pointOffset: -1px;
     padding: 0 12px;
     background: transparent;
     border: none;
+
+    &.song-filter-input-with-trailing {
+        padding-right: 42px;
+    }
 
     .filter-input {
         width: 100%;
@@ -180,6 +194,15 @@ $pointOffset: -1px;
             transform-origin: center;
         }
     }
+
+    .filter-trailing {
+        width: 31px;
+        position: absolute;
+        top: 1px;
+        right: 1px;
+        bottom: 1px;
+        z-index: 2;
+    }
 }
 
 .song-filter-input-compact {
@@ -192,6 +215,11 @@ $pointOffset: -1px;
     background: transparent;
     clip-path: polygon(0 0, calc(100% - var(--compact-notch)) 0, 100% var(--compact-notch), 100% 100%, var(--compact-notch) 100%, 0 calc(100% - var(--compact-notch)));
     transition: border-color 0.2s ease;
+
+    .filter-trailing {
+        border-left: 1px solid var(--compact-line);
+        transition: border-color 0.2s ease;
+    }
 
     &:hover,
     &:focus-within {

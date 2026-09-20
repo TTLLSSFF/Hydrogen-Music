@@ -7,6 +7,7 @@
   import { useUserStore } from '../store/userStore'
   import { getDjSubList } from '../api/dj'
   import { useLibraryStore } from '../store/libraryStore'
+  import { resolveFavoritePlaylistMeta } from '../utils/favoritePlaylist'
   import { storeToRefs } from 'pinia'
   import { qqAccountStore } from '../store/qqAccountStore'
   import { getQQPlaylists, getQQCollectedPlaylists, getQQLikedSongs } from '../api/qq'
@@ -90,6 +91,16 @@
     libraryList.value = null
     libraryListAlbum.value = null
     libraryListAritist.value = null
+  }
+
+  function syncFavoritePlaylistTrackCount() {
+    if (!Array.isArray(userStore.likelist)) return
+
+    const favoritePlaylist = resolveFavoritePlaylistMeta(libraryStore.playlistUserCreated, user.value?.userId)
+    const playlistId = userStore.favoritePlaylistId || favoritePlaylist?.id
+    if (!playlistId) return
+
+    libraryStore.setPlaylistOverviewTrackCount(playlistId, userStore.likelist.length)
   }
 
   async function loadUserPlaylist(requestToken, requestUserId) {
@@ -278,6 +289,11 @@
         void refreshCurrentSection()
       }
     }
+  )
+
+  watch(
+    () => [userStore.favoritePlaylistId, Array.isArray(userStore.likelist) ? userStore.likelist.length : null],
+    syncFavoritePlaylistTrackCount
   )
 
   watch(

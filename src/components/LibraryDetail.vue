@@ -987,7 +987,6 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
     --ld-overlay-border: rgba(255, 255, 255, 0.12);
     --ld-overlay-text: rgba(255, 255, 255, 0.92);
     --ld-overlay-corner: rgba(247, 247, 247, 0.9);
-
     width: 100%;
     height: 100%;
     display: flex;
@@ -1591,6 +1590,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
         }
     }
 }
+
 </style>
 
 <style lang="scss">
