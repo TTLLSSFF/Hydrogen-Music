@@ -27,6 +27,7 @@ import { normalizeQueueSong, normalizeQueueSongs } from './player/queueSong'
 import { getPrefetchedSongAssets, getSongAssetKey, prefetchSongAssets } from './player/assetPrefetch'
 import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong } from './player/lyricFallback'
 import { createDecodedAudioPlayer } from './player/webAudioGapless'
+import { ensureAudioCrossOrigin, normalizeAudioUrl } from './player/audioPlaybackCompat'
 import { runIdleTask } from './player/idleTask'
 import { createEmptyLyric, hasUsableLyricPayload } from './player/lyricPayload'
 import { preparePlayAllSongs } from './player/playAllGuard.mjs'
@@ -723,7 +724,8 @@ export function preloadGaplessSongPlayback(song, options = {}) {
                 return null
             }
 
-            const nextHowl = markRaw(await createDecodedAudioPlayer(playbackInfo.url, {
+            const preloadUrl = normalizeAudioUrl(playbackInfo.url)
+            const nextHowl = markRaw(await createDecodedAudioPlayer(preloadUrl, {
                 localPath: playbackInfo.localPath,
             }))
             if (token !== gaplessPreloadToken || !gaplessPlayback.value) {
@@ -736,7 +738,7 @@ export function preloadGaplessSongPlayback(song, options = {}) {
                 key,
                 song,
                 songId: song.id,
-                url: playbackInfo.url,
+                url: preloadUrl,
                 quality: preferredQuality,
                 trackInfo: playbackInfo.trackInfo,
                 expectedDuration: nextHowl.__hmExpectedDuration,
@@ -1504,6 +1506,9 @@ function handleHowlPlaybackError(playback, eventType, error, message) {
 }
 
 function createPlaybackHowl(url) {
+    // 必须早于 new Howl：让 Howler 自建的 <audio> 带上 crossOrigin，否则跨域音频
+    // 无法被 captureStream 采集，音频可视化会一直没有数据
+    ensureAudioCrossOrigin()
     let nextHowl = null
     nextHowl = markRaw(new Howl({
         src: url,
@@ -1843,7 +1848,9 @@ function applyPlaybackDurationHints(playback, options = {}) {
     playback.__hmPlaybackUrl = options.url || ''
 }
 
-export function play(url, autoplay, resumeSeek = null, options = {}) {
+export function play(rawUrl, autoplay, resumeSeek = null, options = {}) {
+    // 统一升级为 https：避免 HTTPS 页面下音频被浏览器按混合内容拦截
+    const url = normalizeAudioUrl(rawUrl)
     const preloadedEntry = takeGaplessPreloadForCurrentSong(url)
     if (preloadedEntry?.howl) {
         applyPlaybackDurationHints(preloadedEntry.howl, {

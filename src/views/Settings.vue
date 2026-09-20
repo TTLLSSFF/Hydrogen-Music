@@ -306,12 +306,10 @@ const toGithub = () => {
     }
 }
 
-// 检查更新：有新版本时弹出「新版本追加」页并附带更新日志
+// 检查更新：点击即弹出「新版本追加」页面，这里只处理拉取失败的情况
 const checkForUpdates = async () => {
     const result = await runAppUpdateCheck()
-    if (result === 'latest') {
-        noticeOpen('当前已是最新版本', 2)
-    } else if (result === 'error') {
+    if (result === 'error') {
         noticeOpen('检查更新失败，请稍后重试', 2)
     }
 }

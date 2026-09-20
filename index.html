@@ -6,7 +6,10 @@
   <link rel="icon" type="image/png" href="/img/icon.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="referrer" content="no-referrer" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; media-src * blob:; connect-src *; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;">
+  <!-- media-src 需要显式列出 data:：Howler 用 data:audio/wav 探测编解码支持，'*' 不匹配 data: 协议。
+       upgrade-insecure-requests 让浏览器在发出请求前就把 http 子资源升级为 https，
+       避免 HTTPS 部署时图片/音频产生混合内容告警。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; media-src * data: blob:; connect-src *; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; upgrade-insecure-requests;">
   <title>Hydrogen Music</title>
 </head>
 

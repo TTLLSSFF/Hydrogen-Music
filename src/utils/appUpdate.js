@@ -125,22 +125,29 @@ export function getCommitsPageUrl() {
   return COMMITS_PAGE
 }
 
-// 手动/静默检查：远端最新提交与当前构建不同即视为有新版本
-export async function checkForUpdates() {
+// 检查更新。alwaysShow 为 true（设置里的手动检查）时点击即弹出页面：先展示当前构建
+// 信息，拉到提交后再填充日志；为 false（首次打开静默检查）时仅在有新版本才弹出。
+export async function checkForUpdates({ alwaysShow = true } = {}) {
+  const buildVersion = BUILD_ID_IS_COMMIT ? BUILD_ID : `v${currentVersion}`
+  if (alwaysShow) showUpdatePage({ version: buildVersion, commits: [] })
+
   try {
     const commits = await fetchCommits()
     const latest = commits.length ? getCommitMeta(commits[0]) : null
     if (!latest?.sha) return 'error'
 
-    if (shaMatches(latest.sha, BUILD_ID)) return 'latest'
+    const hasNewer = !shaMatches(latest.sha, BUILD_ID)
+    if (!hasNewer && !alwaysShow) return 'latest'
 
-    const newerCommits = BUILD_ID_IS_COMMIT ? takeNewerThan(commits, BUILD_ID) : commits.slice(0, MAX_LOG_COMMITS)
-    const changelogCommits = newerCommits.length ? newerCommits : commits.slice(0, MAX_LOG_COMMITS)
+    const changelogCommits = hasNewer
+      ? (BUILD_ID_IS_COMMIT ? takeNewerThan(commits, BUILD_ID) : commits.slice(0, MAX_LOG_COMMITS))
+      : commits.slice(0, MAX_LOG_COMMITS)
+
     showUpdatePage({
-      version: BUILD_ID_IS_COMMIT ? latest.shortSha : `v${currentVersion}`,
-      commits: changelogCommits,
+      version: hasNewer ? latest.shortSha : buildVersion,
+      commits: changelogCommits.length ? changelogCommits : commits.slice(0, MAX_LOG_COMMITS),
     })
-    return 'newer'
+    return hasNewer ? 'newer' : 'latest'
   } catch (_) {
     return 'error'
   }
@@ -181,5 +188,5 @@ export function initAppUpdateCheck() {
   }
 
   // 首次打开网页时静默检查一次，有新提交才展示
-  if (!lastSeenBuild) void checkForUpdates()
+  if (!lastSeenBuild) void checkForUpdates({ alwaysShow: false })
 }
