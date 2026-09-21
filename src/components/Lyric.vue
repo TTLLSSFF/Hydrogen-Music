@@ -206,7 +206,10 @@ function handleDocumentMouseDown(event) {
 }
 
 function handleDocumentKeyDown(event) {
-    if (event.key === 'Escape') hideLineOffsetMenu();
+    if (event.key !== 'Escape' || !lineOffsetMenu.value.visible) return;
+    // 菜单打开时消费这次 Esc，避免同时触发页面级 Esc 行为（例如收起播放页）
+    event.preventDefault();
+    hideLineOffsetMenu();
 }
 
 // —— 每首歌自适应的演唱时长估计模型 ——

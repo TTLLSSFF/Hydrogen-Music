@@ -122,6 +122,8 @@ const handleOverlayClick = () => {
 
 const handleEscape = (event) => {
     if (event.key === 'Escape' && props.closeOnEscape && props.show) {
+        // 标记事件已处理，避免同时触发其他 Esc 行为（例如收起播放页）
+        event.preventDefault()
         handleClose()
     }
 }
