@@ -4,6 +4,7 @@ import pinia from "../store/pinia";
 import { useUserStore } from '../store/userStore'
 import { clearAccountScopedState } from './accountState'
 import { noticeOpen } from "./dialog";
+import { resolveNcmBridgeUrl } from './ncmApiBridge.mjs'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 const request = axios.create({
@@ -170,6 +171,8 @@ export function invalidateNcmApiCookieCache() {
   // 保留导出，兼容现有调用点；主进程请求链不再依赖渲染层缓存的原始 NCM Cookie。
 }
 
+// 浏览器里 API_BASE_URL 是 '/api'（由 vite / web-server 反向代理），桌面端则要用
+// Electron 主进程内置 API 服务的绝对地址，换算逻辑见 utils/ncmApiBridge.mjs
 async function ncmIpcAdapter(config) {
   if (isFormDataPayload(config.data) && defaultAdapter) {
     return defaultAdapter(config)
@@ -185,7 +188,7 @@ async function ncmIpcAdapter(config) {
   try {
     const serializedData = await serializeRequestData(config.data)
     const response = await windowApi.requestNcmApi({
-      url: buildAbsoluteUrl(config.baseURL, config.url),
+      url: resolveNcmBridgeUrl(config),
       method: String(config.method || 'get').toLowerCase(),
       params: config.params || {},
       data: serializedData,
