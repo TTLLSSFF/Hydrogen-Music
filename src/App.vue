@@ -1,12 +1,10 @@
 <script setup>
 import { defineAsyncComponent, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
 import Home from './views/Home.vue';
 import Title from './components/Title.vue';
 import SearchInput from './components/SearchInput.vue';
 import MusicWidget from './components/MusicWidget.vue';
 import AudioVisualizer from './components/AudioVisualizer.vue';
-import PlatformSourceSwitch from './components/PlatformSourceSwitch.vue';
 import WindowControl from './components/WindowControl.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
 import { usePlaylistSync } from './composables/usePlaylistSync';
@@ -33,13 +31,7 @@ const userStore = useUserStore();
 const isDesktopEnv = typeof windowApi !== 'undefined';
 usePlaylistSync();
 
-// 平台来源开关跟随全局搜索框，只在首页与搜索页出现
-const router = useRouter();
-const showPlatformSwitch = computed(() => {
-    const name = String(router.currentRoute.value.name || '');
-    return name === 'homepage' || name === 'search';
-});
-
+// 平台来源开关已移入左上角 LOGO 的右键菜单（见 Title.vue）
 const removeCheckUpdateListener = isDesktopEnv && typeof windowApi.checkUpdate === 'function'
     ? windowApi.checkUpdate((version) => {
         otherStore.toUpdate = true;
@@ -107,7 +99,6 @@ const handleTitleBarDoubleClick = () => {
         <div class="widget-search" v-if="!userStore.localOnlyMode">
             <SearchInput></SearchInput>
         </div>
-        <PlatformSourceSwitch v-if="showPlatformSwitch" variant="menu" class="widget-source-switch"></PlatformSourceSwitch>
     </div>
     <div class="web-fullscreen" v-if="!isDesktopEnv" @click="toggleFullscreen()">
         <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
@@ -200,9 +191,10 @@ const handleTitleBarDoubleClick = () => {
     &.is-desktop {
         --window-controls-reserve: calc(15px + 130px + 24px);
         // 行内除可视化条外的固定宽度（标题 128 + 可视化条左间距 24 + 搜索框左间距 30 +
-        // 搜索框聚焦 160 + 平台来源开关左间距 14 + 平台菜单展开 171，留少量余量），
+        // 搜索框聚焦 160，留少量余量）。平台来源开关已移入 LOGO 右键菜单，
+        // 原来的「开关左间距 14 + 菜单展开 171」不再占位，故由 532px 降到 347px，
         // 用于在窗口偏窄时反算可视化条可用宽度
-        --widget-fixed-width: 532px;
+        --widget-fixed-width: 347px;
         right: var(--window-controls-reserve);
         --visualizer-width: min(
             clamp(200px, 28vw, 340px),
@@ -234,21 +226,12 @@ const handleTitleBarDoubleClick = () => {
         will-change: transform;
         pointer-events: auto;
     }
-    // 平台来源开关跟在搜索框右侧，与搜索框同步位移
-    .widget-source-switch {
-        margin-left: 14px;
-        flex-shrink: 0;
-        transform: translate3d(calc(-1 * var(--visualizer-shift)), 0, 0);
-        transition: transform 0.72s cubic-bezier(0.16, 1, 0.3, 1);
-        will-change: transform;
-        pointer-events: auto;
-    }
+    // 平台来源开关已移入 LOGO 右键菜单，这里不再有对应元素
     .widget-visualizer {
         flex-shrink: 0;
     }
     &.visualizer-active {
-        .widget-search,
-        .widget-source-switch {
+        .widget-search {
             transform: translate3d(0, 0, 0);
         }
     }

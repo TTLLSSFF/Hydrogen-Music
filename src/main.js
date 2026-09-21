@@ -9,6 +9,8 @@ import './assets/css/reset.css'
 import './assets/css/common.css'
 import './assets/css/fonts.css'
 import './assets/css/theme.css'
+// 右键菜单公共样式：桌面歌词与左上角 LOGO 的平台来源菜单共用
+import './assets/css/contextMenu.scss'
 import { initTheme } from './utils/theme'
 import { init } from './utils/initApp'
 
