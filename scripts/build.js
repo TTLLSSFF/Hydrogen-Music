@@ -70,6 +70,20 @@ if (!hasConfigFlag(extraArgs)) {
 }
 builderArgs.push(...extraArgs);
 
+// 本地构建（-p never）改用 normal 压缩：maximum 会对近 400MB 产物做 15 遍 7za 压缩，
+// 期间 7za / NSIS 都不输出进度，动辄十几分钟起步，很容易被当成卡死。发布构建保持 maximum。
+function isPublishBuild(args) {
+  const index = args.findIndex(arg => arg === '-p' || arg === '--publish');
+  if (index < 0) return false;
+  const target = args[index + 1];
+  return !!target && target !== 'never';
+}
+
+if (!isPublishBuild(extraArgs) && !process.env.HYDROGEN_BUILD_COMPRESSION) {
+  process.env.HYDROGEN_BUILD_COMPRESSION = 'normal';
+}
+console.log(`[build] compression=${process.env.HYDROGEN_BUILD_COMPRESSION || 'maximum'}`);
+
 const buildResult = runNodeScript(getElectronBuilderCli(), builderArgs);
 if (buildResult.status !== 0) {
   process.exit(buildResult.status || 1);
