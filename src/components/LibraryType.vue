@@ -339,7 +339,6 @@
 
   const refreshLocal = () => {
     localStore.isRefreshLocalFile = true
-    if(listType1.value == 2 && listType2.value == 1) {scanMusic({type:'downloaded',refresh:true});}
     if(listType1.value == 3) {scanMusic({type:'local',refresh:true});}
     router.push('/mymusic')
   }
@@ -432,7 +431,7 @@
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 1}" @click="changeType(1)">专辑</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 2}" @click="changeType(2)">歌手</span>
             </div>
-            <span class="refresh" @click="refreshLocal()" v-show="(listType1 == 2 && listType2 == 1 && localStore.downloadedFolderSettings) || (listType1 == 3 && localStore.localFolderSettings.length != 0)">刷新</span>
+            <span class="refresh" @click="refreshLocal()" v-show="listType1 == 3 && localStore.localFolderSettings.length != 0">刷新</span>
         </div>
     </div>
   </div>

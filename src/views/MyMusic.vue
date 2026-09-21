@@ -18,7 +18,7 @@
   const { user } = storeToRefs(userStore)
   const playerStore = usePlayerStore()
   const localStore = useLocalStore()
-  const { downloadedMusicFolder, localMusicFolder, localMusicClassify, downloadedFolderSettings, localFolderSettings } = storeToRefs(localStore)
+  const { localMusicFolder, localMusicClassify, downloadedFolderSettings, localFolderSettings } = storeToRefs(localStore)
   const hasMusicAccount = computed(() => hasAnyMusicAccount())
   const shouldShowNone = computed(() => {
     const isMyMusicRoot = router.currentRoute.value.fullPath == '/mymusic'
@@ -37,7 +37,6 @@
       <DownloadList v-if="!userStore.localOnlyMode" view="downloading" v-show="listType1 == 2 && listType2 == 0" class="download-list"></DownloadList>
       <div class="download-completed" v-if="!userStore.localOnlyMode" v-show="listType1 == 2 && listType2 == 1">
         <DownloadList view="completed" class="download-list"></DownloadList>
-        <LocalMusicList :folderlist="downloadedMusicFolder" type="downloaded" v-if="downloadedMusicFolder" class="local-list"></LocalMusicList>
       </div>
       <LocalMusicList :folderlist="localMusicFolder" :classifylist="localMusicClassify" type="local" v-if="localMusicFolder" v-show="listType1 == 3" class="local-list"></LocalMusicList>
       <div class="no-folder" @click="router.push('/settings')" v-if="!userStore.localOnlyMode && !downloadedFolderSettings && listType1 == 2 && listType2 == 1">去设置下载地址</div>

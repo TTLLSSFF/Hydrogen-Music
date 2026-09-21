@@ -62,22 +62,6 @@ function applyLocalSettings(settings, { hydrateLocalMusic = false } = {}) {
     localStore.localFolderSettings = nextLocalFolders
     localStore.quitApp = settings?.other?.quitApp
 
-    if (!nextDownloadFolder && localStore.downloadedMusicFolder) {
-        localStore.downloadedMusicFolder = null
-        localStore.downloadedFiles = null
-        localStore.lookupIndex = {
-            ...localStore.lookupIndex,
-            downloadedFoldersByName: {},
-            songSearchByScope: {
-                ...localStore.lookupIndex.songSearchByScope,
-                downloaded: {},
-            },
-        }
-        if (hasDesktopApi('clearLocalMusicData')) windowApi.clearLocalMusicData('downloaded')
-    } else if (hydrateLocalMusic && nextDownloadFolder && !localStore.downloadedMusicFolder) {
-        scanMusicDeferred({ type: 'downloaded', refresh: false })
-    }
-
     if (nextLocalFolders.length === 0 && localStore.localMusicFolder) {
         localStore.localMusicFolder = null
         localStore.localMusicList = null
