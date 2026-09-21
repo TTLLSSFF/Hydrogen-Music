@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/ldx123000/Hydrogen-Music?style=for-the-badge" /></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/TTLLSSFF/Hydrogen-Music?style=for-the-badge" /></a>
   <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42B883?style=for-the-badge&logo=vuedotjs&logoColor=white" />
   <img alt="Vite" src="https://img.shields.io/badge/Vite-7-646CFF?style=for-the-badge&logo=vite&logoColor=white" />
 </p>
@@ -126,7 +126,7 @@ Hydrogen Music 是一个第三方网易云音乐 Web 播放器。当前仓库保
 
 ## 安装使用
 
-前往 [Releases](https://github.com/ldx123000/Hydrogen-Music/releases) 下载对应平台的安装包。
+前往 [Releases](https://github.com/TTLLSSFF/Hydrogen-Music/releases) 下载对应平台的安装包。
 
 当前构建配置支持：
 
@@ -134,10 +134,10 @@ Hydrogen Music 是一个第三方网易云音乐 Web 播放器。当前仓库保
 - macOS：DMG。
 - Linux：AppImage、Deb、RPM。
 
-Arch Linux 用户可通过 AUR 安装：
+Arch Linux 用户可通过 AUR 安装（本仓库 fork 的包名，与上游 `hydrogen-music-bin` 相互独立）：
 
 ```shell
-yay -S hydrogen-music-bin
+yay -S hydrogen-music-fork-bin
 ```
 
 首次使用建议先登录网易云账号。部分功能依赖账号权限、VIP 权益或第三方服务登录状态。

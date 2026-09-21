@@ -616,7 +616,7 @@ const save = () => {
     noticeOpen('设置已保存', 2)
 }
 const toGithub = () => {
-    const url = 'https://github.com/ldx123000/Hydrogen-Music'
+    const url = 'https://github.com/TTLLSSFF/Hydrogen-Music'
     if (typeof windowApi !== 'undefined' && windowApi?.toRegister) {
         windowApi.toRegister(url)
     } else {

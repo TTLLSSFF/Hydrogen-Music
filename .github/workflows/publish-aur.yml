@@ -17,17 +17,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: aur-hydrogen-music-bin-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  group: aur-hydrogen-music-fork-bin-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   publish-aur:
-    name: Publish hydrogen-music-bin
+    name: Publish hydrogen-music-fork-bin
     if: github.event_name != 'release' || github.event.release.prerelease == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      AUR_PACKAGE_NAME: hydrogen-music-bin
+      AUR_PACKAGE_NAME: hydrogen-music-fork-bin
 
     steps:
       - uses: actions/checkout@v6
@@ -115,8 +115,8 @@ jobs:
         run: |
           cp _aur-package/PKGBUILD _aur-package/.SRCINFO _aur-repo/
 
-          git -C _aur-repo config user.name 'ldx123000'
-          git -C _aur-repo config user.email 'ldx123000@gmail.com'
+          git -C _aur-repo config user.name 'TTLLSSFF'
+          git -C _aur-repo config user.email 'harveymerilyn405@gmail.com'
           git -C _aur-repo add PKGBUILD .SRCINFO
 
           if git -C _aur-repo diff --cached --quiet; then

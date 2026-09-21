@@ -5,9 +5,11 @@ const fs = require('fs');
 const https = require('https');
 const path = require('path');
 
-const OWNER = 'ldx123000';
+const OWNER = 'TTLLSSFF';
 const REPO = 'Hydrogen-Music';
-const PKGBASE = 'hydrogen-music-bin';
+// AUR 包名：本仓库是 Hydrogen-Music 的 fork，上游的 hydrogen-music-bin 归原作者所有，
+// 因此默认使用 fork 专属包名；CI 里由 workflow 的 AUR_PACKAGE_NAME 环境变量统一控制。
+const PKGBASE = process.env.AUR_PACKAGE_NAME || 'hydrogen-music-fork-bin';
 const APP_NAME = 'hydrogen-music';
 const UPSTREAM_URL = `https://github.com/${OWNER}/${REPO}`;
 const API_URL = `https://api.github.com/repos/${OWNER}/${REPO}`;
@@ -145,7 +147,7 @@ function shellArray(values) {
 
 function buildPkgbuild(version, sums) {
   return `# SPDX-License-Identifier: 0BSD
-# Maintainer: ldx123000 <ldx123000@gmail.com>
+# Maintainer: TTLLSSFF <harveymerilyn405@gmail.com>
 
 pkgname=${PKGBASE}
 _pkgname=${APP_NAME}
