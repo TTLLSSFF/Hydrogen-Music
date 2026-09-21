@@ -65,6 +65,47 @@ function createSafeQQRequestError(error) {
   return safeError
 }
 
+function isDesktopQQBridgeAvailable() {
+  return typeof windowApi !== 'undefined' && typeof windowApi.requestQQApi === 'function'
+}
+
+function getResponseHeader(headers, name) {
+  if (!headers || typeof headers !== 'object') return ''
+  const target = String(name).toLowerCase()
+  for (const [key, value] of Object.entries(headers)) {
+    if (String(key).toLowerCase() === target) return String(value ?? '')
+  }
+  return ''
+}
+
+// 桌面端（Electron）没有同源的 /api/qq 代理，改走主进程 IPC；再把结果重新包装成 fetch
+// 风格的 Response，让下方的通用处理逻辑（content-type / ok / 错误对象形状）完全保持不变。
+async function sendDesktopQQRequest(config, headers) {
+  const result = await windowApi.requestQQApi({
+    url: config.url,
+    method: config.method,
+    params: config.params || {},
+    data: config.data,
+    headers,
+    timeout: config.timeout,
+    responseType: config.responseType,
+  })
+
+  const status = Number(result?.status) || 502
+  const responseHeaders = new Headers()
+  responseHeaders.set('content-type', getResponseHeader(result?.headers, 'content-type') || 'application/json')
+  const rawData = result?.data
+  const body = rawData === undefined || rawData === null
+    ? ''
+    : (typeof rawData === 'string' ? rawData : JSON.stringify(rawData))
+
+  return new Response(body, {
+    status: status >= 200 && status <= 599 ? status : 502,
+    statusText: typeof result?.statusText === 'string' ? result.statusText : '',
+    headers: responseHeaders,
+  })
+}
+
 export function createQQRequest(transport) {
   const send = transport || (async (config) => {
     const search = new URLSearchParams()
@@ -85,7 +126,9 @@ export function createQQRequest(transport) {
       headers['Content-Type'] = headers['Content-Type'] || 'application/json'
       init.body = JSON.stringify(config.data)
     }
-    const response = await fetch(`${config.baseURL}${config.url}${query ? `?${query}` : ''}`, init)
+    const response = isDesktopQQBridgeAvailable()
+      ? await sendDesktopQQRequest(config, headers)
+      : await fetch(`${config.baseURL}${config.url}${query ? `?${query}` : ''}`, init)
     const contentType = response.headers.get('content-type') || ''
     const data = contentType.includes('application/json') ? await response.json() : await response.text()
     if (!response.ok) {

@@ -1,6 +1,7 @@
 require('./src/electron/logSanitizer')()
 
 const startNeteaseMusicApi = require('./src/electron/services')
+const startQQMusicApi = require('./src/electron/qqApiService').startQQMusicApi
 // Avoid depending on src/utils in packaged build; compute inline
 const isCreateMpris = process.platform === 'linux';
 // Load MPRIS integration lazily only on Linux to avoid packaging issues on macOS/Windows
@@ -136,6 +137,14 @@ if (!gotTheLock) {
         const errorMessage = err && err.message ? err.message : 'unknown error'
         console.error('Netease API 启动失败:', err);
         resolveNcmApiReady({ ready: false, error: errorMessage })
+      })
+    startQQMusicApi()
+      .then((result) => {
+        if (result && result.ready) console.log(`QQ API 启动完成 (port ${result.port})`)
+        else console.warn('QQ API 未就绪:', (result && result.error) || 'unknown error')
+      })
+      .catch((err) => {
+        console.error('QQ API 启动异常:', err);
       })
     app.on('activate', () => {
       // 在macOS上，当点击dock图标并且没有其他窗口打开时，

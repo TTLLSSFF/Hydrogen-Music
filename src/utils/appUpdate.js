@@ -36,6 +36,11 @@ function shaMatches(fullSha, reference) {
 }
 
 async function requestCommits(url) {
+  // 桌面端页面来自 file/app 协议，同源代理不存在；走主进程可信资源通道直连 GitHub。
+  if (typeof windowApi !== 'undefined' && typeof windowApi.requestTrustedResource === 'function') {
+    return await requestCommitsViaIpc(url)
+  }
+
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 
@@ -54,7 +59,22 @@ async function requestCommits(url) {
   }
 }
 
+async function requestCommitsViaIpc(url) {
+  const payload = await windowApi.requestTrustedResource({
+    url,
+    method: 'get',
+    headers: { Accept: 'application/vnd.github+json' },
+    timeout: REQUEST_TIMEOUT_MS,
+  })
+  if (!Array.isArray(payload)) throw new Error('commits-payload-invalid')
+  return payload
+}
+
 async function fetchCommits() {
+  if (typeof windowApi !== 'undefined' && typeof windowApi.requestTrustedResource === 'function') {
+    return await requestCommits(COMMITS_DIRECT)
+  }
+
   try {
     return await requestCommits(COMMITS_PROXY)
   } catch (_) {

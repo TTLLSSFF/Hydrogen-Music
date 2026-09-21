@@ -101,7 +101,7 @@ const handleTitleBarDoubleClick = () => {
             <Home class="home" v-show="playerStore.widgetState"></Home>
         </Transition>
     </div>
-    <div class="globalWidget" :class="{ 'visualizer-active': visualizerActive }">
+    <div class="globalWidget" :class="{ 'visualizer-active': visualizerActive, 'is-desktop': isDesktopEnv }">
         <Title class="widget-title"></Title>
         <AudioVisualizer class="widget-visualizer"></AudioVisualizer>
         <div class="widget-search" v-if="!userStore.localOnlyMode">
@@ -109,7 +109,7 @@ const handleTitleBarDoubleClick = () => {
         </div>
         <PlatformSourceSwitch v-if="showPlatformSwitch" variant="menu" class="widget-source-switch"></PlatformSourceSwitch>
     </div>
-    <div class="web-fullscreen" @click="toggleFullscreen()">
+    <div class="web-fullscreen" v-if="!isDesktopEnv" @click="toggleFullscreen()">
         <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="200" height="200">
             <path d="M128.576377 895.420553 128.576377 128.578424l766.846222 0 0 766.842129L128.576377 895.420553zM799.567461 224.434585 224.432539 224.434585l0 575.134923 575.134923 0L799.567461 224.434585z" p-id="1188"></path>
         </svg>
@@ -192,6 +192,24 @@ const handleTitleBarDoubleClick = () => {
     --visualizer-gap: 24px;
     --visualizer-shift: calc(var(--visualizer-width) + var(--visualizer-gap));
 
+    // 桌面端右上角是 Electron 自带的窗口控制按钮（WindowControl.vue 的
+    // .window-control.windows 宽 130px，在 .dragBar 中 right: 15px）。
+    // 这里按它的实际宽度给顶部小部件行留出同样的右侧安全间距：
+    // 行的右边界被限制在窗口控制按钮左侧，等宽或更宽窗口下布局与原来完全一致，
+    // 窗口变窄时由可视化条收缩、再退化为行内元素压缩，不会钻到按钮下面。
+    &.is-desktop {
+        --window-controls-reserve: calc(15px + 130px + 24px);
+        // 行内除可视化条外的固定宽度（标题 128 + 可视化条左间距 24 + 搜索框左间距 30 +
+        // 搜索框聚焦 160 + 平台来源开关左间距 14 + 平台菜单展开 171，留少量余量），
+        // 用于在窗口偏窄时反算可视化条可用宽度
+        --widget-fixed-width: 532px;
+        right: var(--window-controls-reserve);
+        --visualizer-width: min(
+            clamp(200px, 28vw, 340px),
+            calc(100vw - 45px - var(--window-controls-reserve) - var(--widget-fixed-width))
+        );
+    }
+
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -235,6 +253,7 @@ const handleTitleBarDoubleClick = () => {
         }
     }
 }
+// 网页端专属的全屏按钮（桌面端由 WindowControl 的最大化按钮负责，模板中已 v-if 掉）
 .web-fullscreen {
     position: fixed;
     top: 13px;

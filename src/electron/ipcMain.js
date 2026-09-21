@@ -8,6 +8,7 @@ const { loadLocalLyricPayload } = require('./localLyrics')
 const { registerSettingsIpc } = require('./ipc/settingsIpc')
 const { registerHifiOutputIpc } = require('./hifiOutput')
 const { listSystemFonts } = require('./systemFonts')
+const { getQQApiPort, waitForQQApiReady } = require('./qqApiService')
 const { decorateBiliQrPollResponse } = require('./biliLoginCookies')
 const {
     getBufferLength,
@@ -145,6 +146,7 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
         'api.bilibili.com',
         'monster-siren.hypergryph.com',
         'web.hycdn.cn',
+        'api.github.com',
     ])
     const trustedBiliDownloadHostSuffixes = ['.bilivideo.com', '.bilivideo.cn']
     const allowedNcmApiHosts = new Set(['localhost', '127.0.0.1'])
@@ -1051,6 +1053,54 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
             return buildNcmApiErrorResponse(error)
         }
     })
+    ipcMain.removeHandler('qq-api-request')
+    ipcMain.handle('qq-api-request', async (e, request = {}) => {
+        const rawUrl = typeof request?.url === 'string' ? request.url.trim() : ''
+        const method = normalizeHttpMethod(request?.method)
+        // QQ 请求 URL 必须是以 / 开头的相对路径（与渲染层 createQQRequestConfig 约束一致）。
+        if (!rawUrl.startsWith('/') || rawUrl.startsWith('//') || !method) {
+            throw new Error('unsupported-qq-api-request')
+        }
+
+        const readyState = await waitForQQApiReady()
+        if (!readyState || !readyState.ready) {
+            return {
+                status: 503,
+                statusText: 'Service Unavailable',
+                data: {
+                    code: 503,
+                    msg: 'qq-api-not-ready',
+                    ...(readyState && readyState.error ? { error: readyState.error } : {}),
+                },
+                headers: {},
+            }
+        }
+
+        const targetUrl = `http://127.0.0.1:${getQQApiPort()}${rawUrl}`
+
+        try {
+            const response = await requestWithTransientRetry({
+                url: targetUrl,
+                method,
+                params: normalizePlainObject(request.params),
+                data: request.data,
+                // 保留 X-QQ-Music-Session 等业务头，同时剔除 host/connection/content-length。
+                headers: normalizeRequestHeaders(request.headers),
+                timeout: normalizeTimeout(request.timeout),
+                responseType: normalizeResponseType(request.responseType),
+                validateStatus: () => true,
+            }, method === 'get' ? trustedResourceRetryDelays : [])
+
+            return {
+                status: response.status,
+                statusText: response.statusText || '',
+                data: response.data,
+                headers: response.headers || {},
+            }
+        } catch (error) {
+            return buildNcmApiErrorResponse(error)
+        }
+    })
     ipcMain.removeHandler('ncm-client-log-submit')
     ipcMain.handle('ncm-client-log-submit', async (_event, request = {}) => {
         const logs = normalizeNcmClientLogs(request?.logs)
@@ -1747,7 +1797,7 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
         if (process.platform === 'darwin') {
             try {
                 const current = app.getVersion();
-                const api = 'https://api.github.com/repos/ldx123000/Hydrogen-Music/releases/latest';
+                const api = 'https://api.github.com/repos/TTLLSSFF/Hydrogen-Music/releases/latest';
                 const { data } = await axios.get(api, { headers: { 'User-Agent': 'HydrogenMusic-Updater' } });
                 let latest = data.tag_name || data.name || '';
                 if (typeof latest === 'string' && latest.startsWith('v')) latest = latest.slice(1);
@@ -1764,7 +1814,7 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
                 };
 
                 if (latest && isNewer(latest, current)) {
-                    const pageUrl = data.html_url || `https://github.com/ldx123000/Hydrogen-Music/releases/tag/v${latest}`;
+                    const pageUrl = data.html_url || `https://github.com/TTLLSSFF/Hydrogen-Music/releases/tag/v${latest}`;
                     console.log('手动检查更新完成（macOS），发现新版本:', latest, pageUrl);
                     win.webContents.send('manual-update-available', latest, pageUrl);
                 } else {

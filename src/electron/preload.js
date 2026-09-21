@@ -165,6 +165,9 @@ function whenNcmApiReady() {
 function requestNcmApi(request) {
     return ipcRenderer.invoke('ncm-api-request', request)
 }
+function requestQQApi(request) {
+    return ipcRenderer.invoke('qq-api-request', request)
+}
 function submitNcmClientLog(request) {
     return ipcRenderer.invoke('ncm-client-log-submit', request)
 }
@@ -346,6 +349,7 @@ contextBridge.exposeInMainWorld('windowApi', {
     checkForUpdate,
     whenNcmApiReady,
     requestNcmApi,
+    requestQQApi,
     submitNcmClientLog,
     requestTrustedResource,
     requestAudioArrayBuffer,

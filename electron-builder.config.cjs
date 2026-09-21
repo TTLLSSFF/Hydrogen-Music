@@ -77,6 +77,7 @@ const BASE_FILE_PATTERNS = [
   'desktop-lyric.html',
   'index.html',
   'dist/**/*',
+  'server/**/*',
   'src/assets/icon/**/*',
   'src/electron/**/*',
   'src/shared/settingsDefaults.json',
