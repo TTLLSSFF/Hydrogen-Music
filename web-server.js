@@ -462,10 +462,16 @@ async function startWebServer() {
   try {
     await startNeteaseMusicApi()
     console.log(`NetEase Cloud Music API Enhanced started on port ${API_PORT}`)
+  } catch (error) {
+    console.error('Failed to start NetEase Cloud Music API:', error)
+    process.exit(1)
+  }
+
+  try {
     await startQQMusicApi()
     console.log(`QQ Music API started on port ${QQ_API_PORT}`)
   } catch (error) {
-    console.error('Failed to start NetEase Cloud Music API:', error)
+    console.error('Failed to start QQ Music API:', error)
     process.exit(1)
   }
 

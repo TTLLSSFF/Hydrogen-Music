@@ -250,6 +250,84 @@ test('QQ public playlist detail is served without a login session', async () => 
   assert.equal(invalidContext.status, 400)
 })
 
+test('QQ public playlist search is served without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    playlistSearchService: async params => {
+      calls.push(params)
+      return {
+        status: 200,
+        body: {
+          code: 0,
+          req_1: {
+            code: 0,
+            data: { meta: { sum: 1 }, body: { songlist: { list: [{ dissid: '7707261125' }] } } },
+          },
+          cookie: 'uin=must-not-leak',
+        },
+      }
+    },
+  })
+
+  const context = createContext('/getSearchPlaylists?key=%E5%91%A8%E6%9D%B0%E4%BC%A6&n=5&p=2')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'playlist search must be handled before the session-required boundary')
+  assert.deepEqual(calls, [{ keyword: '周杰伦', limit: 5, page: 2 }])
+  assert.equal(context.status, 200)
+  assert.equal(context.body.req_1.data.body.songlist.list[0].dissid, '7707261125')
+  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
+
+  const missingKeyContext = createContext('/getSearchPlaylists')
+  await middleware(missingKeyContext, async () => {})
+  assert.equal(missingKeyContext.status, 400)
+
+  const postContext = createContext('/getSearchPlaylists?key=jay', { method: 'POST', body: {} })
+  await middleware(postContext, async () => {})
+  assert.equal(postContext.status, 405)
+})
+
+test('QQ public personal recommendation is served without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    personalRecommendService: async params => {
+      calls.push(params)
+      return { status: 200, body: { code: 0, recommend: { v_shelf: [] }, cookie: 'uin=must-not-leak' } }
+    },
+  })
+
+  const context = createContext('/getPersonalRecommend')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'personal recommendation must be handled before the session-required boundary')
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ uin: '' }])
+  assert.equal(context.body.code, 0)
+  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
+})
+
+test('QQ personal recommendation forwards the session uin when signed in', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret', uin: '24680' }),
+    personalRecommendService: async params => {
+      calls.push(params)
+      return { status: 200, body: { code: 0 } }
+    },
+  })
+
+  const context = createContext('/getPersonalRecommend')
+  await middleware(context, async () => {})
+
+  assert.equal(context.status, 200)
+  assert.deepEqual(calls, [{ uin: '24680' }])
+  assert.equal(JSON.stringify(context.body).includes('server-secret'), false)
+})
+
 test('QQ public search forwards sanitized category params without a login session', async () => {
   const calls = []
   const middleware = createQQSecurityMiddleware({
@@ -259,7 +337,6 @@ test('QQ public search forwards sanitized category params without a login sessio
       return { status: 200, body: { code: 0, data: { song: { list: [{ songmid: 'mid-1', songname: '晴天' }] } } } }
     },
   })
-
   const context = createContext('/getSearchByKey?key=%E5%91%A8%E6%9D%B0%E4%BC%A6&t=8&n=5&p=2&catZhida=0')
   let reached = false
   await middleware(context, async () => { reached = true })

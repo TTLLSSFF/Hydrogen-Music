@@ -139,7 +139,7 @@ const routes = [
                 beforeEnter: (to, from, next) => {
                     const source = String(to.query.source || 'netease').toLowerCase()
                     const type = String(to.query.type || '').toLowerCase()
-                    if (!canAccessQQMyMusic(source, hasQQAccount())) {
+                    if (!canAccessQQMyMusic(source, hasQQAccount(), type)) {
                         noticeOpen('请先登录 QQ 音乐', 2)
                         next({ name: 'mymusic' })
                         return

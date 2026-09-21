@@ -214,7 +214,7 @@ export const useOtherStore = defineStore('otherStore', {
             this.searchResult = nextSearchResult
         },
 
-        // QQ 分类搜索：并行请求歌曲/专辑/歌手/MV，歌单上游不提供（空区块）。
+        // QQ 分类搜索：并行请求歌曲/专辑/歌手/MV/歌单（歌单走 musicu 的歌单分类）。
         // 任一分类失败只清空该分类，不阻断其他分类。
         async getQQSearchInfo(keywords, requestToken) {
             try {

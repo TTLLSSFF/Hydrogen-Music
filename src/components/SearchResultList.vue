@@ -20,8 +20,15 @@
       })
       return
     }
-    if (source === 'qq') return
-    if(props.type == 'playlist') router.push({ path: '/mymusic/playlist/' + id, query: { source } })
+    if (props.type == 'playlist') {
+      // 搜索结果里的 QQ 歌单是公共资源，匿名也可打开详情（服务端 /getSongListDetail
+      // 无登录要求），用 type=search 让路由守卫按公共歌单放行。
+      router.push({
+        path: '/mymusic/playlist/' + id,
+        query: source === 'qq' ? { source, type: 'search' } : { source },
+      })
+      return
+    }
     if(props.type == 'mv') {
       // MV 预览已移除
     }

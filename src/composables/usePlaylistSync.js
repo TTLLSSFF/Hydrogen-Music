@@ -7,6 +7,7 @@ import { useUserStore } from '../store/userStore'
 import { isLogin } from '../utils/authority'
 import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
 import { resolveFavoritePlaylistMeta } from '../utils/favoritePlaylist'
+import { normalizeMusicSource } from '../utils/musicSource.mjs'
 
 const PLAYLIST_SYNC_MIN_INTERVAL = 15 * 1000
 const PLAYLIST_SYNC_INTERVAL = 60 * 1000
@@ -61,8 +62,14 @@ export function usePlaylistSync() {
     }
 
     const getCurrentPlaylistId = () => {
-        if (router.currentRoute.value?.name != 'playlist') return ''
-        return String(router.currentRoute.value?.params?.id || '')
+        const currentRoute = router.currentRoute.value
+        if (currentRoute?.name != 'playlist') return ''
+        // 这里的「同步」走的是网易云接口，只能作用于网易云歌单：QQ 歌单的 disstid
+        // 可能在网易云侧撞上同号歌单，会被当成网易云歌单刷新——先作废详情缓存中断
+        // 正在进行的 QQ 详情请求，再用网易云数据覆盖详情，首页打开 QQ 歌单就会
+        // 概率性变成空内容。
+        if (normalizeMusicSource(currentRoute?.query?.source) != 'netease') return ''
+        return String(currentRoute?.params?.id || '')
     }
 
     const isAccountLibraryRoute = () => {

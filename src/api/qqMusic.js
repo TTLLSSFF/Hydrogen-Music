@@ -9,7 +9,8 @@ function createQQPublicApiDisabledError(capability) {
 }
 
 // QQ 公共搜索由服务端 `/getSearchByKey` 支撑；分类以 t 参数选择：
-// 0=歌曲 8=专辑 9=歌手 12=MV。歌单分类上游不提供，返回空列表。
+// 0=歌曲 8=专辑 9=歌手 12=MV。歌单没有对应分类（client_search_cp 不提供），
+// 单独走 `/getSearchPlaylists`，上游是 musicu 的 SearchCgiService search_type=3。
 const QQ_SEARCH_CATEGORY_PARAMS = Object.freeze({
   songs: 0,
   albums: 8,
@@ -28,6 +29,18 @@ export function searchQQCategory(keywords, category, options = {}) {
     QQ_SEARCH_MAX_LIMIT,
   )
   return qqRequest({ url: '/getSearchByKey', method: 'get', params: { key: keywords, t, n: limit } })
+}
+
+/** 歌单搜索：服务端 `/getSearchPlaylists` 走 musicu 的歌单分类（匿名即可用）。 */
+export function searchQQPlaylists(keywords, options = {}) {
+  const requestedLimit = Number(options.limit)
+  const limit = Math.min(
+    Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_SEARCH_DEFAULT_LIMIT, 1),
+    QQ_SEARCH_MAX_LIMIT,
+  )
+  const requestedPage = Number(options.page)
+  const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 1, 1)
+  return qqRequest({ url: '/getSearchPlaylists', method: 'get', params: { key: keywords, n: limit, p: page } })
 }
 
 export function unwrapQQResponse(payload) {
@@ -207,7 +220,9 @@ export function normalizeQQPlaylist(item = {}, options = {}) {
     value.size,
     value.num0,
     value.subtitle,
-  ) ?? firstQQValue(value.songnum, value.songCount, value.trackCount, value.size, value.num0, value.subtitle))
+    // musicu 歌单搜索用 song_count 承载曲目数
+    value.song_count,
+  ) ?? firstQQValue(value.songnum, value.songCount, value.trackCount, value.size, value.num0, value.subtitle, value.song_count))
   return {
     ...value,
     id: normalizeQQId(id),
@@ -1463,22 +1478,43 @@ export function normalizeQQSearchSongs(payload) {
 }
 
 /**
- * 聚合搜索：并行请求歌曲/专辑/歌手/MV 四个分类，返回搜索页统一使用的
- * `searchResult` 形状。歌单上游不提供，固定为空数组，界面不冒充数据。
+ * 歌单搜索响应归一化：musicu 的信封是 `{ req_1: { data: { body: { songlist: { list } } } } }`，
+ * 条目字段（dissid/dissname/imgurl/song_count）由 normalizeQQPlaylist 统一成
+ * 应用内歌单卡片形状，与首页推荐歌单共用同一套卡片契约。
+ */
+export function normalizeQQSearchPlaylists(payload) {
+  const body = unwrapQQResponse(payload)
+  const songlist = body?.req_1?.data?.body?.songlist
+    || body?.data?.body?.songlist
+    || body?.songlist
+    || {}
+  const list = Array.isArray(songlist.list)
+    ? songlist.list
+    : (Array.isArray(songlist.songlist) ? songlist.songlist : [])
+  return list
+    .filter(item => item && typeof item === 'object')
+    .map(item => normalizeQQPlaylist(item))
+    .filter(playlist => playlist.id)
+}
+
+/**
+ * 聚合搜索：并行请求歌曲/专辑/歌手/MV/歌单五个分类，返回搜索页统一使用的
+ * `searchResult` 形状。歌单走 musicu 的歌单分类（client_search_cp 不提供）。
  */
 export async function searchQQAll(keywords, options = {}) {
-  const [songs, albums, artists, mvs] = await Promise.allSettled([
+  const [songs, albums, artists, mvs, playlists] = await Promise.allSettled([
     searchQQCategory(keywords, 'songs', options),
     searchQQCategory(keywords, 'albums', options),
     searchQQCategory(keywords, 'artists', options),
     searchQQCategory(keywords, 'mvs', options),
+    searchQQPlaylists(keywords, options),
   ])
   const read = (settled, fallback = {}) => settled.status === 'fulfilled' ? settled.value : fallback
   return {
     searchSongs: normalizeQQSearchSongs(read(songs)),
     searchAlbums: normalizeQQSearchAlbums(read(albums)),
     searchArtists: normalizeQQSearchArtists(read(artists)),
-    searchPlaylists: [], // client_search_cp 不提供歌单分类
+    searchPlaylists: normalizeQQSearchPlaylists(read(playlists)),
     searchMvs: normalizeQQSearchMvs(read(mvs)),
   }
 }

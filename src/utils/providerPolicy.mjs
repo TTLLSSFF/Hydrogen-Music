@@ -25,10 +25,21 @@ export function canUseSongAction(song, action) {
   return !isQQSong(song) || !QQ_BLOCKED_SONG_ACTIONS.has(String(action || ''))
 }
 
+// QQ 歌单详情只有在「来自我的音乐」时才属于私有数据。首页推荐歌单（rec）、
+// 个性化推荐歌单（rec）、搜索结果歌单（search）与榜单（toplist）都是上游公共资源，
+// 未登录 QQ 也应可打开。
+const QQ_PUBLIC_PLAYLIST_TYPES = new Set(['toplist', 'rec', 'search'])
+
+export function isPublicQQPlaylistType(type) {
+  return QQ_PUBLIC_PLAYLIST_TYPES.has(String(type || '').trim().toLowerCase())
+}
+
 // QQ playlist details are private My Music data and must not be opened as a
 // public fallback when only a NetEase account (or no account) is available.
-export function canAccessQQMyMusic(source, qqLoggedIn) {
-  return normalizeMusicSource(source) !== 'qq' || qqLoggedIn === true
+export function canAccessQQMyMusic(source, qqLoggedIn, type = '') {
+  if (normalizeMusicSource(source) !== 'qq') return true
+  if (isPublicQQPlaylistType(type)) return true
+  return qqLoggedIn === true
 }
 
 export function isProviderPlaylist(playlist, provider = 'netease') {

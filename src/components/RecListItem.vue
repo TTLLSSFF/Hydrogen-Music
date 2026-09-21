@@ -162,7 +162,8 @@
         return
       }
       if (props.recType == 0) {
-        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq' } })
+        // 公共推荐歌单：带 type 让路由守卫识别为公共资源，未登录 QQ 也能打开
+        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq', type: 'rec' } })
         playerStore.forbidLastRouter = true
         return
       }
@@ -173,7 +174,7 @@
       }
       // QQ 的 recType 1 是「个性化推荐歌单」，与 recType 0 一样跳 QQ 歌单详情
       if (props.recType == 1) {
-        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq' } })
+        router.push({ path: `/mymusic/playlist/${id}`, query: { source: 'qq', type: 'rec' } })
         playerStore.forbidLastRouter = true
         return
       }

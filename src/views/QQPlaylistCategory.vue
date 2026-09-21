@@ -109,7 +109,8 @@
   const openPlaylist = item => {
     if (!item?.id) return
     playerStore.forbidLastRouter = true
-    router.push({ path: `/mymusic/playlist/${item.id}`, query: { source: 'qq' } })
+    // 分类歌单同为公共资源：带 type 让路由守卫放行，未登录 QQ 也能打开详情
+    router.push({ path: `/mymusic/playlist/${item.id}`, query: { source: 'qq', type: 'rec' } })
   }
 
   const getCover = item => withCoverParam(item?.coverImgUrl || item?.picUrl, 300)

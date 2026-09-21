@@ -2586,11 +2586,6 @@ export async function changePlayMode() {
         return
     }
 
-    if (playMode.value == 3 && isFavoritePlaylistPlaybackContext()) {
-        await startIntelligencePlayback({ preserveCurrent: true })
-        return
-    }
-
     applyPlayMode(playMode.value != 3 ? playMode.value + 1 : 0, { inFM: false })
 }
 

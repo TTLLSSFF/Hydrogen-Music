@@ -599,7 +599,7 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.resetSearchIndex()
             if (routerName != 'playlist') this.resetPlaylistHydration()
             if (routerName == 'playlist') {
-                if (source === 'qq') await this.updateQQPlaylistDetail(id)
+                if (source === 'qq') await this.updateQQPlaylistDetail(id, { type: options.type })
                 else await this.updatePlaylistDetail(id, { ...options, source })
             }
             if (routerName == 'album') {
@@ -615,7 +615,7 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.libraryMV = null
             this.cacheCurrentLibraryDetail(id, routerName, source, options.type)
         },
-        async updateQQPlaylistDetail(id) {
+        async updateQQPlaylistDetail(id, options = {}) {
             const playlistId = String(id || '')
             const token = createPlaylistHydrationToken(playlistId)
             this.playlistHydrationToken = token
@@ -657,7 +657,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                 this.indexLibrarySongs(this.librarySongs)
                 this.playlistHydration = createPlaylistHydrationState({ id: playlistId, total: this.librarySongs.length, loaded: this.librarySongs.length, status: 'completed', source: 'qq' })
                 this.libraryChangeAnimation = false
-                this.cacheCurrentLibraryDetail(id, 'playlist', 'qq')
+                this.cacheCurrentLibraryDetail(id, 'playlist', 'qq', options.type)
             } catch (error) {
                 if (this.playlistHydrationToken === token) {
                     this.librarySongs = []

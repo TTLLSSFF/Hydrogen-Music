@@ -16,6 +16,7 @@ import {
   normalizeQQSearchArtists,
   normalizeQQSearchMvs,
   normalizeQQSearchPayload,
+  normalizeQQSearchPlaylists,
   normalizeQQSearchSongs,
   normalizeQQSingerDetail,
   normalizeQQSingerSongs,
@@ -237,12 +238,33 @@ test('QQ live song category response normalizes through the song adapter', () =>
   assert.equal(songs[0].dt, 240000)
 })
 
-test('QQ aggregate search keeps playlists empty and isolates failed categories', async () => {
+test('QQ aggregate search carries playlists and isolates failed categories', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async url => {
     const query = String(url)
     if (query.includes('t=12')) return { ok: false, status: 502, headers: { get: () => 'application/json' }, json: async () => ({}) }
     if (query.includes('t=9')) return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ code: 0, data: { singer: { list: [{ singerMID: 's1', singerName: 'Singer' }] } } }) }
+    // 歌单分类走独立的 musicu 端点，信封与 client_search_cp 不同
+    if (query.includes('/getSearchPlaylists')) {
+      return {
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          code: 0,
+          req_1: {
+            code: 0,
+            data: {
+              meta: { sum: 300 },
+              body: {
+                songlist: {
+                  list: [{ dissid: '7039749142', dissname: '百听不厌的周杰伦', imgurl: 'https://example.test/cover.jpg', song_count: 99 }],
+                },
+              },
+            },
+          },
+        }),
+      }
+    }
     return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ code: 0, data: { song: { list: [{ songmid: 'm1', songname: 'Song' }] } } }) }
   }
   let result
@@ -253,8 +275,50 @@ test('QQ aggregate search keeps playlists empty and isolates failed categories',
   }
   assert.equal(result.searchSongs.length, 1)
   assert.equal(result.searchArtists[0].name, 'Singer')
-  assert.deepEqual(result.searchPlaylists, [])
+  assert.equal(result.searchPlaylists.length, 1)
+  assert.equal(result.searchPlaylists[0].id, '7039749142')
+  assert.equal(result.searchPlaylists[0].name, '百听不厌的周杰伦')
+  assert.equal(result.searchPlaylists[0].coverImgUrl, 'https://example.test/cover.jpg')
+  assert.equal(result.searchPlaylists[0].trackCount, 99)
+  assert.equal(result.searchPlaylists[0].source, 'qq')
   assert.deepEqual(result.searchMvs, [])
+})
+
+// musicu 歌单搜索的条目字段（dissid/dissname/imgurl/song_count）与
+// client_search_cp 不同，这里锁定归一化结果，避免搜索页歌单区块变空。
+test('QQ playlist search normalizes the musicu songlist envelope', () => {
+  const playlists = normalizeQQSearchPlaylists({
+    code: 0,
+    req_1: {
+      code: 0,
+      data: {
+        meta: { sum: 2 },
+        body: {
+          songlist: {
+            list: [
+              {
+                dissid: '7039749142',
+                dissname: '百听不厌的周杰伦',
+                imgurl: 'http://qpic.y.qq.com/music_cover/cover/300?n=1',
+                song_count: 99,
+                listennum: 412634467,
+                creator: { name: '今晚月色很美', qq: 2904004371 },
+              },
+              { dissname: '缺少 id 的条目' },
+            ],
+          },
+        },
+      },
+    },
+  })
+
+  assert.equal(playlists.length, 1)
+  assert.equal(playlists[0].id, '7039749142')
+  assert.equal(playlists[0].name, '百听不厌的周杰伦')
+  assert.equal(playlists[0].picUrl, 'http://qpic.y.qq.com/music_cover/cover/300?n=1')
+  assert.equal(playlists[0].trackCount, 99)
+  assert.equal(playlists[0].source, 'qq')
+  assert.deepEqual(normalizeQQSearchPlaylists({ code: 0 }), [])
 })
 
 test('QQ album detail request carries the albummid query and requires it', async () => {

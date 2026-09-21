@@ -183,16 +183,15 @@ const syncRouteDateQuery = async date => {
 };
 
 const loadRecommendSongs = async date => {
-    if (!date) {
-        libraryStore.librarySongs = [];
-        return;
-    }
-
-    const shouldUseTodayRecommend = date == todayDate.value && shouldInsertTodayOption.value;
+    // 历史列表为空（非黑胶 VIP）且未到 6:00 时没有任何可选日期，以前直接清空列表，
+    // 打开每日推荐就只剩空白；无日期时统一退回今天的实时日推。
+    // 另外今天一律走实时接口：历史接口对「今天」可能返回空数组，回看过去日期才用它。
+    const targetDate = date || todayDate.value;
+    const shouldUseTodayRecommend = targetDate == todayDate.value;
 
     loadingSongs.value = true;
     try {
-        await libraryStore.updateRecommendSongs(shouldUseTodayRecommend ? '' : date);
+        await libraryStore.updateRecommendSongs(shouldUseTodayRecommend ? '' : targetDate);
     } catch (e) {
         noticeOpen('获取推荐歌曲失败', 2);
     } finally {

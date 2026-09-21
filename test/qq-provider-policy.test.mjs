@@ -5,6 +5,7 @@ import {
   containsQQSongs,
   canUseSongAction,
   canAccessQQMyMusic,
+  isPublicQQPlaylistType,
   getSearchSource,
   getHeartModeBlockReason,
   isProviderPlaylist,
@@ -45,6 +46,19 @@ test('QQ My Music details require an authenticated QQ account', () => {
   assert.equal(canAccessQQMyMusic('qq', false), false)
   assert.equal(canAccessQQMyMusic('QQ', true), true)
   assert.equal(canAccessQQMyMusic('netease', false), true)
+})
+
+test('QQ public playlist details open without a QQ account while private ones stay blocked', () => {
+  // 首页推荐歌单 / 个性化推荐歌单 / 榜单都是公共资源
+  assert.equal(canAccessQQMyMusic('qq', false, 'rec'), true)
+  assert.equal(canAccessQQMyMusic('qq', false, 'toplist'), true)
+  assert.equal(canAccessQQMyMusic('QQ', false, 'REC'), true)
+  assert.equal(isPublicQQPlaylistType('toplist'), true)
+  assert.equal(isPublicQQPlaylistType(''), false)
+  // 我的音乐歌单仍需登录
+  assert.equal(canAccessQQMyMusic('qq', false, ''), false)
+  assert.equal(canAccessQQMyMusic('qq', false, 'my'), false)
+  assert.equal(canAccessQQMyMusic('netease', false, 'my'), true)
 })
 
 test('heart mode is unavailable for any queue containing QQ music', () => {

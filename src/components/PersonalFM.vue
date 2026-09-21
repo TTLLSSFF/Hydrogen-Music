@@ -130,14 +130,6 @@
                             </svg>
                         </div>
 
-                        <div class="action-btn heart-mode" @click="toggleHeartModeAction" :class="{ active: heartModeActive }" title="心动模式">
-                            <svg width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M16 26.4S6.3 20.7 6.3 13.1c0-3.8 2.4-6.2 5.6-6.2 1.9 0 3.3 0.9 4.1 2.5 0.8-1.6 2.2-2.5 4.1-2.5 3.2 0 5.6 2.4 5.6 6.2 0 7.6-9.7 13.3-9.7 13.3Z" />
-                                <path d="M3.5 17h6l2-4.2 3.5 8.1 3.1-6.2 2.1 4.1h6.3" />
-                                <path d="M25.8 3.6v3.5M24 5.4h3.6" />
-                            </svg>
-                        </div>
-
                         <div class="action-btn like" @click="likeSong" :class="{ active: isCurrentSongLiked }" title="喜欢">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                                 <path
@@ -183,7 +175,6 @@ import { usePlayerStore } from '../store/playerStore'
 import { useUserStore } from '../store/userStore'
 import { mapSongsPlayableStatus } from '../utils/songStatus'
 import {
-    fetchHeartModeRecommendations,
     likeSong as likePlayerSong,
     playResolvedPlaybackInfo,
     preloadGaplessSongPlayback,
@@ -205,40 +196,6 @@ const playerStore = usePlayerStore()
 const userStore = useUserStore()
 const { songId, playing, quality, showSongTranslation } = storeToRefs(playerStore)
 const { likelist } = storeToRefs(userStore)
-
-// 心动模式开关：与「不喜欢 / 喜欢」同一套 .action-btn 结构。
-// 漫游没有歌单上下文，改以「当前正在播放的漫游歌曲」为种子拉心动推荐，
-// 开启后漫游的推荐源整体切换成心动推荐，关闭则回到普通漫游。
-const heartModeActive = ref(false)
-const heartModeSwitching = ref(false)
-
-const toggleHeartModeAction = async () => {
-    if (heartModeSwitching.value || loading.value) return
-    heartModeSwitching.value = true
-    try {
-        if (heartModeActive.value) {
-            heartModeActive.value = false
-            fmSongs.value = []
-            fmPoolIds.clear()
-            await refreshFM({ silent: !!currentSong.value })
-            return
-        }
-
-        const recommended = await fetchHeartModeRecommendations({ seedId: currentSong.value?.id })
-        if (recommended.length === 0) {
-            noticeOpen(userStore.user?.userId ? '心动模式暂不可用' : '登录后才能使用心动模式', 2)
-            return
-        }
-
-        heartModeActive.value = true
-        fmSongs.value = []
-        fmPoolIds.clear()
-        addToFmPoolUnique(recommended, FM_REFRESH_SOURCE.HEART_MODE)
-        if (!nextCandidateSong.value) await refreshFM({ silent: true })
-    } finally {
-        heartModeSwitching.value = false
-    }
-}
 
 // 创建一个计算属性来实时判断当前歌曲是否被喜欢
 const isCurrentSongLiked = computed(() => {
@@ -262,7 +219,6 @@ const FM_REFRESH_SOURCE = Object.freeze({
     PERSONAL_FM: 'personal_fm',
     FM_MODE_RESCUE: 'fm_mode_rescue',
     DAILY_RECOMMEND: 'daily_recommend',
-    HEART_MODE: 'heart_mode',
 })
 const FM_MODE_RESCUE_OPTIONS = Object.freeze({ mode: 'EXPLORE', limit: 6 })
 const DEFAULT_FM_MODE = 'DEFAULT'
@@ -620,8 +576,6 @@ function resetFmAccountState() {
     modeSwitching.value = false
     modePanelOpen.value = false
     awaitingSceneSubmodePick.value = false
-    heartModeActive.value = false
-    heartModeSwitching.value = false
     lastRefreshSource.value = FM_REFRESH_SOURCE.PERSONAL_FM
     lastLoadedUserId.value = null
     cancelCoverTransitionState()
@@ -1391,21 +1345,9 @@ const refreshFM = async ({ silent = false } = {}) => {
             let songs = []
             let primarySource = FM_REFRESH_SOURCE.PERSONAL_FM
             if (usingDefaultMode) {
-                // 心动模式：以当前正在播放的漫游歌曲为种子拉心动推荐，替代默认漫游推荐
-                const heartSongs = heartModeActive.value
-                    ? await fetchHeartModeRecommendations({ seedId: currentSong.value?.id })
-                    : []
+                const response = await getPersonalFM()
                 if (!isActiveFmRefresh(requestToken, requestUserId)) return false
-                if (heartSongs.length > 0) {
-                    songs = heartSongs
-                    primarySource = FM_REFRESH_SOURCE.HEART_MODE
-                } else {
-                    // 心动推荐不可用时回退到普通漫游，避免漫游池断供
-                    if (heartModeActive.value) heartModeActive.value = false
-                    const response = await getPersonalFM()
-                    if (!isActiveFmRefresh(requestToken, requestUserId)) return false
-                    songs = Array.isArray(response?.data) ? response.data : []
-                }
+                songs = Array.isArray(response?.data) ? response.data : []
             } else {
                 const response = await getPersonalFMByMode(selectedModeRequest)
                 if (!isActiveFmRefresh(requestToken, requestUserId)) return false
@@ -2344,17 +2286,6 @@ const handleFmClearRecent = () => {
         background: var(--fm-danger-bg);
         border-color: var(--fm-danger);
         color: var(--fm-danger) !important;
-    }
-
-    // 心动模式开启态：与上一首/下一首同一套实心按钮语言
-    &.heart-mode.active {
-        background: var(--fm-primary-btn-bg);
-        border-color: var(--fm-primary-btn-border);
-        color: var(--fm-primary-btn-text) !important;
-    }
-
-    &.heart-mode.active:hover {
-        background: var(--fm-primary-btn-hover-bg);
     }
 
     &.like:hover {

@@ -384,7 +384,7 @@ onBeforeRouteUpdate(async (to, from, next) => {
     const normalizedToName = normalizeRouteName(to.name);
     const requestedSource = String(to.query.source || 'netease').toLowerCase();
     const requestedType = String(to.query.type || '').toLowerCase();
-    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount())) {
+    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount(), requestedType)) {
         noticeOpen('请先登录 QQ 音乐', 2);
         next({ name: 'mymusic' });
         return;

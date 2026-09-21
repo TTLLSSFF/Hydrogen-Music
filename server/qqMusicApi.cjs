@@ -87,7 +87,14 @@ const QQ_ALLOWED_EXACT_PATHS = new Set([
   '/user/getuserlikedsongs',
   '/user/getuserplaylists',
   '/user/getusercollectedsonglists',
-  // 需登录的个性化推荐：必须落在白名单内才能走到会话注入逻辑。
+  // 个性化推荐：必须落在白名单内才能走到会话注入逻辑（匿名也放行，见下方闸门）。
+  '/getpersonalrecommend',
+])
+
+// 无会话也放行的端点：上游 music.recommend.RecommendFeed / get_recommend_feed
+// 匿名即可返回公共推荐流（已实测 code=0），登录后则按会话 uin 返回个性化结果。
+// 这些路径不能走下面的会话闸门，否则首页「个性化推荐 / 每日推荐」会直接 401。
+const QQ_ANONYMOUS_ALLOWED_PATHS = new Set([
   '/getpersonalrecommend',
 ])
 const QQ_ALLOWED_PATH_PATTERNS = Object.freeze([
@@ -543,6 +550,61 @@ async function searchQQMusicPublic({ keyword, category, limit, page, catZhida })
   }
 }
 
+// 公共歌单搜索（无登录要求）：client_search_cp 没有任何歌单分类（t=0..20 实测只有
+// 歌曲/歌词/专辑/歌手/MV），歌单搜索由 musicu 的 music.search.SearchCgiService 承担。
+// 请求必须带网页端身份（ct=19/cv=1859），否则上游会返回 code=0 但列表为空；
+// 匿名即可返回公共歌单，因此这里同样用固定模板直连，不把 URL 控制权交给前端。
+const QQ_PLAYLIST_SEARCH_MODULE = 'music.search.SearchCgiService'
+const QQ_PLAYLIST_SEARCH_METHOD = 'DoSearchForQQMusicDesktop'
+// search_type=3 是歌单分类（实测：0=综合 1=歌手 2=专辑 3=歌单 4=MV 7=歌曲 8=用户）
+const QQ_PLAYLIST_SEARCH_TYPE = 3
+const QQ_PLAYLIST_SEARCH_CT = 19
+const QQ_PLAYLIST_SEARCH_CV = 1859
+
+async function searchQQPlaylistsPublic({ keyword, limit, page }) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+  try {
+    const data = {
+      comm: {
+        ct: QQ_PLAYLIST_SEARCH_CT,
+        cv: QQ_PLAYLIST_SEARCH_CV,
+        uin: '0',
+        format: 'json',
+      },
+      req_1: {
+        module: QQ_PLAYLIST_SEARCH_MODULE,
+        method: QQ_PLAYLIST_SEARCH_METHOD,
+        param: {
+          grp: 1,
+          num_per_page: limit,
+          page_num: page,
+          query: keyword,
+          search_type: QQ_PLAYLIST_SEARCH_TYPE,
+        },
+      },
+    }
+    const response = await fetch(
+      `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data=${encodeURIComponent(JSON.stringify(data))}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          Referer: 'https://y.qq.com/',
+          'User-Agent': 'Mozilla/5.0',
+        },
+        signal: controller.signal,
+      },
+    )
+    const payload = await response.json()
+    return {
+      status: response.ok ? 200 : Number(response.status) || 502,
+      body: payload && typeof payload === 'object' ? payload : {},
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // 周的 ISO 号用于构造榜单 period。复刻上游 getRanks 控制器（依赖包未导出
 // 该控制器，仅导出底层 UCommon_default 服务）的 getWeekNumber 算法，保证
 // 服务端默认实现与真实客户端请求一致。
@@ -619,6 +681,7 @@ function createQQSecurityMiddleware(options = {}) {
   const logSink = options.logSink
   const allowServerSession = options.allowServerSession !== false
   const searchService = options.searchService || searchQQMusicPublic
+  const playlistSearchService = options.playlistSearchService || searchQQPlaylistsPublic
   const albumInfoService = options.albumInfoService || (async ({ albummid }) => qqServices.getAlbumInfo_default({
     method: 'get',
     params: { albummid, format: 'json', outCharset: 'utf-8' },
@@ -1095,6 +1158,34 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       return
     }
 
+    // 公共歌单搜索（无登录要求）：client_search_cp 没有歌单分类，改走 musicu 的歌单
+    // 分类。只放行关键词与分页，其余参数由服务端固定。
+    if (normalizedPath === '/getsearchplaylists') {
+      if (ctx.method !== 'GET') {
+        writeJson(ctx, 405, { error: 'Method not allowed' })
+        return
+      }
+      const keyword = getSingleValue(ctx.query?.key || ctx.query?.w).trim()
+      if (!keyword) {
+        writeJson(ctx, 400, { error: 'search key is required' })
+        return
+      }
+      const requestedLimit = Number(ctx.query?.n)
+      const limit = Math.min(
+        Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : 10, 1),
+        QQ_SEARCH_MAX_PAGE_SIZE,
+      )
+      const requestedPage = Number(ctx.query?.p)
+      const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 1, 1)
+      try {
+        const { status, body } = unwrapServiceResponse(await playlistSearchService({ keyword, limit, page }))
+        writeJson(ctx, status, sanitizeQQResponseBody(body))
+      } catch (_) {
+        writeJson(ctx, 502, { error: 'QQ Music playlist search unavailable' })
+      }
+      return
+    }
+
     // 公共专辑详情（无登录要求）：只放行 albummid 参数，响应在到达前端前
     // 经过凭证脱敏。上游 getAlbumInfo 自带完整歌曲列表。
     if (normalizedPath === '/getalbuminfo') {
@@ -1409,7 +1500,7 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       delete ctx.request.headers['X-QQ-Music-Cookie']
     }
     const sessionCookie = normalizeQQUpstreamCookie(clientCookie || getSingleValue(serverSession?.cookie).trim())
-    if (!sessionCookie) {
+    if (!sessionCookie && !QQ_ANONYMOUS_ALLOWED_PATHS.has(normalizedPath)) {
       writeJson(ctx, 401, { error: 'QQ Music session required' })
       return
     }
@@ -1436,8 +1527,8 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       }
     }
 
-    // 需登录的个性化推荐（只读）。会话已在上方注入 global.userInfo，这里显式
-    // 传入 uin 保证上游按账号返回个性化结果；无会话时上面已返回 401。
+    // 个性化推荐（只读，匿名可用）。有会话时显式传入 uin 让上游按账号返回
+    // 个性化结果；无会话时 uin 为空，上游退回公共推荐流（首页三个区块都要用）。
     if (normalizedPath === '/getpersonalrecommend') {
       const recommendUin = normalizeQQUin(
         activeSession?.uin || activeSession?.loginUin || clientUin || parseCookieUin(activeSession?.cookie),

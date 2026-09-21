@@ -71,7 +71,7 @@
         return
       }
       libraryStore.libraryInfo = null
-      router.push({ path: `/mymusic/playlist/${first.id}`, query: { source: 'qq' } })
+      router.push({ path: `/mymusic/playlist/${first.id}`, query: { source: 'qq', type: 'rec' } })
     } catch (_) {
       noticeOpen('登录 QQ 音乐后可查看每日推荐', 2)
     }
