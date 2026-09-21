@@ -124,7 +124,10 @@ export default defineConfig({
     target: 'es2018',
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'index.html')
+        main: resolve(__dirname, 'index.html'),
+        // 桌面歌词是 Electron 的独立窗口，background.js 会加载 dist/desktop-lyric.html，
+        // 少了这个入口打包后该窗口会 404，所以必须一起构建
+        'desktop-lyric': resolve(__dirname, 'desktop-lyric.html')
       }
     },
     minify: 'terser',
