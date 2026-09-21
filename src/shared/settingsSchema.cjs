@@ -109,6 +109,8 @@ function normalizeSettings(settings = {}) {
         : []
     normalized.local.videoFolder = normalizeOptionalPathText(normalized.local.videoFolder)
     normalized.local.downloadFolder = normalizeOptionalPathText(normalized.local.downloadFolder)
+    normalized.local.downloadCreateSongFolder = normalized.local.downloadCreateSongFolder === true
+    normalized.local.downloadSaveLyricFile = normalized.local.downloadSaveLyricFile === true
     return normalized
 }
 

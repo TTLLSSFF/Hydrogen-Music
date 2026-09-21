@@ -41,6 +41,13 @@ function exitApp(playlist) {
 function downloadToFolder(payload) {
     return ipcRenderer.invoke('download-to-folder', payload)
 }
+function cancelDownload(id) {
+    ipcRenderer.send('download-cancel', id)
+}
+function onDownloadProgress(callback) {
+    const listener = (_event, payload) => callback?.(payload)
+    return subscribeChannel('download-progress', listener)
+}
 function lyricControl(callback) {
     return subscribeChannel('lyric-control', callback)
 }
@@ -268,6 +275,8 @@ contextBridge.exposeInMainWorld('windowApi', {
     beforeQuit,
     exitApp,
     downloadToFolder,
+    cancelDownload,
+    onDownloadProgress,
     lyricControl,
     scanLocalMusic,
     localMusicFiles,

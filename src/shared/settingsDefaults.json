@@ -30,6 +30,8 @@
     "local": {
       "videoFolder": null,
       "downloadFolder": null,
+      "downloadCreateSongFolder": false,
+      "downloadSaveLyricFile": false,
       "localFolder": []
     },
     "shortcuts": [

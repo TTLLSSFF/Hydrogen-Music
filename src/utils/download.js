@@ -2,8 +2,22 @@ import { getPreferredQuality } from './quality'
 import { resolveDownloadPlaybackInfo } from './player/lazy'
 import { getSongDisplayName } from './songName'
 import { isQQSong } from './providerPolicy.mjs'
+import pinia from '../store/pinia'
+import { useDownloadStore } from '../store/downloadStore'
 
 const DOWNLOAD_PUSH_DELAY_MS = 650
+
+const DOWNLOAD_ERROR_TEXT = {
+    'missing-url': '下载地址缺失',
+    'missing download url': '无法解析下载地址',
+    noSavePath: '未设置下载目录',
+    invalidDownloadUrl: '下载地址无效',
+    downloadWindowUnavailable: '下载窗口不可用',
+    'download-stream-unavailable': '下载流不可用',
+    timeout: '下载超时',
+    cancelled: '已取消',
+    downloadFailed: '下载失败',
+}
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms))
@@ -43,6 +57,29 @@ export function buildDownloadFileName(song, playbackInfo = {}) {
     return `${title}${artistPart}.${inferAudioExtension(playbackInfo)}`
 }
 
+function getSongArtists(song) {
+    if (Array.isArray(song?.ar)) return song.ar.map(artist => artist?.name).filter(Boolean)
+    if (Array.isArray(song?.artists)) return song.artists.map(artist => artist?.name || artist).filter(Boolean)
+    return []
+}
+
+function getSongAlbum(song) {
+    return song?.al?.name || song?.album?.name || song?.album?.title || ''
+}
+
+function describeDownloadError(error) {
+    const code = error?.code || error?.message || ''
+    if (DOWNLOAD_ERROR_TEXT[code]) return DOWNLOAD_ERROR_TEXT[code]
+    if (typeof code === 'string' && code.trim()) return code
+    return '下载失败'
+}
+
+function createDownloadTaskId(song, index) {
+    const rawId = song?.id ?? song?.songId ?? ''
+    if (rawId !== '' && rawId !== null && rawId !== undefined) return String(rawId)
+    return `download-${Date.now()}-${index}`
+}
+
 // 桌面端（Electron）保存到设置里的下载目录；网页端交给 /download-proxy 流式代理。
 export function isDesktopDownloadAvailable() {
     return typeof windowApi !== 'undefined'
@@ -50,12 +87,48 @@ export function isDesktopDownloadAvailable() {
         && typeof windowApi.downloadToFolder === 'function'
 }
 
-export async function pushBrowserDownload(url, filename) {
+let downloadStore = null
+function getDownloadStore() {
+    if (!downloadStore) downloadStore = useDownloadStore(pinia)
+    return downloadStore
+}
+
+let progressListenerReady = false
+function ensureDownloadProgressListener(store) {
+    if (progressListenerReady) return
+    if (typeof windowApi === 'undefined' || typeof windowApi.onDownloadProgress !== 'function') return
+    progressListenerReady = true
+    windowApi.onDownloadProgress(payload => {
+        if (!payload || typeof payload !== 'object') return
+        store.updateDownloadProgress(payload.id, payload.progress)
+    })
+}
+
+async function buildLyricPayload(song) {
+    try {
+        const { getLyricWithCloudFallback } = await import('./player/lyricFallback')
+        const lyric = await getLyricWithCloudFallback(song)
+        const payload = {
+            id: song?.id ?? null,
+            lrc: lyric?.lrc?.lyric || null,
+            tlyric: lyric?.tlyric?.lyric || null,
+            romalrc: lyric?.romalrc?.lyric || null,
+        }
+        if (!payload.lrc && !payload.tlyric && !payload.romalrc) return null
+        return payload
+    } catch (error) {
+        console.warn('获取下载歌词失败:', error?.message || error)
+        return null
+    }
+}
+
+export async function pushBrowserDownload(url, filename, metadata = null) {
     if (!url) return { ok: false, error: 'missing-url' }
 
     if (isDesktopDownloadAvailable()) {
         try {
-            const result = await windowApi.downloadToFolder({ url, filename })
+            const payload = { url, filename, ...(metadata && typeof metadata === 'object' ? metadata : {}) }
+            const result = await windowApi.downloadToFolder(payload)
             if (result && result.ok) return { ok: true, path: result.path }
             return { ok: false, error: result?.error || 'downloadFailed' }
         } catch (error) {
@@ -81,16 +154,24 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
     const list = Array.isArray(songs) ? songs.filter(Boolean) : []
     const quality = getPreferredQuality(requestedQuality)
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null
+    const desktopMode = isDesktopDownloadAvailable()
+    const store = desktopMode ? getDownloadStore() : null
+    if (store) {
+        store.resetCancelAll()
+        ensureDownloadProgressListener(store)
+    }
     const result = {
         total: list.length,
         success: 0,
         failed: 0,
         skipped: 0,
         failures: [],
-        mode: isDesktopDownloadAvailable() ? 'desktop' : 'web',
+        mode: desktopMode ? 'desktop' : 'web',
     }
 
     for (let index = 0; index < list.length; index += 1) {
+        if (store?.cancelAllRequested) break
+
         const song = list[index]
         if (song?.type === 'local') {
             result.skipped += 1
@@ -105,18 +186,47 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
             continue
         }
 
+        const taskId = createDownloadTaskId(song, index)
+        if (store) {
+            store.beginDownload({
+                id: taskId,
+                name: song?.name || '',
+                tns: song?.tns || song?.transNames || null,
+                artists: getSongArtists(song),
+                album: getSongAlbum(song),
+            })
+        }
+
         try {
             const playbackInfo = await resolveDownloadPlaybackInfo(song, quality)
             if (!playbackInfo?.url) throw new Error('missing download url')
 
-            const outcome = await pushBrowserDownload(playbackInfo.url, buildDownloadFileName(song, playbackInfo))
+            const metadata = store
+                ? {
+                    id: taskId,
+                    name: song?.name || '',
+                    type: inferAudioExtension(playbackInfo),
+                    artists: getSongArtists(song),
+                    album: getSongAlbum(song),
+                    coverUrl: song?.coverUrl || song?.al?.picUrl || null,
+                    lyrics: await buildLyricPayload(song),
+                }
+                : null
+
+            const outcome = await pushBrowserDownload(
+                playbackInfo.url,
+                buildDownloadFileName(song, playbackInfo),
+                metadata,
+            )
             if (!outcome?.ok) throw new Error(outcome?.error || 'download failed')
             result.success += 1
+            if (store) store.finishDownload(taskId, { status: 'success', path: outcome.path })
             onProgress?.({ ...result, index, song, status: 'success', playbackInfo })
         } catch (error) {
             console.error('下载歌曲失败:', error)
             result.failed += 1
             result.failures.push({ song, reason: error })
+            if (store) store.finishDownload(taskId, { status: 'failed', reason: describeDownloadError(error) })
             onProgress?.({ ...result, index, song, status: 'failed', error })
         }
 

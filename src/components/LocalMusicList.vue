@@ -53,7 +53,7 @@
 <template>
   <div class="local-music-list">
     <div class="list-container">
-      <div class="list-folder" v-show="listType1 == 3 && (listType2 == 0 || listType2 == 3)">
+      <div class="list-folder" v-show="listType1 == 3 && listType2 == 0 || listType1 == 2 && listType2 == 1">
         <div class="list-item" @click.stop="showFiles(item)" @contextmenu.prevent.stop="openFolderMenu($event, item)" :class="{'list-item-open': item.show && item.children.length != 0, 'list-item-selected': isSelectedFolder(item)}" v-for="(item, index) in props.folderlist">
           <div class="folder">
             <div class="folder-img">
