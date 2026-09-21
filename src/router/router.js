@@ -5,6 +5,7 @@ import { ensureDeferredAppInit } from '../utils/initApp'
 import { runIdleTask } from '../utils/player/idleTask'
 import { useUserStore } from '../store/userStore'
 import { useLibraryStore } from '../store/libraryStore'
+import { useLocalStore } from '../store/localStore'
 import { storeToRefs } from 'pinia'
 import { useOtherStore } from '../store/otherStore'
 import { hasAnyMusicAccount, hasQQAccount } from '../utils/accountProviders.mjs'
@@ -33,6 +34,7 @@ const MyMusic = createRouteLoader(() => import('../views/MyMusic.vue'))
 const SirenPage = createRouteLoader(() => import('../views/SirenPage.vue'))
 const LibraryDetail = createRouteLoader(() => import('../components/LibraryDetail.vue'))
 const RecommendSongs = createRouteLoader(() => import('../components/RecommendSongs.vue'))
+const LocalMusicDetail = createRouteLoader(() => import('../components/LocalMusicDetail.vue'))
 const SearchResult = createRouteLoader(() => import('../views/SearchResult.vue'))
 const Settings = createRouteLoader(() => import('../views/Settings.vue'))
 const RadioDetail = createRouteLoader(() => import('../components/RadioDetail.vue'))
@@ -42,6 +44,8 @@ const userStore = useUserStore()
 const libraryStore = useLibraryStore()
 const { updateLibraryDetail } = libraryStore
 const { libraryInfo } = storeToRefs(libraryStore)
+const localStore = useLocalStore()
+const localOnlyRouteNames = new Set(['settings', 'mymusic', 'localFiles', 'localAlbum', 'localArtist'])
 const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
 const hasDifferentLibrarySource = (to, from) => String(to?.query?.source || 'netease') != String(from?.query?.source || 'netease')
 const hasDifferentLibraryType = (to, from) => String(to?.query?.type || '') != String(from?.query?.type || '')
@@ -62,6 +66,7 @@ const routeComponentPreloadLoaders = [
     PersonalFMPage,
     LibraryDetail,
     RecommendSongs,
+    LocalMusicDetail,
     RadioDetail,
     SearchResult,
     Settings,
@@ -87,7 +92,7 @@ async function preloadRouteComponentBatch(startIndex = 0) {
 }
 
 function scheduleRouteComponentPreload() {
-    if (routeComponentPreloadStarted || typeof window === 'undefined') return
+    if (routeComponentPreloadStarted || typeof window === 'undefined' || userStore.localOnlyMode) return
     routeComponentPreloadStarted = true
     void preloadRouteComponentBatch()
 }
@@ -191,9 +196,36 @@ const routes = [
                 name: 'dj',
                 component: RadioDetail,
             },
+            {
+                path: '/mymusic/local/files',
+                name: 'localFiles',
+                component: LocalMusicDetail,
+                beforeEnter: (to, from, next) => {
+                    if(from.name != 'localFiles') localStore.updateLocalMusicDetail(to.name, to.query)
+                    next()
+                }
+            },
+            {
+                path: '/mymusic/local/album/:id',
+                name: 'localAlbum',
+                component: LocalMusicDetail,
+                beforeEnter: (to, from, next) => {
+                    if(from.name != 'localAlbum') localStore.updateLocalMusicDetail(to.name, null, to.params.id)
+                    next()
+                }
+            },
+            {
+                path: '/mymusic/local/artist/:id',
+                name: 'localArtist',
+                component: LocalMusicDetail,
+                beforeEnter: (to, from, next) => {
+                    if(from.name != 'localArtist') localStore.updateLocalMusicDetail(to.name, null, to.params.id)
+                    next()
+                }
+            },
         ],
         beforeEnter: (to, from, next) => {
-            if(hasAnyMusicAccount()) next()
+            if(userStore.localOnlyMode || hasAnyMusicAccount() || isLogin()) next()
             else if((from.name == 'homepage' || from.name == 'search') && to.fullPath != '/mymusic') next()
             else next({name: 'login'})
         },
@@ -254,6 +286,11 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
+    if (userStore.localOnlyMode && !localOnlyRouteNames.has(String(to.name || ''))) {
+        next({ name: 'mymusic' })
+        return
+    }
+
     const fullPath = typeof to?.fullPath === 'string' ? to.fullPath : ''
     const shouldWarmDeferredInit = fullPath.startsWith('/mymusic')
         || fullPath.startsWith('/cloud')

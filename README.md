@@ -98,6 +98,16 @@ Hydrogen Music 是一个第三方网易云音乐 Web 播放器。当前仓库保
 - 快捷键设置：展示播放、上一首、下一首、音量和进度控制快捷键。
 - 其他设置：主题、自定义字体、首页、云盘、私人漫游、塞壬唱片页面开关，以及私人漫游缓存清理。
 
+### 桌面端
+
+- 桌面歌词为 Electron 无边框置顶窗口，与主窗口通过 IPC 同步歌词与播放进度；网页端则以 Document Picture-in-Picture 置顶浮窗承载同一套歌词界面。
+- 支持浅色、深色、跟随系统主题。
+- 支持自定义字体与系统字体选择。
+- 支持全局快捷键、系统托盘、退出行为设置。
+- macOS 支持原生窗口交通灯、Dock 菜单与歌曲信息展示。
+- Linux 支持 MPRIS 媒体控制。
+- Windows / macOS / Linux 均提供打包配置。
+
 ## 截图预览
 
 <table>
@@ -113,6 +123,24 @@ Hydrogen Music 是一个第三方网易云音乐 Web 播放器。当前仓库保
     <td colspan="2"><img src="img/dark_mode.png" alt="深色模式" /></td>
   </tr>
 </table>
+
+## 安装使用
+
+前往 [Releases](https://github.com/ldx123000/Hydrogen-Music/releases) 下载对应平台的安装包。
+
+当前构建配置支持：
+
+- Windows：NSIS 安装包、Portable、Zip。
+- macOS：DMG。
+- Linux：AppImage、Deb、RPM。
+
+Arch Linux 用户可通过 AUR 安装：
+
+```shell
+yay -S hydrogen-music-bin
+```
+
+首次使用建议先登录网易云账号。部分功能依赖账号权限、VIP 权益或第三方服务登录状态。
 
 ## 本地运行
 
@@ -187,6 +215,62 @@ GITHUB_TOKEN=你的token npm run serve
 
 Token 只需要公开仓库的只读权限（classic PAT 可不勾选任何 scope，fine-grained PAT 勾选 public repositories 的 Contents 只读即可）。Token 只在服务端使用，不会下发到浏览器；也可以改用 `GITHUB_API_TOKEN` 变量名。
 
+### 本地 HiFi 输出与 MPV 后端
+
+本地音乐的 HiFi 输出使用 MPV 作为后端。普通在线播放和默认本地播放不依赖 MPV；只有在「设置 - 音乐 - 本地音乐 HiFi 输出」开启后，才会走这个后端。
+
+仓库提供了音频专用 MPV 构建脚本，生成的运行时放在 `resources/mpv/<platform-arch>/` 下。开发或打包前，建议先下载对应平台的构建产物：
+
+MPV 构建由 `.github/workflows/build-mpv-audio-only.yml` 负责。这个 workflow 会在 `scripts/mpv-audio-only/**`、`resources/mpv/README.md` 或 workflow 自身变化时自动运行，也可以在 GitHub Actions 页面手动运行。手动运行时可以指定 `mpv_ref` 和 `ffmpeg_ref`，默认都是 `release`。
+
+每次 workflow 会分别构建并上传这些 artifact：
+
+- `mpv-audio-only-linux-x64`
+- `mpv-audio-only-darwin-arm64`
+- `mpv-audio-only-win32-x64`
+- `mpv-audio-only-all-platforms`
+
+下面的下载命令不会在本机重新编译 MPV，只会把 GitHub Actions 已经构建好的 artifact 拉到 `resources/mpv`：
+
+```shell
+npm run mpv:download
+```
+
+如果要一次性准备 Windows、macOS、Linux 三端资源：
+
+```shell
+npm run mpv:download:all
+```
+
+GitHub Actions artifact 的下载接口需要认证。如果命令提示 `Requires authentication`，先设置有 `Actions: Read-only` 权限的 `GH_TOKEN` 或 `GITHUB_TOKEN`。已安装 GitHub CLI 时，可以这样临时使用当前登录凭据：
+
+```shell
+GH_TOKEN="$(gh auth token)" npm run mpv:download:all
+```
+
+下载后会得到类似这些目录：
+
+- `resources/mpv/win32-x64`
+- `resources/mpv/darwin-arm64`
+- `resources/mpv/linux-x64`
+
+`electron-builder` 打包时只会带上当前目标平台对应的 MPV 目录。运行时会优先使用内置 MPV；如果没有内置资源，可以在设置里手动选择 MPV 可执行文件，也可以通过 `HYDROGEN_MPV_PATH` 指定路径。
+
+如需自己构建精简 MPV，需要在目标系统上执行对应脚本：
+
+```shell
+# Linux x64
+bash scripts/mpv-audio-only/build-linux-x64.sh
+
+# macOS Apple Silicon
+bash scripts/mpv-audio-only/build-darwin-arm64.sh
+
+# Windows x64，需要在 MSYS2 MINGW64 shell 中运行
+bash scripts/mpv-audio-only/build-win32-x64.sh
+```
+
+更多构建细节见 [scripts/mpv-audio-only/README.md](scripts/mpv-audio-only/README.md) 和 [resources/mpv/README.md](resources/mpv/README.md)。
+
 ### 构建前端资源
 
 ```shell
@@ -194,6 +278,22 @@ npm run build
 ```
 
 构建产物会输出到 `dist/`。
+
+### 打包当前平台客户端
+
+```shell
+npm run dist
+```
+
+打包产物会输出到 `release/<version>/`。
+
+如需指定平台，可将参数透传给构建脚本：
+
+```shell
+npm run dist -- --win
+npm run dist -- --mac
+npm run dist -- --linux
+```
 
 ### 预览构建产物
 
@@ -211,21 +311,27 @@ npm run preview
 - UI 组件：`vue-slider-component`、`vue-virtual-scroller`。
 - API 与网络：Axios、网易云音乐 API Enhanced、本地 Node 代理服务、同源下载代理。
 - 文本与工具：OpenCC、QRCode、nanoid。
+- 桌面端：Electron、electron-builder、MPV（本地音乐 HiFi 输出后端）。
 
 ## 项目结构
 
 ```text
 Hydrogen-Music
 ├── index.html                 # Vite 入口页面
+├── background.js              # Electron 主进程入口
+├── desktop-lyric.html         # 桌面歌词独立窗口入口
 ├── web-server.js              # 生产静态资源服务、API 代理和下载代理
 ├── vite.config.js             # Vite 配置
+├── electron-builder.config.cjs # 桌面端打包配置
 ├── scripts                    # 构建和依赖修补脚本
+├── resources/mpv              # 音频专用 MPV 运行时
 ├── img                        # README 截图资源
 └── src
     ├── api                    # 网易云音乐、云盘、MV、电台、塞壬等接口封装
     ├── assets                 # 样式、字体、图标资源
     ├── components             # 播放器、歌词、评论、曲库、私人漫游等组件
     ├── composables            # 组合式运行时逻辑
+    ├── electron               # Electron 主进程模块（托盘、IPC、MPRIS、下载等）
     ├── router                 # 页面路由
     ├── shared                 # 设置默认值和规范化逻辑
     ├── store                  # Pinia 状态管理
@@ -235,8 +341,8 @@ Hydrogen-Music
 
 ## 注意事项
 
-- 项目当前以 Web 运行方式为准，仓库内没有 Electron 启动和打包脚本。
-- 一些代码保留了 `windowApi` 兼容判断，用于适配历史桌面环境或可选宿主能力；在普通浏览器中会自动降级。
+- 项目同时提供 Web 运行方式与 Electron 桌面端：Web 方式见上文「本地运行」，桌面端开发与打包见「本地 HiFi 输出与 MPV 后端」和「打包当前平台客户端」。
+- 一些代码保留了 `windowApi` / `window.electronAPI` 兼容判断，用于适配桌面宿主能力；在普通浏览器中会自动降级（例如桌面歌词改用 Document Picture-in-Picture）。
 - 部分功能依赖网易云音乐账号权限、VIP 权益、歌曲版权状态或第三方服务可用性。
 
 ### QQ 音乐支持

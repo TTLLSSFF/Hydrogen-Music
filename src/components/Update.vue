@@ -39,7 +39,13 @@
     showChangelog.value = false
   }
   const toReleasesPage = () => {
-    window.open(changelogUrl.value, '_blank')
+    const url = changelogUrl.value
+    // 桌面端（Electron）：交给主进程用系统默认浏览器打开外链；网页端回退到 window.open
+    if (typeof windowApi !== 'undefined' && typeof windowApi.toRegister === 'function') {
+      windowApi.toRegister(url)
+      return
+    }
+    window.open(url, '_blank')
   }
   const close = () => {
     show.value = !show.value

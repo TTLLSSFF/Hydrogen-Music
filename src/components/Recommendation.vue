@@ -3,11 +3,13 @@
   import { playAll } from '../utils/player/lazy';
   import { useRouter } from 'vue-router';
   import { useLibraryStore } from '../store/libraryStore'
+  import { useLocalStore } from '../store/localStore';
   import { useOtherStore } from '../store/otherStore'
   import { getQQPersonalRecommend, normalizeQQRecommendCards } from '../api/qqMusic'
   import { isLogin } from '../utils/authority';
   import { noticeOpen } from '../utils/dialog';
   const libraryStore = useLibraryStore()
+  const localStore = useLocalStore()
   const otherStore = useOtherStore()
   const router = useRouter()
   const isQQSource = computed(() => otherStore.searchSource === 'qq')
@@ -82,6 +84,7 @@
       return
     }
     libraryStore.libraryInfo = null
+    localStore.currentSelectedSongs = null
     router.push('/mymusic/playlist/rec')
   }
   const playRecAll = async () => {

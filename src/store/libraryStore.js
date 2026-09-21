@@ -739,7 +739,6 @@ export const useLibraryStore = defineStore('libraryStore', {
                     status: 'loading',
                     source,
                 })
-
                 const hydrationTask = this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, source, requestOptions)
                 this.libraryChangeAnimation = false
                 if (!deferRemaining) await hydrationTask

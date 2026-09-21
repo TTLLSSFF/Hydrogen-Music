@@ -2,9 +2,10 @@
   import { computed, ref, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import { createPlaylist, updatePlaylist, deletePlaylist } from '../api/playlist'
-  import { addToNext } from '../utils/player/lazy'
+  import { addToNext, addToNextLocal } from '../utils/player/lazy'
   import { noticeOpen } from '../utils/dialog';
   import { useLibraryStore } from '../store/libraryStore';
+import { useLocalStore } from '../store/localStore';
 import { useOtherStore } from '../store/otherStore';
 import { usePlayerStore } from '../store/playerStore'
 import { useUserStore } from '../store/userStore';
@@ -21,9 +22,12 @@ import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
 import { storeToRefs } from 'pinia';
 const router = useRouter()
 const libraryStore = useLibraryStore()
+const localStore = useLocalStore()
 const otherStore = useOtherStore()
 const playerStore = usePlayerStore()
 const userStore = useUserStore()
+// 桌面端（Electron）由 preload 注入 windowApi；网页端不存在该全局
+const isDesktop = typeof windowApi !== 'undefined'
 const loadedNeteasePlaylistUserId = ref('')
 const neteaseWritablePlaylists = computed(() => {
   const accountId = String(userStore.user?.userId || '')
@@ -339,6 +343,12 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     }
     if(id == 3) {
       const song = otherStore.selectedItem
+      // 桌面端：走 Electron 本地下载队列（主进程下载器 + 本地曲库）
+      if (isDesktop) {
+        otherStore.contextMenuShow = false
+        localStore.updateDownloadList(song)
+        return
+      }
       if (!canUseSongAction(song, 'download')) {
         noticeOpen('QQ 音乐暂不支持下载', 2)
         otherStore.contextMenuShow = false
@@ -377,6 +387,18 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     if(id == 5) { deleteFromPlaylist(); return; }
     if(id == 6) { newPlaylist(); return; }
     if(id == 7) { deleteMyPlaylist(); return; }
+    // 本地歌曲专属项（tree4，仅本地音乐场景出现）
+    if(id == 8) { addToNextLocal(otherStore.selectedItem, true); return; }
+    if(id == 9) { addToNextLocal(otherStore.selectedItem, false); return; }
+    if(id == 10) {
+      const folderPath = otherStore.selectedItem?.dirPath || otherStore.selectedItem?.path
+      // 桌面端：调用 Electron 打开系统文件管理器；网页端无该能力，静默跳过
+      if (folderPath && typeof windowApi !== 'undefined' && typeof windowApi.openLocalFolder === 'function') {
+        windowApi.openLocalFolder(folderPath)
+      }
+      otherStore.contextMenuShow = false
+      return
+    }
   }
   const createAndAdd = () => {
     const playlistName = String(newPlaylistTitle.value || '').trim()

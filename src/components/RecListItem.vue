@@ -18,9 +18,11 @@
   } from '../api/qqMusic';
   import { useOtherStore } from '../store/otherStore'
   import { useLibraryStore } from '../store/libraryStore'
+  import { useLocalStore } from '../store/localStore';
   import { usePlayerStore } from '../store/playerStore';
   import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
   const libraryStore = useLibraryStore()
+  const localStore = useLocalStore()
   const playerStore = usePlayerStore()
   const otherStore = useOtherStore()
   const router = useRouter()
@@ -192,6 +194,7 @@
       return
     }
     libraryStore.libraryInfo = null
+    localStore.currentSelectedSongs = null
     if(props.recType == 0) router.push('/mymusic/playlist/' + id)
     if(props.recType == 2) router.push('/mymusic/album/' + id)
     if(props.recType == 3) router.push('/mymusic/playlist/' + id)

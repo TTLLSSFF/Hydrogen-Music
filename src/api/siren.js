@@ -1,5 +1,14 @@
-const SIREN_API_BASE = '/siren-api'
+const SIREN_DESKTOP_API_BASE = 'https://monster-siren.hypergryph.com/api'
+const SIREN_WEB_API_BASE = '/siren-api'
 const DEFAULT_REQUEST_TIMEOUT = 15000
+
+// 桌面端（Electron）由 preload 注入 windowApi，塞壬请求交给主进程代理，需使用绝对地址；
+// 网页端没有该通道，统一走 /siren-api 同源反向代理（由 vite / web-server 转发）
+const isDesktopEnv = typeof windowApi !== 'undefined' && typeof windowApi.requestTrustedResource === 'function'
+
+function resolveSirenApiBase() {
+    return isDesktopEnv ? SIREN_DESKTOP_API_BASE : SIREN_WEB_API_BASE
+}
 
 const albumsCache = {
     value: null,
@@ -60,7 +69,7 @@ async function requestViaMain(url, options = {}) {
 }
 
 async function requestSirenJson(path, options = {}) {
-    const payload = await requestViaMain(`${SIREN_API_BASE}${path}`, options)
+    const payload = await requestViaMain(`${resolveSirenApiBase()}${path}`, options)
     if (payload && payload.code === 0 && payload.data !== undefined) return payload.data
     throw new Error(payload?.msg || payload?.message || '塞壬唱片接口请求失败')
 }
@@ -103,11 +112,13 @@ export async function getSirenSong(songCid, options = {}) {
 
 function resolveSirenUrl(url) {
     if (!url) return url
+    // 桌面端：主进程代理可直接访问绝对地址，无需改写
+    if (isDesktopEnv) return url
     if (url.startsWith('https://monster-siren.hypergryph.com/api')) {
-        return '/siren-api' + url.replace('https://monster-siren.hypergryph.com/api', '')
+        return SIREN_WEB_API_BASE + url.replace('https://monster-siren.hypergryph.com/api', '')
     }
     if (url.startsWith('http://monster-siren.hypergryph.com/api')) {
-        return '/siren-api' + url.replace('http://monster-siren.hypergryph.com/api', '')
+        return SIREN_WEB_API_BASE + url.replace('http://monster-siren.hypergryph.com/api', '')
     }
     return url
 }

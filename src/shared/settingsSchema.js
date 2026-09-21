@@ -5,6 +5,12 @@ export const DEFAULT_MUSIC_LEVEL = settingsDefaults.defaultMusicLevel
 export const MUSIC_LEVEL_OPTIONS = Object.freeze(settingsDefaults.musicLevelOptions.map(option => Object.freeze({ ...option })))
 
 const AVAILABLE_MUSIC_LEVELS = new Set(MUSIC_LEVEL_OPTIONS.map(option => option.value))
+const AVAILABLE_LOCAL_HIFI_OUTPUT_MODES = new Set(['shared', 'exclusive'])
+const LEGACY_LOCAL_HIFI_OUTPUT_MODE_MAP = Object.freeze({
+    auto: 'shared',
+    'wasapi-shared': 'shared',
+    'wasapi-exclusive': 'exclusive',
+})
 const DEFAULT_SETTINGS = Object.freeze(clonePlain(settingsDefaults.defaultSettings))
 
 function clonePlain(value) {
@@ -23,6 +29,12 @@ export function normalizeSearchAssistLimit(value) {
 
 export function normalizeMusicLevel(level) {
     return AVAILABLE_MUSIC_LEVELS.has(level) ? level : DEFAULT_MUSIC_LEVEL
+}
+
+export function normalizeLocalHifiOutputMode(mode) {
+    const value = typeof mode === 'string' ? mode.trim() : ''
+    const migratedValue = LEGACY_LOCAL_HIFI_OUTPUT_MODE_MAP[value] || value
+    return AVAILABLE_LOCAL_HIFI_OUTPUT_MODES.has(migratedValue) ? migratedValue : DEFAULT_SETTINGS.music.localHifiOutputMode
 }
 
 function normalizeCustomText(value, fallback) {
@@ -53,16 +65,20 @@ export function normalizeMusicSettings(music = {}) {
     normalized.showSongTranslation = normalized.showSongTranslation !== false
     normalized.gaplessPlayback = normalized.gaplessPlayback === true
     normalized.audioVisualizer = normalized.audioVisualizer === true
+    normalized.localHifiOutput = normalized.localHifiOutput === true
+    normalized.localHifiOutputMode = normalizeLocalHifiOutputMode(normalized.localHifiOutputMode)
+    normalized.localHifiMpvPath = normalizeOptionalPlainText(normalized.localHifiMpvPath, DEFAULT_SETTINGS.music.localHifiMpvPath)
+    normalized.localHifiAudioDevice = normalizeCustomLongText(normalized.localHifiAudioDevice, DEFAULT_SETTINGS.music.localHifiAudioDevice) || 'auto'
     delete normalized.levelMigratedToLosslessV1
     return normalized
 }
 
 function normalizeOtherSettings(other = {}) {
     const normalized = { ...other }
+    normalized.rememberWindowSize = normalized.rememberWindowSize === true
     normalized.customFont = normalizeCustomText(normalized.customFont, DEFAULT_SETTINGS.other.customFont)
     normalized.customFontLabel = normalizeCustomText(normalized.customFontLabel, DEFAULT_SETTINGS.other.customFontLabel)
     if (!normalized.customFont) normalized.customFontLabel = DEFAULT_SETTINGS.other.customFontLabel
-    delete normalized.quitApp
     return normalized
 }
 
@@ -99,6 +115,7 @@ export default {
     DEFAULT_MUSIC_LEVEL,
     MUSIC_LEVEL_OPTIONS,
     getDefaultSettings,
+    normalizeLocalHifiOutputMode,
     normalizeMusicLevel,
     normalizeMusicSettings,
     normalizeSearchAssistLimit,

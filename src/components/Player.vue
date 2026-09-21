@@ -19,6 +19,7 @@ import { toggleDesktopLyric } from '../utils/desktopLyric';
 import { isQQSong } from '../utils/providerPolicy.mjs'
 import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 import { getActivePlaylistSurface } from '../utils/player/playlistRuntime.mjs'
+import defaultLocalCover from '../assets/icon/icon.png';
 const PlayList = defineAsyncComponent(() => import('./PlayList.vue'));
 
 // 定义 props 和 emit
@@ -86,6 +87,9 @@ const {
     time,
     playerChangeSong,
     localBase64Img,
+    musicVideo,
+    addMusicVideo,
+    videoIsPlaying,
     playerShow,
     listInfo,
     lyricsObjArr,
@@ -223,6 +227,7 @@ const toAlbum = () => {
         lyricShow.value = false;
         playlistWidgetShow.value = false;
         playerStore.forbidLastRouter = true;
+        if (videoIsPlaying?.value) videoIsPlaying.value = false;
         return;
     }
     // 普通歌曲：仍然跳转专辑
@@ -237,6 +242,7 @@ const toAlbum = () => {
         lyricShow.value = false;
         playlistWidgetShow.value = false;
         playerStore.forbidLastRouter = true;
+        if (videoIsPlaying?.value) videoIsPlaying.value = false;
     }
 };
 
@@ -262,7 +268,21 @@ const checkArtist = singer => {
         widgetState.value = true;
         lyricShow.value = false;
         playlistWidgetShow.value = false;
+        if (videoIsPlaying?.value) videoIsPlaying.value = false;
     }
+};
+const toAddMusicVideo = () => {
+    const song = currentSong.value;
+    if (song && addMusicVideo) {
+        addMusicVideo.value = {
+            id: songId.value,
+            name: getSongDisplayName(song, '', showSongTranslation.value),
+            dt: time.value,
+        };
+    }
+};
+const backToVideo = () => {
+    if (videoIsPlaying?.value) playerShow.value = false;
 };
 const addToPlaylist = () => {
     const song = currentSong.value;
@@ -288,7 +308,7 @@ const toggleDjSub = async isSubscribe => {
     <div class="player-container">
         <div class="player">
             <div class="player-cover">
-                <div class="cover">
+                <div class="cover" :class="{ 'back-Video': videoIsPlaying }" @click="backToVideo()">
                     <img
                         v-if="showRemoteCurrentSong && displayedRemoteCoverUrl"
                         :src="displayedRemoteCoverUrl"
@@ -298,7 +318,7 @@ const toggleDjSub = async isSubscribe => {
                     <img
                         v-else-if="currentSong?.type === 'local'"
                         :key="'local-default-' + (songId || currentSong?.id)"
-                        src="https://p3.music.126.net/UeTuwE7pvjBpypWLudqukA==/3132508627578625.jpg?param=140y140"
+                        :src="defaultLocalCover"
                         alt=""
                     />
                 </div>
@@ -319,12 +339,12 @@ const toggleDjSub = async isSubscribe => {
                     ></OverflowMarquee>
                 </div>
                 <div class="info-music">
-                    <div class="music-author-lable" :class="{ 'music-author-lable-dim': coverBlur }"></div>
+                    <div class="music-author-lable" :class="{ 'music-author-lable-dim': videoIsPlaying || coverBlur }"></div>
                     <div class="music-author">
                             <span
                                 @click="checkArtist(singer)"
                                 :class="['author', { disabled: isDjMode || isCurrentSirenSong }]"
-                                :style="{ color: coverBlur ? 'var(--text)' : 'var(--muted-text)' }"
+                                :style="{ color: videoIsPlaying || coverBlur ? 'var(--text)' : 'var(--muted-text)' }"
                                 v-for="(singer, index) in currentSongArtists"
                             >
                             {{ singer.name || '' }}{{ index == currentSongArtists.length - 1 ? '' : ' / ' }}
@@ -455,6 +475,24 @@ const toggleDjSub = async isSubscribe => {
             </div>
 
             <div class="song-control" :class="{ 'is-intelligence-mode': isIntelligenceMode }">
+                <svg
+                    t="1673355036226"
+                    v-if="musicVideo"
+                    @click="toAddMusicVideo()"
+                    class="icon"
+                    viewBox="0 0 1024 1024"
+                    version="1.1"
+                    xmlns="http://www.w3.org/2000/svg"
+                    p-id="16255"
+                    width="200"
+                    height="200"
+                >
+                    <path
+                        d="M220 600c17.673 0 32 14.327 32 32v91.999l92 0.001c17.673 0 32 14.327 32 32 0 17.673-14.327 32-32 32h-92v92c0 17.673-14.327 32-32 32-17.673 0-32-14.327-32-32v-92H96c-17.673 0-32-14.327-32-32 0-17.673 14.327-32 32-32h92v-92c0-17.673 14.327-32 32-32z m498.268-440c35.307 0 63.928 28.654 63.928 64v147.387l125.63-80.353c21.065-13.473 48.617 1.386 49.166 26.21L957 318v368c0 25.024-27.341 40.268-48.533 27.366l-0.64-0.4-125.63-80.354V800c0 35.346-28.622 64-63.929 64H448v-68.001h266.272V228H134.923V577H67V224c0-35.346 28.622-64 63.928-64h587.34z m174.803 216.417l-110.875 70.916v109.332l110.875 70.916V376.417zM290.713 286c17.673 0 32 14.327 32 32 0 17.673-14.327 32-32 32h-65.854c-17.674 0-32-14.327-32-32 0-17.673 14.326-32 32-32h65.854z"
+                        fill="#000000"
+                        p-id="16256"
+                    ></path>
+                </svg>
                 <!-- 罗马音歌词图标 - 只有在当前歌曲有罗马音歌词时才显示 -->
                 <svg
                     t="1673182533775"
@@ -805,6 +843,19 @@ const toggleDjSub = async isSubscribe => {
                     ></path>
                 </svg>
 
+                <svg
+                    v-show="isIntelligenceMode"
+                    @click="changePlayMode()"
+                    class="icon intelligence-mode-icon"
+                    viewBox="0 0 32 32"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-label="心动模式"
+                >
+                    <path class="intelligence-heart" fill="none" d="M16 26.4S6.3 20.7 6.3 13.1c0-3.8 2.4-6.2 5.6-6.2 1.9 0 3.3 0.9 4.1 2.5 0.8-1.6 2.2-2.5 4.1-2.5 3.2 0 5.6 2.4 5.6 6.2 0 7.6-9.7 13.3-9.7 13.3Z" />
+                    <path class="intelligence-trace" fill="none" d="M3.5 17h6l2-4.2 3.5 8.1 3.1-6.2 2.1 4.1h6.3" />
+                    <path class="intelligence-spark" fill="none" d="M25.8 3.6v3.5M24 5.4h3.6" />
+                </svg>
+
                 <!-- 歌词/评论切换按钮：本地歌曲隐藏评论按钮 -->
                 <svg
                     v-if="showCommentPanelAction"
@@ -955,6 +1006,12 @@ const toggleDjSub = async isSubscribe => {
                         100% {
                             transform: scale(1);
                         }
+                    }
+                }
+                &.back-Video {
+                    &:hover {
+                        cursor: pointer;
+                        transform: scale(1.05);
                     }
                 }
             }
@@ -1233,6 +1290,16 @@ const toggleDjSub = async isSubscribe => {
             }
             &.is-intelligence-mode svg[t="1670376314067"] {
                 display: none !important;
+            }
+            .intelligence-mode-icon {
+                fill: none;
+                stroke: currentColor;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                path { fill: none !important; }
+                .intelligence-heart { stroke-width: 1.7; }
+                .intelligence-trace { stroke-width: 2; }
+                .intelligence-spark { stroke-width: 1.6; }
             }
         }
     }

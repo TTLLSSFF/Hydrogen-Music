@@ -314,7 +314,6 @@ request.interceptors.response.use(function (response) {
   const suppressGlobalNotice = url === '/like'
     || url === '/playlist/tracks'
     || error?.config?.suppressGlobalNotice === true
-  
   if (!suppressGlobalNotice) {
     if (msg) {
       noticeOpen(msg, 2)

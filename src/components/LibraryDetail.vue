@@ -20,6 +20,7 @@ import SongFilterInput from './SongFilterInput.vue';
 import SongSortControl from './SongSortControl.vue';
 import { usePlayerStore } from '../store/playerStore';
 import { useLibraryStore } from '../store/libraryStore';
+import { useLocalStore } from '../store/localStore';
 import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
 import { canAccessQQMyMusic, canUseSongAction, findProviderPlaylist, isQQSong } from '../utils/providerPolicy.mjs';
@@ -28,7 +29,10 @@ import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
 
 const playerStore = usePlayerStore();
 const libraryStore = useLibraryStore();
+const localStore = useLocalStore();
 const otherStore = useOtherStore();
+// 桌面端（Electron）才有 windowApi，下载管理（本地下载队列）只在桌面端可用
+const isDesktop = typeof windowApi !== 'undefined';
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
 const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration, qqSingerSongsHasMore, qqSingerSongsLoading, qqSingerAlbumsHasMore, qqSingerAlbumsLoading } = storeToRefs(libraryStore);
 
@@ -736,6 +740,14 @@ const cancelDownloadSelection = () => {
     selectedDownloadSongs.value = [];
     selectionMenuExpanded.value = false;
 };
+
+//下载本歌单/专辑全部歌曲（桌面端：交给 Electron 下载管理队列）
+const downloadAll = async () => {
+    if (!isDesktop) return;
+    await waitCurrentPlaylistHydration();
+    localStore.updateDownloadList(librarySongs.value || []);
+};
+
 watch(
     () => [songSearchKeyword.value, songSortMode.value],
     () => {
@@ -861,6 +873,26 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                         ></path>
                                     </svg>
                                     <span>{{ libraryInfo.followed ? '已收藏' : '收藏' }}</span>
+                                </div>
+                                <div class="operation-download operation-item" v-if="isDesktop && !isSinger && !isQQSource">
+                                    <svg
+                                        t="1669030443895"
+                                        class="download-icon"
+                                        viewBox="0 0 1024 1024"
+                                        version="1.1"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        p-id="10347"
+                                        width="200"
+                                        height="200"
+                                        data-v-7f63928d=""
+                                    >
+                                        <path
+                                            d="M921.6 563.2c-9.6-9.6-25.6-9.6-35.2 0L544 896l0-822.4c0-12.8-9.6-22.4-25.6-22.4s-25.6 9.6-25.6 22.4L492.8 896l-342.4-339.2c-9.6-9.6-25.6-9.6-35.2 0-9.6 9.6-9.6 22.4 0 32l384 377.6c6.4 6.4 12.8 6.4 19.2 6.4 0 0 0 0 0 0 3.2 0 3.2 0 6.4 0 0 0 0 0 3.2 0 3.2 0 6.4-3.2 9.6-6.4l380.8-371.2C931.2 588.8 931.2 572.8 921.6 563.2z"
+                                            p-id="10348"
+                                            data-v-7f63928d=""
+                                        ></path>
+                                    </svg>
+                                    <span @click="downloadAll()">下载</span>
                                 </div>
                                 <div class="operation-selection-wrapper" v-if="!isSinger || artistPageType == 0" :class="{ 'selection-active': downloadSelectionMode }">
                                     <div class="operation-selection operation-item" @click="enterSelectionMode">

@@ -15,6 +15,7 @@ export const useUserStore = defineStore('userStore', {
             cloudDiskPage: true,
             personalFMPage: true,
             sirenPage: false,
+            localOnlyMode: false,
         }
     },
     actions: {
@@ -53,6 +54,6 @@ export const useUserStore = defineStore('userStore', {
     },
     persist: {
         storage: localStorage,
-        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource']
+        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','localOnlyMode','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource']
     },
 })

@@ -10,6 +10,7 @@ lerna-debug.log*
 
 dist-ssr
 .qq-music-session/
+_aur-package/
 
 # 本地 HTTPS 证书与私钥
 certs/

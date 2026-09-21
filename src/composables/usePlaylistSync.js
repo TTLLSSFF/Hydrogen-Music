@@ -86,7 +86,7 @@ export function usePlaylistSync() {
 
     const syncFavoriteState = async ({ force = false } = {}) => {
         const userId = userStore.user?.userId
-        if (!userId || !isLogin()) return false
+        if (userStore.localOnlyMode || !userId || !isLogin()) return false
         if (favoriteSyncPromise) return favoriteSyncPromise
 
         const now = Date.now()
@@ -124,7 +124,7 @@ export function usePlaylistSync() {
 
     const syncCurrentPlaylist = async ({ force = false } = {}) => {
         const playlistId = getCurrentPlaylistId()
-        if (!playlistId || !isLogin()) return false
+        if (!playlistId || userStore.localOnlyMode || !isLogin()) return false
         if (playlistSyncPromise) {
             if (playlistSyncTargetId == playlistId) return playlistSyncPromise
             await playlistSyncPromise

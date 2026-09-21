@@ -1,4 +1,5 @@
 import { usePlayerStore } from '../store/playerStore'
+import { useLocalStore } from '../store/localStore'
 import { useUserStore } from '../store/userStore'
 import { storeToRefs } from 'pinia'
 import { getPreferredQuality } from './quality'
@@ -7,14 +8,17 @@ import { hasStoredBiliSession, migrateLegacyBiliSession } from './biliSession'
 import { migrateLegacyAuthSession } from './authority'
 import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from './settingsSnapshot'
 import { initPlayerExternalBridge, loadLastSong } from './player/lazy'
-import { applyCustomFontStyle } from './setFont'
+import { applyCustomFontStyle, syncDesktopLyricCustomFont } from './setFont'
+import { resolveSystemFontOptionAsync, resolveSystemFontValueAsync } from './fontResolver'
+import { resolveInitialHifiOutputMode } from './hifiOutputModeMigration'
 import settingsSchema from '../shared/settingsSchema.js'
 import { qqAccountStore } from '../store/qqAccountStore'
 
 const { normalizeSettings } = settingsSchema
 
 const playerStore = usePlayerStore()
-const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime, searchAssistLimit, showSongTranslation, gaplessPlayback, audioVisualizer } = storeToRefs(playerStore)
+const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime, searchAssistLimit, showSongTranslation, gaplessPlayback, audioVisualizer, localHifiOutput, localHifiOutputMode, localHifiMpvPath, localHifiAudioDevice } = storeToRefs(playerStore)
+const localStore = useLocalStore()
 const userStore = useUserStore()
 
 let baseInitPromise = null
@@ -23,11 +27,82 @@ let deferredInitScheduled = false
 let mediaSessionInitialized = false
 let sirenDurationPreloadScheduled = false
 let lastSongRestoreScheduled = false
+let localMusicModulePromise = null
+let downloadManagerModulePromise = null
 let customFontResolveToken = 0
+
+// 桌面端能力检测：网页端没有 preload 暴露的 windowApi，所有桌面调用都必须先判断，
+// 否则网页构建在运行时（而非构建时）会因 windowApi 未定义而报错。
+function hasDesktopApi(name) {
+    return typeof windowApi !== 'undefined' && !!windowApi && (typeof name !== 'string' || typeof windowApi[name] === 'function')
+}
+
+function loadLocalMusicModule() {
+    if (!localMusicModulePromise) localMusicModulePromise = import('./locaMusic')
+    return localMusicModulePromise
+}
+
+function loadDownloadManagerModule() {
+    if (!downloadManagerModulePromise) downloadManagerModulePromise = import('./downloadManager')
+    return downloadManagerModulePromise
+}
+
+function scanMusicDeferred(options) {
+    if (!hasDesktopApi('scanLocalMusic')) return
+    void loadLocalMusicModule()
+        .then(({ scanMusic }) => scanMusic(options))
+        .catch(error => {
+            console.error('本地音乐扫描模块加载失败:', error)
+        })
+}
 
 const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
     ? callback => window.requestIdleCallback(callback, { timeout: 1000 })
     : callback => setTimeout(() => callback({ didTimeout: false, timeRemaining: () => 0 }), 500)
+
+function applyLocalSettings(settings, { hydrateLocalMusic = false } = {}) {
+    const nextDownloadFolder = settings?.local?.downloadFolder || null
+    const nextLocalFolders = Array.isArray(settings?.local?.localFolder) ? settings.local.localFolder : []
+
+    localStore.downloadedFolderSettings = nextDownloadFolder
+    localStore.localFolderSettings = nextLocalFolders
+    localStore.quitApp = settings?.other?.quitApp
+
+    if (!nextDownloadFolder && localStore.downloadedMusicFolder) {
+        localStore.downloadedMusicFolder = null
+        localStore.downloadedFiles = null
+        localStore.lookupIndex = {
+            ...localStore.lookupIndex,
+            downloadedFoldersByName: {},
+            songSearchByScope: {
+                ...localStore.lookupIndex.songSearchByScope,
+                downloaded: {},
+            },
+        }
+        if (hasDesktopApi('clearLocalMusicData')) windowApi.clearLocalMusicData('downloaded')
+    } else if (hydrateLocalMusic && nextDownloadFolder && !localStore.downloadedMusicFolder) {
+        scanMusicDeferred({ type: 'downloaded', refresh: false })
+    }
+
+    if (nextLocalFolders.length === 0 && localStore.localMusicFolder) {
+        localStore.localMusicFolder = null
+        localStore.localMusicList = null
+        localStore.localMusicClassify = null
+        localStore.lookupIndex = {
+            ...localStore.lookupIndex,
+            localFoldersByName: {},
+            albumsById: {},
+            artistsById: {},
+            songSearchByScope: {
+                ...localStore.lookupIndex.songSearchByScope,
+                local: {},
+            },
+        }
+        if (hasDesktopApi('clearLocalMusicData')) windowApi.clearLocalMusicData('local')
+    } else if (hydrateLocalMusic && nextLocalFolders.length !== 0 && !localStore.localMusicFolder) {
+        scanMusicDeferred({ type: 'local', refresh: false })
+    }
+}
 
 export function applySettingsSnapshot(settings, options = {}) {
     if (!settings) return null
@@ -42,8 +117,13 @@ export function applySettingsSnapshot(settings, options = {}) {
     showSongTranslation.value = normalizedSettings?.music?.showSongTranslation !== false
     gaplessPlayback.value = normalizedSettings?.music?.gaplessPlayback === true
     audioVisualizer.value = normalizedSettings?.music?.audioVisualizer === true
+    localHifiOutput.value = normalizedSettings?.music?.localHifiOutput === true
+    localHifiOutputMode.value = resolveInitialHifiOutputMode(normalizedSettings?.music?.localHifiOutputMode)
+    localHifiMpvPath.value = normalizedSettings?.music?.localHifiMpvPath || ''
+    localHifiAudioDevice.value = normalizedSettings?.music?.localHifiAudioDevice || 'auto'
     applyCustomFontSetting(normalizedSettings)
 
+    applyLocalSettings(normalizedSettings, options)
     return normalizedSettings
 }
 
@@ -68,29 +148,42 @@ function persistResolvedCustomFont(settings, resolvedCustomFont, resolvedCustomF
         },
     })
 
+    // setSettingsSnapshot 内部会按平台选择写入方式（桌面走 windowApi、网页走 localStorage）。
     setSettingsSnapshot(nextSettings)
 }
 
 function applyCustomFontSetting(settings) {
     const customFont = settings?.other?.customFont
     const customFontLabel = settings?.other?.customFontLabel || ''
-    applyCustomFontStyle(customFont, customFontLabel)
+    const insertedFont = applyCustomFontStyle(customFont, customFontLabel)
     const token = ++customFontResolveToken
 
-    if (!customFont) return
+    if (!insertedFont) {
+        syncDesktopLyricCustomFont('', '')
+        return
+    }
 
-    const resolvedFont = customFont.trim()
-    const resolvedFontLabel = (customFontLabel || resolvedFont).trim()
-    if (token !== customFontResolveToken) return
-    if (!resolvedFont) return
+    const needsDisplayLabelResolve = !customFontLabel || customFontLabel === insertedFont
+    const resolveFont = needsDisplayLabelResolve
+        ? resolveSystemFontOptionAsync(insertedFont, customFontLabel || insertedFont)
+        : resolveSystemFontValueAsync(insertedFont).then(value => ({ value, label: customFontLabel }))
 
-    applyCustomFontStyle(resolvedFont, resolvedFontLabel)
-    persistResolvedCustomFont(settings, resolvedFont, resolvedFontLabel)
+    void resolveFont
+        .then(({ value: resolvedFont, label: resolvedFontLabel }) => {
+            if (token !== customFontResolveToken) return
+            if (!resolvedFont) return
+
+            applyCustomFontStyle(resolvedFont, resolvedFontLabel)
+            syncDesktopLyricCustomFont(resolvedFont, resolvedFontLabel)
+            persistResolvedCustomFont(settings, resolvedFont, resolvedFontLabel)
+        })
+        .catch(() => {})
 }
 
 export async function initSettings(options = {}) {
     const settings = options.settings || await getSettingsSnapshot({ forceReload: options.forceReload === true })
-    return applySettingsSnapshot(settings)
+    const shouldHydrateLocalMusic = options.hydrateLocalMusic !== false
+    return applySettingsSnapshot(settings, { hydrateLocalMusic: shouldHydrateLocalMusic })
 }
 
 function restoreLastSongOnce() {
@@ -142,7 +235,12 @@ async function runBaseAppInit() {
     }
 
     await initPlayerExternalBridge()
-    await initSettings({})
+    // 下载管理器强依赖 windowApi，仅在桌面端初始化。
+    if (hasDesktopApi()) {
+        const { initDownloadManager } = await loadDownloadManagerModule()
+        initDownloadManager()
+    }
+    await initSettings({ hydrateLocalMusic: false })
     resetStartupPlayerState()
 }
 
@@ -159,21 +257,24 @@ function ensureBaseAppInit() {
 
 async function runDeferredAppInit() {
     await ensureBaseAppInit()
-    const settings = await initSettings({})
+    const settings = await initSettings({ hydrateLocalMusic: true })
     const mediaSessionReadyPromise = ensureMediaSessionReady()
 
-    try {
-        await initializeCurrentAccountSession()
-    } catch (error) {
-        console.error('用户信息加载失败:', error)
-    } finally {
+    if (!userStore.localOnlyMode) {
         try {
-            await qqAccountStore.restoreSession()
-        } catch (_) {}
-        restoreLastSongOnce()
+            await initializeCurrentAccountSession()
+        } catch (error) {
+            console.error('用户信息加载失败:', error)
+        }
     }
 
-    scheduleSirenDurationPreload()
+    try {
+        await qqAccountStore.restoreSession()
+    } catch (_) {}
+
+    restoreLastSongOnce()
+
+    if (!userStore.localOnlyMode) scheduleSirenDurationPreload()
     await mediaSessionReadyPromise
     return settings
 }

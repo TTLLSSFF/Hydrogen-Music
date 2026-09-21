@@ -82,7 +82,7 @@ const playerPersistStorage = createDedupedLocalStorage()
 
 // 播放器持久化字段（对应旧 pinia-plugin-persistedstate 的 pick 清单，结构保持不变：
 // 同一 key「playerStore」下只存这些字段，不含巨大队列以免拖垮序列化性能）。
-const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur','audioVisualizer']
+const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','musicVideo','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur','audioVisualizer','localHifiOutput','localHifiOutputMode','localHifiMpvPath','localHifiAudioDevice']
 
 function readPersistedPlayerState() {
     try {
@@ -140,6 +140,11 @@ export const usePlayerStore = defineStore('playerStore', {
             isLyricDelay: true, //调整进度的时候禁止赋予delay属性
             localBase64Img: null, //如果是本地歌曲，获取封面
             forbidLastRouter: false, //在主动跳转router时禁用回到上次离开的路由的地址功能
+            musicVideo: toBoolean(persisted.musicVideo, false), // 是否开启音乐视频功能
+            addMusicVideo: false,
+            currentMusicVideo: null,
+            musicVideoDOM: null,
+            videoIsPlaying: false,
             playerShow: true,
             lyricBlur: toBoolean(persisted.lyricBlur, false),
             showSongTranslation: toBoolean(persisted.showSongTranslation, true), // 歌曲名是否显示翻译（原名 (翻译)）
@@ -147,6 +152,10 @@ export const usePlayerStore = defineStore('playerStore', {
             isDesktopLyricOpen: false, // 桌面歌词是否打开
             coverBlur: toBoolean(persisted.coverBlur, false), // 播放页使用封面模糊背景
             audioVisualizer: toBoolean(persisted.audioVisualizer, false), // 顶部音频可视化
+            localHifiOutput: toBoolean(persisted.localHifiOutput, false), // 本地音乐是否使用 HiFi 输出后端
+            localHifiOutputMode: typeof persisted.localHifiOutputMode === 'string' && persisted.localHifiOutputMode ? persisted.localHifiOutputMode : 'shared', // 本地 HiFi 输出模式
+            localHifiMpvPath: typeof persisted.localHifiMpvPath === 'string' ? persisted.localHifiMpvPath : '', // 自定义 MPV 可执行文件路径
+            localHifiAudioDevice: typeof persisted.localHifiAudioDevice === 'string' && persisted.localHifiAudioDevice ? persisted.localHifiAudioDevice : 'auto', // MPV 音频输出设备
         }
     },
     actions: {
@@ -186,11 +195,16 @@ export function initPlayerPersistence() {
             quality: store.quality,
             lyricType: store.lyricType,
             lyricLineOffsets: store.lyricLineOffsets,
+            musicVideo: store.musicVideo,
             lyricBlur: store.lyricBlur,
             showSongTranslation: store.showSongTranslation,
             gaplessPlayback: store.gaplessPlayback,
             coverBlur: store.coverBlur,
             audioVisualizer: store.audioVisualizer,
+            localHifiOutput: store.localHifiOutput,
+            localHifiOutputMode: store.localHifiOutputMode,
+            localHifiMpvPath: store.localHifiMpvPath,
+            localHifiAudioDevice: store.localHifiAudioDevice,
         }))
     }
     watch(

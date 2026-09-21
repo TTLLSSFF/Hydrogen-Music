@@ -35,6 +35,7 @@ const {
     lyricInterludeTime,
     lyricBlur,
     time: totalTime,
+    videoIsPlaying,
 } = storeToRefs(playerStore);
 
 const lyricScroll = ref();
@@ -1316,7 +1317,7 @@ watch([playing, lyricShow], ([p, show]) => {
                         <div
                             class="hilight"
                             :class="{ 'hilight-active': index == lycCurrentIndex }"
-                            :style="{ backgroundColor: 'var(--lyric-hilight-bg)' }"
+                            :style="{ backgroundColor: videoIsPlaying ? 'var(--lyric-hilight-bg-dim)' : 'var(--lyric-hilight-bg)' }"
                         ></div>
                     </div>
                     <div v-if="lycCurrentIndex != -1 && interludeIndex == index" class="music-interlude" :class="{ 'music-interlude-in': interludeAnimation, 'music-interlude-fast-close': interludeFastClose }">

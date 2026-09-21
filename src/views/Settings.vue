@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onActivated, watch } from 'vue'
+import { computed, ref, onActivated, onBeforeUnmount, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { noticeOpen, dialogOpen } from '@/utils/dialog'
 import { applySettingsSnapshot, initSettings } from '@/utils/initApp'
@@ -9,14 +9,16 @@ import { useUserStore } from '@/store/userStore'
 import { usePlayerStore } from '@/store/playerStore'
 import { useLibraryStore } from '@/store/libraryStore'
 import { qqAccountStore } from '@/store/qqAccountStore'
-import { clearQQPlaybackState } from '@/utils/player/lazy'
+import { applyCurrentHifiOutputSettings, clearQQPlaybackState, enforceLocalOnlyPlayback, restoreOnlinePlayback } from '@/utils/player/lazy'
 import Selector from '../components/Selector.vue'
 import FontSelector from '../components/FontSelector.vue'
+import UpdateDialog from '../components/UpdateDialog.vue'
 import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue'
 import { checkForUpdates as runAppUpdateCheck } from '@/utils/appUpdate'
 import { setTheme, getSavedTheme } from '@/utils/theme'
-import { confirmAccountLogout } from '@/utils/accountSession'
+import { confirmAccountLogout, initializeCurrentAccountSession } from '@/utils/accountSession'
 import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from '@/utils/settingsSnapshot'
+import { markHifiOutputModeConfigured, resolveInitialHifiOutputMode } from '@/utils/hifiOutputModeMigration'
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
 import settingsSchema from '@/shared/settingsSchema.js'
@@ -38,13 +40,69 @@ const tlyricSize = ref(13)
 const rlyricSize = ref(12)
 const lyricInterlude = ref(13)
 const searchAssistLimit = ref(8)
+const globalShortcuts = ref(false)
+const rememberWindowSize = ref(false)
+const quitApp = ref('minimize')
+const quitAppOptions = ref([
+    {
+        label: '最小化至托盘',
+        value: 'minimize',
+    },
+    {
+        label: '直接退出',
+        value: 'quit',
+    },
+])
+const isDesktop = typeof windowApi !== 'undefined'
 const theme = ref('system')
 const themeOptions = ref([
     { label: '跟随系统', value: 'system' },
     { label: '浅色', value: 'light' },
     { label: '深色', value: 'dark' },
 ])
+const hifiAudioDeviceOptions = ref([{ label: '自动', value: 'auto' }])
+const hifiOutputState = ref({
+    available: false,
+    mpvPath: '',
+    source: '',
+    platform: '',
+})
+const getRendererPlatform = () => {
+    try {
+        return globalThis.process?.platform || ''
+    } catch (_) {
+        return ''
+    }
+}
+const hifiOutputPlatform = computed(() => hifiOutputState.value.platform || getRendererPlatform())
+const localHifiOutputModeOptions = computed(() => {
+    if (hifiOutputPlatform.value === 'darwin') {
+        return [
+            { label: 'CoreAudio 共享', value: 'shared' },
+            { label: 'CoreAudio 独占', value: 'exclusive' },
+        ]
+    }
+    if (hifiOutputPlatform.value === 'linux') {
+        return [
+            { label: 'PipeWire 共享', value: 'shared' },
+            { label: 'PipeWire 独占', value: 'exclusive' },
+        ]
+    }
+    return [
+        { label: 'WASAPI 共享', value: 'shared' },
+        { label: 'WASAPI 独占', value: 'exclusive' },
+    ]
+})
+const hifiOutputBusy = ref(false)
+const downloadFolder = ref(null)
+const downloadCreateSongFolder = ref(false)
+const downloadSaveLyricFile = ref(false)
+const videoFolder = ref(null)
+const localFolder = ref([])
 const shortcutsList = ref(null)
+const selectedShortcut = ref(null)
+const newShortcut = ref([])
+const shortcutCharacter = ['=', '-', '~', '@', '#', '$', '[', ']', ';', "'", ',', '.', '/', '!']
 const customFont = ref('')
 const customFontLabel = ref('')
 const systemFonts = ref([])
@@ -59,13 +117,18 @@ const fontOptions = computed(() =>
     })
 )
 
-// 更新相关状态
+// 更新相关状态（桌面端弹窗式更新；网页端仍走 appUpdate 的页面跳转）
+const showUpdateDialog = ref(false)
+const newVersion = ref('')
+let updateListenersInitialized = false
+let removeUpdateListeners = null
 const PERFORMANCE_CONFIRM_MESSAGE = '开启后此功能会消耗一定性能且可能造成卡顿，确定开启吗？'
 const GAPLESS_CONFIRM_MESSAGE = '开启后会提前预缓冲下一首音频，可能增加网络流量和内存占用，确定开启吗？'
+const LOCAL_HIFI_OUTPUT_CONFIRM_MESSAGE = '开启后本地音乐会使用 MPV 后端输出，独占模式会占用音频设备，确定开启吗？'
 
 const loadVipInfo = async () => {
     const requestUserId = userStore.user?.userId
-    if (!requestUserId || !isLogin()) {
+    if (userStore.localOnlyMode || !requestUserId || !isLogin()) {
         vipInfo.value = null
         return
     }
@@ -93,7 +156,19 @@ const applySettingsToForm = settings => {
     playerStore.showSongTranslation = normalizedSettings.music.showSongTranslation !== false
     playerStore.gaplessPlayback = normalizedSettings.music.gaplessPlayback === true
     playerStore.audioVisualizer = normalizedSettings.music.audioVisualizer === true
+    playerStore.localHifiOutput = normalizedSettings.music.localHifiOutput === true
+    playerStore.localHifiOutputMode = resolveInitialHifiOutputMode(normalizedSettings.music.localHifiOutputMode)
+    playerStore.localHifiMpvPath = normalizedSettings.music.localHifiMpvPath
+    playerStore.localHifiAudioDevice = normalizedSettings.music.localHifiAudioDevice
+    videoFolder.value = normalizedSettings.local.videoFolder
+    downloadFolder.value = normalizedSettings.local.downloadFolder
+    downloadCreateSongFolder.value = !!normalizedSettings.local.downloadCreateSongFolder
+    downloadSaveLyricFile.value = !!normalizedSettings.local.downloadSaveLyricFile
+    localFolder.value = normalizedSettings.local.localFolder
     shortcutsList.value = normalizedSettings.shortcuts
+    globalShortcuts.value = normalizedSettings.other.globalShortcuts
+    rememberWindowSize.value = normalizedSettings.other.rememberWindowSize
+    quitApp.value = normalizedSettings.other.quitApp
     customFont.value = normalizedSettings.other.customFont
     customFontLabel.value = normalizedSettings.other.customFontLabel
 }
@@ -101,6 +176,7 @@ const applySettingsToForm = settings => {
 onActivated(() => {
     void getSettingsSnapshot().then(applySettingsToForm)
     void loadSystemFonts()
+    void refreshHifiOutputBackend()
 
     // Initialize theme selection
     try {
@@ -111,6 +187,8 @@ onActivated(() => {
 
     void loadVipInfo()
     void qqAccountStore.restoreSession()
+    // 设置更新事件监听器（桌面端才有 windowApi 更新通道）
+    setupUpdateListeners()
 })
 
 const loginQQAccount = () => router.push({ path: '/login/account', query: { mode: 2, from: 'settings' } })
@@ -164,6 +242,24 @@ watch(
     }
 )
 
+// 设置更新监听器（桌面端 windowApi 通道；网页端无此 API 时直接跳过）
+const setupUpdateListeners = () => {
+    if (!isDesktop || typeof windowApi.manualUpdateAvailable !== 'function') return
+    if (updateListenersInitialized) return
+    updateListenersInitialized = true
+    // 监听手动更新检查结果（不显示大窗弹出）
+    removeUpdateListeners = windowApi.manualUpdateAvailable(version => {
+        newVersion.value = version
+        // 手动检查时直接在UpdateDialog中显示结果，不触发大窗弹出
+    })
+}
+
+onBeforeUnmount(() => {
+    removeUpdateListeners?.()
+    removeUpdateListeners = null
+    updateListenersInitialized = false
+})
+
 watch(
     () => userStore.user?.userId ?? null,
     (nextUserId, previousUserId) => {
@@ -173,6 +269,13 @@ watch(
             return
         }
         void loadVipInfo()
+    }
+)
+
+watch(
+    () => playerStore.localHifiOutputMode,
+    mode => {
+        markHifiOutputModeConfigured(mode)
     }
 )
 
@@ -188,9 +291,23 @@ const setAppSettings = () => {
             showSongTranslation: playerStore.showSongTranslation,
             gaplessPlayback: playerStore.gaplessPlayback,
             audioVisualizer: playerStore.audioVisualizer,
+            localHifiOutput: playerStore.localHifiOutput,
+            localHifiOutputMode: playerStore.localHifiOutputMode,
+            localHifiMpvPath: playerStore.localHifiMpvPath,
+            localHifiAudioDevice: playerStore.localHifiAudioDevice,
+        },
+        local: {
+            videoFolder: videoFolder.value,
+            downloadFolder: downloadFolder.value,
+            downloadCreateSongFolder: downloadCreateSongFolder.value,
+            downloadSaveLyricFile: downloadSaveLyricFile.value,
+            localFolder: localFolder.value,
         },
         shortcuts: shortcutsList.value,
         other: {
+            globalShortcuts: globalShortcuts.value,
+            rememberWindowSize: rememberWindowSize.value,
+            quitApp: quitApp.value,
             customFont: customFont.value,
             customFontLabel: customFont.value ? customFontLabel.value : '',
         },
@@ -258,7 +375,35 @@ const routerChange = () => {
     router.back()
 }
 
-
+const selectFolder = type => {
+    if (!isDesktop) return
+    if (type == 'download') {
+        windowApi.openFile().then(path => {
+            downloadFolder.value = path
+        })
+    } else if (type == 'local') {
+        windowApi.openFile().then(path => {
+            if (path && localFolder.value.indexOf(path) == -1) localFolder.value.push(path)
+        })
+    } else if (type == 'video') {
+        windowApi.openFile().then(path => {
+            videoFolder.value = path
+        })
+    }
+}
+const deleteLocalFolder = index => {
+    localFolder.value.splice(index, 1)
+}
+const clearMusicVideo = () => {
+    if (!isDesktop) return
+    windowApi.clearUnusedVideo().then(result => {
+        if (result == 'noSavePath') {
+            noticeOpen('请先在设置中设置音乐视频缓存目录', 2)
+            return
+        } else if (result) noticeOpen('清除完毕', 3)
+        else noticeOpen('删除失败', 3)
+    })
+}
 
 const formatShortcutName = name => {
     return name
@@ -272,6 +417,82 @@ const formatShortcutName = name => {
         .replace('num', '')
         .replace('CommandOrControl', 'Ctrl')
         .replace('Control', 'Ctrl')
+}
+const changeShortcut = (id, type) => {
+    if (!isDesktop) return
+    selectedShortcut.value = {
+        id: id,
+        type: type,
+    }
+    windowApi.unregisterShortcuts()
+}
+/**
+ * author: yesplaymusic
+ */
+const updateShortcut = () => {
+    let shortcut = []
+    newShortcut.value.map(e => {
+        if (e.keyCode >= 65 && e.keyCode <= 90) {
+            shortcut.push(e.code.replace('Key', ''))
+        } else if (['Control', 'Shift', 'Alt'].includes(e.key)) {
+            shortcut.push(e.key)
+        } else if (e.keyCode >= 48 && e.keyCode <= 57) {
+            shortcut.push(e.code.replace('Digit', ''))
+        } else if (e.keyCode >= 96 && e.keyCode <= 105) {
+            shortcut.push(e.code.replace('Numpad', 'num'))
+        } else if (e.keyCode >= 112 && e.keyCode <= 123) {
+            shortcut.push(e.code)
+        } else if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+            shortcut.push(e.code.replace('Arrow', ''))
+        } else if (shortcutCharacter.includes(e.key)) {
+            shortcut.push(e.key)
+        }
+    })
+    const sortTable = {
+        Control: 1,
+        Shift: 2,
+        Alt: 3,
+    }
+    shortcut = shortcut.sort((a, b) => {
+        if (!sortTable[a] || !sortTable[b]) return 0
+        if (sortTable[a] - sortTable[b] <= -1) {
+            return -1
+        } else if (sortTable[a] - sortTable[b] >= 1) {
+            return 1
+        } else {
+            return 0
+        }
+    })
+    shortcut = shortcut.join('+')
+    return shortcut
+}
+const inputShortcut = k => {
+    if (!selectedShortcut.value) return
+    if (newShortcut.value.find(nk => nk.keyCode === k.keyCode)) return
+    else newShortcut.value.push(k)
+    if (
+        (k.keyCode >= 65 && k.keyCode <= 90) ||
+        (k.keyCode >= 48 && k.keyCode <= 57) ||
+        (k.keyCode >= 96 && k.keyCode <= 105) ||
+        (k.keyCode >= 112 && k.keyCode <= 123) ||
+        ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(k.key) ||
+        shortcutCharacter.includes(k.key)
+    ) {
+        if (selectedShortcut.value.type) shortcutsList.value.find(sc => sc.id == selectedShortcut.value.id).globalShortcut = updateShortcut()
+        else shortcutsList.value.find(sc => sc.id == selectedShortcut.value.id).shortcut = updateShortcut()
+        newShortcut.value = []
+    }
+}
+const setDefaultShortcuts = () => {
+    shortcutsList.value = [
+        { id: 'play', name: '播放/暂停', shortcut: 'Space', globalShortcut: 'CommandOrControl+Alt+P' },
+        { id: 'last', name: '上一首', shortcut: 'CommandOrControl+Left', globalShortcut: 'CommandOrControl+Alt+Left' },
+        { id: 'next', name: '下一首', shortcut: 'CommandOrControl+Right', globalShortcut: 'CommandOrControl+Alt+Right' },
+        { id: 'volumeUp', name: '增加音量', shortcut: 'CommandOrControl+Up', globalShortcut: 'CommandOrControl+Alt+Up' },
+        { id: 'volumeDown', name: '减少音量', shortcut: 'CommandOrControl+Down', globalShortcut: 'CommandOrControl+Alt+Down' },
+        { id: 'processForward', name: '快进(3s)', shortcut: 'CommandOrControl+]', globalShortcut: 'CommandOrControl+Alt+]' },
+        { id: 'processBack', name: '后退(3s)', shortcut: 'CommandOrControl+[', globalShortcut: 'CommandOrControl+Alt+[' },
+    ]
 }
 const togglePlayerFlag = key => {
     playerStore[key] = !playerStore[key]
@@ -289,10 +510,107 @@ const setLyricBlur = () => setConfirmedPlayerFlag('lyricBlur', PERFORMANCE_CONFI
 const setCoverBlur = () => setConfirmedPlayerFlag('coverBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setGaplessPlayback = () => setConfirmedPlayerFlag('gaplessPlayback', GAPLESS_CONFIRM_MESSAGE)
 const setAudioVisualizer = () => setConfirmedPlayerFlag('audioVisualizer', PERFORMANCE_CONFIRM_MESSAGE)
+const setMusicVideo = () => setConfirmedPlayerFlag('musicVideo', PERFORMANCE_CONFIRM_MESSAGE)
+const buildHifiOutputConfig = () => ({
+    mpvPath: playerStore.localHifiMpvPath,
+    mode: playerStore.localHifiOutputMode,
+    audioDevice: playerStore.localHifiAudioDevice,
+})
+const applyHifiOutputState = state => {
+    if (state && typeof state === 'object') hifiOutputState.value = state
+}
+const loadHifiOutputState = async () => {
+    if (!isDesktop || !windowApi.getHifiOutputState) return null
+    try {
+        const state = await windowApi.getHifiOutputState(buildHifiOutputConfig())
+        applyHifiOutputState(state)
+        return state
+    } catch (error) {
+        console.error('加载 HiFi 输出状态失败:', error)
+        return null
+    }
+}
+const loadHifiAudioDevices = async () => {
+    if (!isDesktop || !windowApi.listHifiOutputDevices) return hifiAudioDeviceOptions.value
+    try {
+        const result = await windowApi.listHifiOutputDevices(buildHifiOutputConfig())
+        const devices = Array.isArray(result?.devices) ? result.devices : []
+        const options = [{ label: '自动', value: 'auto' }]
+        devices.forEach(device => {
+            if (!device?.value || device.value === 'auto') return
+            options.push({
+                label: device.label || device.value,
+                value: device.value,
+            })
+        })
+        if (playerStore.localHifiAudioDevice && playerStore.localHifiAudioDevice !== 'auto' && !options.some(option => option.value === playerStore.localHifiAudioDevice)) {
+            options.push({
+                label: playerStore.localHifiAudioDevice,
+                value: playerStore.localHifiAudioDevice,
+            })
+        }
+        hifiAudioDeviceOptions.value = options
+        return options
+    } catch (error) {
+        console.error('加载 HiFi 输出设备失败:', error)
+        return hifiAudioDeviceOptions.value
+    }
+}
+const refreshHifiOutputBackend = async () => {
+    if (!isDesktop || hifiOutputBusy.value) return
+    hifiOutputBusy.value = true
+    try {
+        await loadHifiOutputState()
+        if (playerStore.localHifiOutput) await loadHifiAudioDevices()
+    } finally {
+        hifiOutputBusy.value = false
+    }
+}
+const setLocalHifiOutput = async () => {
+    if (playerStore.localHifiOutput) {
+        playerStore.localHifiOutput = false
+        await applyCurrentHifiOutputSettings()
+        return
+    }
+
+    const state = await loadHifiOutputState()
+    if (!state?.available) {
+        noticeOpen('未找到 MPV 后端', 2)
+        return
+    }
+
+    dialogOpen('确定开启', LOCAL_HIFI_OUTPUT_CONFIRM_MESSAGE, flag => {
+        if (!flag) return
+        playerStore.localHifiOutput = true
+        void loadHifiAudioDevices()
+        void applyCurrentHifiOutputSettings()
+    })
+}
+const selectHifiMpvPath = async () => {
+    if (!isDesktop || hifiOutputBusy.value || !windowApi.selectHifiOutputMpv) return
+    hifiOutputBusy.value = true
+    try {
+        const filePath = await windowApi.selectHifiOutputMpv()
+        if (!filePath) return
+        playerStore.localHifiMpvPath = filePath
+        await loadHifiOutputState()
+        await loadHifiAudioDevices()
+    } catch (error) {
+        console.error('选择 MPV 后端失败:', error)
+        noticeOpen('选择失败', 2)
+    } finally {
+        hifiOutputBusy.value = false
+    }
+}
+const clearHifiMpvPath = async () => {
+    playerStore.localHifiMpvPath = ''
+    await refreshHifiOutputBackend()
+}
 const confirmLogout = () => {
     confirmAccountLogout(router)
 }
 const save = () => {
+    selectedShortcut.value = null
     setCustomFont()
     saveSettings()
     noticeOpen('设置已保存', 2)
@@ -306,12 +624,39 @@ const toGithub = () => {
     }
 }
 
-// 检查更新：点击即弹出「新版本追加」页面，这里只处理拉取失败的情况
-const checkForUpdates = async () => {
-    const result = await runAppUpdateCheck()
-    if (result === 'error') {
-        noticeOpen('检查更新失败，请稍后重试', 2)
+// 检查更新：桌面端走弹窗式更新流程；网页端点击即弹出「新版本追加」页面，这里只处理拉取失败的情况
+const checkForUpdates = () => {
+    if (isDesktop && typeof windowApi.checkForUpdate === 'function') {
+        showUpdateDialog.value = true
+        windowApi.checkForUpdate()
+        return
     }
+    void runAppUpdateCheck().then(result => {
+        if (result === 'error') {
+            noticeOpen('检查更新失败，请稍后重试', 2)
+        }
+    })
+}
+
+// 更新对话框事件处理（仅桌面端弹窗会用到）
+const handleUpdateDownload = () => {
+    if (isDesktop && typeof windowApi.downloadUpdate === 'function') windowApi.downloadUpdate()
+}
+
+const handleUpdateInstall = () => {
+    if (isDesktop && typeof windowApi.installUpdate === 'function') windowApi.installUpdate()
+}
+
+const handleUpdateCancel = () => {
+    if (isDesktop && typeof windowApi.cancelUpdate === 'function') windowApi.cancelUpdate()
+}
+
+const handleUpdateRetry = () => {
+    if (isDesktop && typeof windowApi.checkForUpdate === 'function') windowApi.checkForUpdate()
+}
+
+const closeUpdateDialog = () => {
+    showUpdateDialog.value = false
 }
 
 // 清空当前账号的“私人漫游”近期去重队列
@@ -330,10 +675,25 @@ const clearFmRecent = () => {
         noticeOpen('清空失败', 2)
     }
 }
+
+const toggleLocalOnlyMode = async () => {
+    userStore.localOnlyMode = !userStore.localOnlyMode
+    if (userStore.localOnlyMode) {
+        vipInfo.value = null
+        await enforceLocalOnlyPlayback()
+        noticeOpen('已切换为仅本地音乐模式', 2)
+        return
+    }
+
+    await restoreOnlinePlayback()
+    await initializeCurrentAccountSession()
+    await loadVipInfo()
+    noticeOpen('已恢复在线音乐功能', 2)
+}
 </script>
 
 <template>
-    <div class="settings-page">
+    <div class="settings-page" @click="selectedShortcut = null">
         <div class="view-control">
             <svg t="1669039513804" @click="routerChange()" class="router-last" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200">
                 <path d="M716.608 1010.112L218.88 512.384 717.376 13.888l45.248 45.248-453.248 453.248 452.48 452.48z" p-id="1054"></path>
@@ -388,7 +748,7 @@ const clearFmRecent = () => {
                     <h2 class="item-title">音乐</h2>
                     <div class="line"></div>
                     <div class="item-options">
-                        <div class="option">
+                        <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">音质选择</div>
                             <div class="option-operation">
                                 <Selector v-model="musicLevel" :options="musicLevelOptions" :maxItems="9"></Selector>
@@ -451,7 +811,7 @@ const clearFmRecent = () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="option">
+                        <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">搜索下拉条目数量</div>
                             <div class="option-operation">
                                 <input v-model="searchAssistLimit" name="searchAssistLimit" />
@@ -481,22 +841,173 @@ const clearFmRecent = () => {
                                 <input v-model="lyricInterlude" name="lyricInterlude" />
                             </div>
                         </div>
+                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode">
+                            <div class="option-name">开启音乐视频功能</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="setMusicVideo()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.musicVideo }">{{ playerStore.musicVideo ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="playerStore.musicVideo"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode && playerStore.musicVideo">
+                            <div class="option-name">删除所有未被使用的音乐视频</div>
+                            <div class="option-operation">
+                                <div class="button" @click="clearMusicVideo()">清除</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-item">
+                    <h2 class="item-title">本地</h2>
+                    <div class="line"></div>
+                    <div class="item-options">
+                        <div class="option">
+                            <div class="option-name">仅本地音乐模式</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="toggleLocalOnlyMode()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': userStore.localOnlyMode }">{{ userStore.localOnlyMode ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="userStore.localOnlyMode"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop">
+                            <div class="option-name">本地音乐 HiFi 输出</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="setLocalHifiOutput()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.localHifiOutput }">{{ playerStore.localHifiOutput ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="playerStore.localHifiOutput"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && playerStore.localHifiOutput">
+                            <div class="option-name">本地 HiFi 输出模式</div>
+                            <div class="option-operation">
+                                <Selector
+                                    v-model="playerStore.localHifiOutputMode"
+                                    :options="localHifiOutputModeOptions"
+                                    @change="applyCurrentHifiOutputSettings"
+                                ></Selector>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && playerStore.localHifiOutput">
+                            <div class="option-name">本地 HiFi 输出设备</div>
+                            <div class="option-operation">
+                                <Selector
+                                    v-model="playerStore.localHifiAudioDevice"
+                                    :options="hifiAudioDeviceOptions"
+                                    :maxItems="8"
+                                    :searchable="true"
+                                    :optionWidth="280"
+                                    @open="loadHifiAudioDevices"
+                                    @change="applyCurrentHifiOutputSettings"
+                                ></Selector>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop">
+                            <div class="option-name">MPV 后端</div>
+                            <div class="select-download-folder">
+                                <div class="selected-folder" :title="hifiOutputState.mpvPath || playerStore.localHifiMpvPath">
+                                    {{ hifiOutputState.available ? (hifiOutputState.source === 'builtin' ? '内置 MPV' : hifiOutputState.mpvPath) : '未检测到' }}
+                                </div>
+                                <div class="select-option" @click="selectHifiMpvPath">{{ hifiOutputBusy ? '检测中' : '选择' }}</div>
+                                <div class="select-option" @click="refreshHifiOutputBackend">刷新</div>
+                                <div class="select-option" v-if="playerStore.localHifiMpvPath" @click="clearHifiMpvPath">清除</div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode && playerStore.musicVideo">
+                            <div class="option-name">音乐视频缓存</div>
+                            <div class="select-download-folder">
+                                <div class="selected-folder" :title="videoFolder">{{ videoFolder ? videoFolder : '待选择' }}</div>
+                                <div class="select-option" @click="selectFolder('video')">选择</div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode">
+                            <div class="option-name">下载目录</div>
+                            <div class="select-download-folder">
+                                <div class="selected-folder" :title="downloadFolder">{{ downloadFolder ? downloadFolder : '待选择' }}</div>
+                                <div class="select-option" @click="selectFolder('download')">选择</div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode">
+                            <div class="option-name">下载歌曲时创建独立文件夹</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="downloadCreateSongFolder = !downloadCreateSongFolder">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': downloadCreateSongFolder }">{{ downloadCreateSongFolder ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="downloadCreateSongFolder"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode">
+                            <div class="option-name">下载歌曲时创建独立歌词文件</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="downloadSaveLyricFile = !downloadSaveLyricFile">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': downloadSaveLyricFile }">{{ downloadSaveLyricFile ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="downloadSaveLyricFile"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop">
+                            <div class="option-name">本地目录</div>
+                            <div class="local-folder">
+                                <div class="selected-local-folder-item">
+                                    <div class="selected-folder" :title="item" @contextmenu="deleteLocalFolder(index)" v-for="(item, index) in localFolder">{{ item ? item : '请添加' }}</div>
+                                    <div class="tip">您可以同时添加多个目录,右键移除您不需要的目录。数据量过大时需要一定扫描时间,请稍等。</div>
+                                </div>
+                                <div class="add-option" @click="selectFolder('local')">添加</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="settings-item">
                     <h2 class="item-title">快捷键</h2>
                     <div class="line"></div>
-                    <div class="item-options">
+                    <div class="item-options" :tabindex="isDesktop ? 0 : null" @keydown="isDesktop ? inputShortcut($event) : null">
+                        <div class="option" v-if="isDesktop">
+                            <div class="option-name">开启全局快捷键</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="globalShortcuts = !globalShortcuts">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': globalShortcuts }">{{ globalShortcuts ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="globalShortcuts"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
                         <div class="shortcuts-title">
                             <div class="title-function">功能说明</div>
                             <div class="title-shortcuts">快捷键</div>
+                            <div class="title-globalShortcuts" v-if="isDesktop" :class="{ 'forbid-shortcuts': !globalShortcuts }">全局快捷键</div>
                         </div>
                         <div class="shortcuts" v-for="(item, index) in shortcutsList">
                             <div class="shortcut-name">{{ item.name }}</div>
-                            <div class="shortcut">
+                            <div
+                                class="shortcut"
+                                :class="{ 'shortcut-selected': selectedShortcut && selectedShortcut.id == item.id && !selectedShortcut.type }"
+                                @click.stop="changeShortcut(item.id, false)"
+                            >
                                 {{ formatShortcutName(item.shortcut) }}
                             </div>
+                            <div
+                                v-if="isDesktop"
+                                class="globalShortcut"
+                                :class="{ 'shortcut-selected': selectedShortcut && selectedShortcut.id == item.id && selectedShortcut.type, 'forbid-shortcuts': !globalShortcuts }"
+                                @click.stop="changeShortcut(item.id, true)"
+                            >
+                                {{ formatShortcutName(item.globalShortcut) }}
+                            </div>
                         </div>
+                        <div class="default-shortcuts" v-if="isDesktop" @click="setDefaultShortcuts()">恢复默认快捷键</div>
                     </div>
                 </div>
                 <div class="settings-item">
@@ -521,7 +1032,7 @@ const clearFmRecent = () => {
                                 <FontSelector v-model="customFont" :options="fontOptions" :loading="systemFontsLoading" @open="loadSystemFonts" @change="setCustomFont"></FontSelector>
                             </div>
                         </div>
-                        <div class="option">
+                        <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">开启首页页面</div>
                             <div class="option-operation">
                                 <div class="toggle" @click="userStore.homePage = !userStore.homePage">
@@ -532,7 +1043,7 @@ const clearFmRecent = () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="option">
+                        <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">开启云盘页面</div>
                             <div class="option-operation">
                                 <div class="toggle" @click="userStore.cloudDiskPage = !userStore.cloudDiskPage">
@@ -543,7 +1054,7 @@ const clearFmRecent = () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="option">
+                        <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">开启私人漫游页面</div>
                             <div class="option-operation">
                                 <div class="toggle" @click="userStore.personalFMPage = !userStore.personalFMPage">
@@ -554,7 +1065,7 @@ const clearFmRecent = () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="option">
+                        <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">开启塞壬唱片页面</div>
                             <div class="option-operation">
                                 <div class="toggle" @click="userStore.sirenPage = !userStore.sirenPage">
@@ -565,10 +1076,27 @@ const clearFmRecent = () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="option" v-if="userStore.personalFMPage">
+                        <div class="option" v-if="!userStore.localOnlyMode && userStore.personalFMPage">
                             <div class="option-name">清空漫游缓存</div>
                             <div class="option-operation">
                                 <div class="button" @click="clearFmRecent">清空</div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop">
+                            <div class="option-name">记住窗口大小</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="rememberWindowSize = !rememberWindowSize">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': rememberWindowSize }">{{ rememberWindowSize ? '已开启' : '已关闭' }}</div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="rememberWindowSize"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option" v-if="isDesktop">
+                            <div class="option-name">退出应用时</div>
+                            <div class="option-operation">
+                                <Selector v-model="quitApp" :options="quitAppOptions"></Selector>
                             </div>
                         </div>
                     </div>
@@ -584,6 +1112,18 @@ const clearFmRecent = () => {
                 <div class="app-author" @click="toGithub()">Made by ldx123000/TTLLSSFF | Modified from Hydrogen Music</div>
             </div>
         </div>
+
+        <!-- 更新对话框（仅桌面端） -->
+        <UpdateDialog
+            v-if="isDesktop"
+            :visible="showUpdateDialog"
+            :new-version="newVersion"
+            @close="closeUpdateDialog"
+            @download="handleUpdateDownload"
+            @install="handleUpdateInstall"
+            @cancel="handleUpdateCancel"
+            @retry="handleUpdateRetry"
+        />
     </div>
 </template>
 

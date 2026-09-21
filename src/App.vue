@@ -7,15 +7,19 @@ import SearchInput from './components/SearchInput.vue';
 import MusicWidget from './components/MusicWidget.vue';
 import AudioVisualizer from './components/AudioVisualizer.vue';
 import PlatformSourceSwitch from './components/PlatformSourceSwitch.vue';
+import WindowControl from './components/WindowControl.vue';
 import { destroyLyricRuntime, initLyricRuntime } from './composables/usePlayerRuntime';
 import { usePlaylistSync } from './composables/usePlaylistSync';
+import { destroyDesktopLyric, initDesktopLyric } from './utils/desktopLyric';
 import { initKeyboardShortcuts, destroyKeyboardShortcuts } from './utils/keyboardShortcuts';
 import { initAppUpdateCheck } from './utils/appUpdate';
 
 import { usePlayerStore, initPlayerPersistence } from './store/playerStore';
 import { useOtherStore } from './store/otherStore';
+import { useUserStore } from './store/userStore';
 
 const MusicPlayer = defineAsyncComponent(() => import('./views/MusicPlayer.vue'));
+const VideoPlayer = defineAsyncComponent(() => import('./components/VideoPlayer.vue'));
 const ContextMenu = defineAsyncComponent(() => import('./components/ContextMenu.vue'));
 const GlobalDialog = defineAsyncComponent(() => import('./components/GlobalDialog.vue'));
 const GlobalNotice = defineAsyncComponent(() => import('./components/GlobalNotice.vue'));
@@ -24,6 +28,9 @@ const Update = defineAsyncComponent(() => import('./components/Update.vue'));
 
 const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
+const userStore = useUserStore();
+// 桌面端（Electron）由 preload 注入 windowApi，网页端不存在该全局
+const isDesktopEnv = typeof windowApi !== 'undefined';
 usePlaylistSync();
 
 // 平台来源开关跟随全局搜索框，只在首页与搜索页出现
@@ -32,6 +39,13 @@ const showPlatformSwitch = computed(() => {
     const name = String(router.currentRoute.value.name || '');
     return name === 'homepage' || name === 'search';
 });
+
+const removeCheckUpdateListener = isDesktopEnv && typeof windowApi.checkUpdate === 'function'
+    ? windowApi.checkUpdate((version) => {
+        otherStore.toUpdate = true;
+        otherStore.newVersion = version;
+    })
+    : null;
 
 // 音频可视化只在播放页（非挂件态）且有播放实例时显示
 const visualizerActive = computed(() => {
@@ -57,17 +71,28 @@ const preventBrowserContextMenu = e => {
 
 onMounted(() => {
     initLyricRuntime();
+    initDesktopLyric();
     initPlayerPersistence();
     document.addEventListener('contextmenu', preventBrowserContextMenu);
-    initKeyboardShortcuts();
-    initAppUpdateCheck();
+    // 网页端自建快捷键与更新提示；桌面端由 Electron 菜单加速键/全局快捷键与更新通道负责
+    if (!isDesktopEnv) {
+        initKeyboardShortcuts();
+        initAppUpdateCheck();
+    }
 });
 
 onUnmounted(() => {
+    destroyDesktopLyric();
     destroyLyricRuntime();
     document.removeEventListener('contextmenu', preventBrowserContextMenu);
-    destroyKeyboardShortcuts();
+    if (!isDesktopEnv) destroyKeyboardShortcuts();
+    removeCheckUpdateListener?.();
 });
+
+// 双击标题栏最大化窗口的处理函数
+const handleTitleBarDoubleClick = () => {
+    windowApi.windowMax('window-max');
+};
 </script>
 
 <template>
@@ -79,7 +104,7 @@ onUnmounted(() => {
     <div class="globalWidget" :class="{ 'visualizer-active': visualizerActive }">
         <Title class="widget-title"></Title>
         <AudioVisualizer class="widget-visualizer"></AudioVisualizer>
-        <div class="widget-search">
+        <div class="widget-search" v-if="!userStore.localOnlyMode">
             <SearchInput></SearchInput>
         </div>
         <PlatformSourceSwitch v-if="showPlatformSwitch" variant="menu" class="widget-source-switch"></PlatformSourceSwitch>
@@ -89,6 +114,9 @@ onUnmounted(() => {
             <path d="M128.576377 895.420553 128.576377 128.578424l766.846222 0 0 766.842129L128.576377 895.420553zM799.567461 224.434585 224.432539 224.434585l0 575.134923 575.134923 0L799.567461 224.434585z" p-id="1188"></path>
         </svg>
     </div>
+    <div class="dragBar" v-if="isDesktopEnv" @dblclick="handleTitleBarDoubleClick">
+        <WindowControl></WindowControl>
+    </div>
     <Transition name="widget">
         <div class="musicWidget" v-if="playerStore.songList" v-show="playerStore.widgetState">
             <MusicWidget></MusicWidget>
@@ -97,6 +125,11 @@ onUnmounted(() => {
     <Transition name="player">
         <div class="musicPlayer" v-if="playerStore.songList" v-show="!playerStore.widgetState">
             <MusicPlayer></MusicPlayer>
+        </div>
+    </Transition>
+    <Transition name="video">
+        <div class="videoPlayer" v-if="otherStore.videoPlayerShow">
+            <VideoPlayer></VideoPlayer>
         </div>
     </Transition>
     <div class="contextMune">
@@ -235,18 +268,65 @@ onUnmounted(() => {
     top: 0;
     left: 0;
 }
+.dragBar {
+    width: 100%;
+    height: 35px;
+    background: transparent;
+    position: fixed;
+    top: 0;
+    z-index: 999;
+    -webkit-app-region: drag;
+    .window-control {
+        position: fixed;
+        top: 13px;
+        -webkit-app-region: no-drag;
+        z-index: 999;
+
+        // macOS 按钮在左侧
+        &.macos {
+            left: 15px;
+            top: 11px; // 稍微调整高度使其更居中
+        }
+
+        // Windows/Linux 按钮在右侧
+        &.windows {
+            right: 15px;
+        }
+    }
+}
+.videoPlayer {
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    pointer-events: none;
+    z-index: 999;
+}
 .globalNotice {
     bottom: 120px;
     position: fixed;
     z-index: 999;
 }
 
-.home-enter-active,
+.home-enter-active {
+    transition: opacity 0.4s cubic-bezier(0.14, 0.91, 0.58, 1);
+}
+
+.home-enter-active .home-content {
+    transition: transform 0.4s cubic-bezier(0.14, 0.91, 0.58, 1);
+}
+
+.home-enter-from {
+    opacity: 0;
+}
+
+.home-enter-from .home-content {
+    transform: scale(0.9);
+}
+
 .home-leave-active {
     transition: 0.4s cubic-bezier(0.14, 0.91, 0.58, 1);
 }
 
-.home-enter-from,
 .home-leave-to {
     transform: scale(0.9);
     opacity: 0;
@@ -270,6 +350,16 @@ onUnmounted(() => {
 .player-enter-from,
 .player-leave-to {
     transform: translateY(100%);
+}
+.video-enter-active,
+.video-leave-active {
+    transition: 0.1s;
+}
+
+.video-enter-from,
+.video-leave-to {
+    transform: scale(0.8);
+    opacity: 0;
 }
 .fade-enter-active {
     transition: 0.4s;

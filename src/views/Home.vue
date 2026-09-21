@@ -30,6 +30,7 @@ const toSettings = () => {
     router.push('/settings')
 }
 const handleAuthOptionClick = () => {
+    if (userStore.localOnlyMode) return
     if (isLogin()) {
         userStore.appOptionShow = false
         confirmAccountLogout(router)
@@ -228,7 +229,7 @@ watch(
     () => updateHeaderLayout()
 )
 watch(
-    () => [userStore.homePage, userStore.cloudDiskPage, userStore.personalFMPage, userStore.sirenPage],
+    () => [userStore.homePage, userStore.cloudDiskPage, userStore.personalFMPage, userStore.sirenPage, userStore.localOnlyMode],
     () => {
         observeHeaderLayout()
     },
@@ -252,12 +253,12 @@ watch(
             <div class="home-header" :style="{ '--header-offset': `${headerOffset}px` }">
                 <div
                     class="header-router"
-                    :class="{ 'router-closed': !userStore.homePage && !userStore.cloudDiskPage && !userStore.personalFMPage && !userStore.sirenPage }"
+                    :class="{ 'router-closed': !userStore.localOnlyMode && !userStore.homePage && !userStore.cloudDiskPage && !userStore.personalFMPage && !userStore.sirenPage }"
                     ref="routerContainer"
                 >
                     <div class="primary-nav">
                         <!-- <div class="logout" @click="userLogout()">退出登录</div> -->
-                        <router-link ref="homeLink" class="button-home" :style="{ color: router.currentRoute.value.name == 'homepage' ? 'black' : '#353535' }" to="/" v-if="userStore.homePage">
+                        <router-link ref="homeLink" class="button-home" :style="{ color: router.currentRoute.value.name == 'homepage' ? 'black' : '#353535' }" to="/" v-if="!userStore.localOnlyMode && userStore.homePage">
                             首页
                         </router-link>
                         <router-link
@@ -265,7 +266,7 @@ watch(
                             class="button-cloud"
                             :style="{ color: router.currentRoute.value.name == 'clouddisk' ? 'black' : '#353535' }"
                             to="/cloud"
-                            v-if="userStore.cloudDiskPage"
+                            v-if="!userStore.localOnlyMode && userStore.cloudDiskPage"
                         >
                             云盘
                         </router-link>
@@ -274,7 +275,7 @@ watch(
                             class="button-fm"
                             :style="{ color: router.currentRoute.value.name == 'personalfm' ? 'black' : '#353535' }"
                             to="/personalfm"
-                            v-if="userStore.personalFMPage"
+                            v-if="!userStore.localOnlyMode && userStore.personalFMPage"
                         >
                             私人漫游
                         </router-link>
@@ -284,7 +285,7 @@ watch(
                             :style="{ color: router.currentRoute.value.name === 'mymusic' || router.currentRoute.value.fullPath.startsWith('/mymusic') ? 'black' : '#353535' }"
                             to="/mymusic"
                         >
-                            我的音乐
+                            {{ userStore.localOnlyMode ? '本地音乐' : '我的音乐' }}
                         </router-link>
                     </div>
                     <div class="header-router-right">
@@ -293,14 +294,14 @@ watch(
                             class="button-siren"
                             :style="{ color: router.currentRoute.value.fullPath.startsWith('/siren') ? 'black' : '#353535' }"
                             to="/siren"
-                            v-if="userStore.sirenPage"
+                            v-if="!userStore.localOnlyMode && userStore.sirenPage"
                         >
                             塞壬唱片
                         </router-link>
                         <div class="user">
                             <div class="user-container">
                                 <div class="user-head" @click="userStore.appOptionShow = true">
-                                    <img v-if="isLogin() && userStore.user" :src="userStore.user.avatarUrl + '?param=100y100'" alt="" />
+                                    <img v-if="isLogin() && userStore.user?.avatarUrl" :src="userStore.user.avatarUrl + '?param=100y100'" alt="" />
                                     <img v-else-if="qqAccountStore.loggedIn && qqAccountStore.user?.avatarUrl" :src="qqAccountStore.user.avatarUrl" alt="" />
                                     <svg v-else t="1672136404205" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5403" width="200" height="200">
                                         <path
@@ -314,9 +315,9 @@ watch(
                                     <div class="img-mask"></div>
                                 </div>
                                 <transition name="app-option" @after-enter="onAfterEnter" @after-leave="onAfterLeave">
-                                    <div class="app-option" :class="{ 'app-option-active': isActive }" v-show="userStore.appOptionShow">
+                                    <div class="app-option" :class="{ 'app-option-active': isActive, 'app-option-local-only': userStore.localOnlyMode }" v-show="userStore.appOptionShow">
                                         <div class="option" @click="toSettings()">设置</div>
-                                        <div class="option" @click="handleAuthOptionClick()">{{ isLogin() ? '退出登录' : (qqAccountStore.loggedIn ? '账号设置' : '账号登录') }}</div>
+                                        <div class="option" v-if="!userStore.localOnlyMode" @click="handleAuthOptionClick()">{{ isLogin() ? '退出登录' : (qqAccountStore.loggedIn ? '账号设置' : '账号登录') }}</div>
 
                                         <div class="option-style option-style1"></div>
                                         <div class="option-style option-style2"></div>
@@ -467,6 +468,9 @@ main {
                     &-active {
                         height: var(--app-option-height);
                         padding: 12px 0;
+                    }
+                    &-local-only {
+                        --app-option-height: 56px;
                     }
                     .option {
                         padding: 8px 14px;
