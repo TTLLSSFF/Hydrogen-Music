@@ -28,7 +28,6 @@ let mediaSessionInitialized = false
 let sirenDurationPreloadScheduled = false
 let lastSongRestoreScheduled = false
 let localMusicModulePromise = null
-let downloadManagerModulePromise = null
 let customFontResolveToken = 0
 
 // 桌面端能力检测：网页端没有 preload 暴露的 windowApi，所有桌面调用都必须先判断，
@@ -40,11 +39,6 @@ function hasDesktopApi(name) {
 function loadLocalMusicModule() {
     if (!localMusicModulePromise) localMusicModulePromise = import('./locaMusic')
     return localMusicModulePromise
-}
-
-function loadDownloadManagerModule() {
-    if (!downloadManagerModulePromise) downloadManagerModulePromise = import('./downloadManager')
-    return downloadManagerModulePromise
 }
 
 function scanMusicDeferred(options) {
@@ -235,11 +229,6 @@ async function runBaseAppInit() {
     }
 
     await initPlayerExternalBridge()
-    // 下载管理器强依赖 windowApi，仅在桌面端初始化。
-    if (hasDesktopApi()) {
-        const { initDownloadManager } = await loadDownloadManagerModule()
-        initDownloadManager()
-    }
     await initSettings({ hydrateLocalMusic: false })
     resetStartupPlayerState()
 }

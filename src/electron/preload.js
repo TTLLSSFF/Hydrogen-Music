@@ -38,30 +38,8 @@ function beforeQuit(callback) {
 function exitApp(playlist) {
     ipcRenderer.send('exit-app', playlist)
 }
-function startDownload() {
-    ipcRenderer.send('download-start')
-}
-function download(url) {
-    ipcRenderer.send('download', url)
-}
-function downloadNext(callback) {
-    return subscribeChannel('download-next', callback)
-}
-function downloadProgress(callback) {
-    return subscribeChannel('download-progress', callback)
-}
-function downloadError(callback) {
-    const listener = (_event, code) => callback?.(code)
-    return subscribeChannel('download-error', listener)
-}
-function downloadPause(close) {
-    ipcRenderer.send('download-pause', close)
-}
-function downloadResume() {
-    ipcRenderer.send('download-resume')
-}
-function downloadCancel() {
-    ipcRenderer.send('download-cancel')
+function downloadToFolder(payload) {
+    return ipcRenderer.invoke('download-to-folder', payload)
 }
 function lyricControl(callback) {
     return subscribeChannel('lyric-control', callback)
@@ -289,14 +267,7 @@ contextBridge.exposeInMainWorld('windowApi', {
     toRegister,
     beforeQuit,
     exitApp,
-    startDownload,
-    download,
-    downloadNext,
-    downloadProgress,
-    downloadError,
-    downloadPause,
-    downloadResume,
-    downloadCancel,
+    downloadToFolder,
     lyricControl,
     scanLocalMusic,
     localMusicFiles,

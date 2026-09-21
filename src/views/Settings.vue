@@ -95,8 +95,6 @@ const localHifiOutputModeOptions = computed(() => {
 })
 const hifiOutputBusy = ref(false)
 const downloadFolder = ref(null)
-const downloadCreateSongFolder = ref(false)
-const downloadSaveLyricFile = ref(false)
 const videoFolder = ref(null)
 const localFolder = ref([])
 const shortcutsList = ref(null)
@@ -162,8 +160,6 @@ const applySettingsToForm = settings => {
     playerStore.localHifiAudioDevice = normalizedSettings.music.localHifiAudioDevice
     videoFolder.value = normalizedSettings.local.videoFolder
     downloadFolder.value = normalizedSettings.local.downloadFolder
-    downloadCreateSongFolder.value = !!normalizedSettings.local.downloadCreateSongFolder
-    downloadSaveLyricFile.value = !!normalizedSettings.local.downloadSaveLyricFile
     localFolder.value = normalizedSettings.local.localFolder
     shortcutsList.value = normalizedSettings.shortcuts
     globalShortcuts.value = normalizedSettings.other.globalShortcuts
@@ -299,8 +295,6 @@ const setAppSettings = () => {
         local: {
             videoFolder: videoFolder.value,
             downloadFolder: downloadFolder.value,
-            downloadCreateSongFolder: downloadCreateSongFolder.value,
-            downloadSaveLyricFile: downloadSaveLyricFile.value,
             localFolder: localFolder.value,
         },
         shortcuts: shortcutsList.value,
@@ -933,28 +927,6 @@ const toggleLocalOnlyMode = async () => {
                             <div class="select-download-folder">
                                 <div class="selected-folder" :title="downloadFolder">{{ downloadFolder ? downloadFolder : '待选择' }}</div>
                                 <div class="select-option" @click="selectFolder('download')">选择</div>
-                            </div>
-                        </div>
-                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode">
-                            <div class="option-name">下载歌曲时创建独立文件夹</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="downloadCreateSongFolder = !downloadCreateSongFolder">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': downloadCreateSongFolder }">{{ downloadCreateSongFolder ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="downloadCreateSongFolder"></div>
-                                    </Transition>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="option" v-if="isDesktop && !userStore.localOnlyMode">
-                            <div class="option-name">下载歌曲时创建独立歌词文件</div>
-                            <div class="option-operation">
-                                <div class="toggle" @click="downloadSaveLyricFile = !downloadSaveLyricFile">
-                                    <div class="toggle-off" :class="{ 'toggle-on-in': downloadSaveLyricFile }">{{ downloadSaveLyricFile ? '已开启' : '已关闭' }}</div>
-                                    <Transition name="toggle">
-                                        <div class="toggle-on" v-show="downloadSaveLyricFile"></div>
-                                    </Transition>
-                                </div>
                             </div>
                         </div>
                         <div class="option" v-if="isDesktop">

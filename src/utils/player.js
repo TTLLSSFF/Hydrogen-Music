@@ -4117,9 +4117,6 @@ export function initPlayerExternalBridge() {
             changeProgress(progress.value)
         },
         onBeforeQuit() {
-            if (typeof windowApi !== 'undefined' && windowApi?.downloadPause) {
-                windowApi.downloadPause('shutdown')
-            }
             persistPlaylistBeforeExit(buildPersistedPlaylistPayload())
         },
         onSetPosition(positionSeconds) {

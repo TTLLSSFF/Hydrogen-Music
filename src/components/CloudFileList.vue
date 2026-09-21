@@ -7,7 +7,7 @@
   import { getSongCoverUrl, withCoverParam } from '../utils/coverBackdrop'
   import { markCloudDiskSong } from '../utils/player/lyricFallback'
   import { usePlayerStore } from '../store/playerStore'
-  import { useLocalStore } from '../store/localStore'
+  import { useOtherStore } from '../store/otherStore'
 
   const props = defineProps({
     items: {
@@ -27,9 +27,7 @@
   const emit = defineEmits(['refresh'])
 
   const playerStore = usePlayerStore()
-  const localStore = useLocalStore()
-  // 桌面端（Electron）由 preload 注入 windowApi，本地下载队列只在桌面端可用
-  const isDesktop = typeof windowApi !== 'undefined'
+  const otherStore = useOtherStore()
 
   const selectedSongIds = ref([])
   const visibleItems = computed(() => Array.isArray(props.items) ? props.items : [])
@@ -114,12 +112,9 @@
   function downloadFile() {
     const selectedSongs = getSelectedSongs()
     if (selectedSongs.length == 0) return
-    // 桌面端：交给 Electron 下载管理队列；网页端保留原有提示
-    if (isDesktop) {
-      localStore.updateDownloadList(selectedSongs)
-    } else {
-      noticeOpen('网页版暂不支持下载', 2)
-    }
+    otherStore.downloadItems = selectedSongs
+    otherStore.downloadTitle = `下载 ${selectedSongs.length} 首歌曲`
+    otherStore.downloadQualityShow = true
     clearSelect()
   }
 

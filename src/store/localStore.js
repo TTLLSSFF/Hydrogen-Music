@@ -1,5 +1,4 @@
 import { defineStore } from "pinia";
-import { noticeOpen } from "../utils/dialog";
 
 const createLookupIndexState = () => ({
     localFoldersByName: {},
@@ -15,9 +14,6 @@ const createLookupIndexState = () => ({
 export const useLocalStore = defineStore('localStore', {
     state: () => {
         return {
-            isFirstDownload: true,
-            isDownloading: false,
-            downloadList: [],
             downloadedFolderSettings: null,
             downloadedMusicFolder: null,
             downloadedFiles: null,
@@ -53,16 +49,6 @@ export const useLocalStore = defineStore('localStore', {
               return total;
             }, []);
             return uniqueArr;
-        },
-        updateDownloadList(list) {
-            if(!this.downloadedFolderSettings) {noticeOpen("请先在设置中设置下载目录", 2);return}
-            this.downloadList = this.downloadList.concat(list)
-            this.downloadList = this.removedup(this.downloadList, 'id')
-            if(!this.isDownloading && this.isFirstDownload) {
-                windowApi.startDownload()
-                this.isFirstDownload = false
-            }
-            noticeOpen('已添加到下载列表', 2)
         },
         getSongs(arr) {
             arr.forEach(song => {
@@ -166,9 +152,5 @@ export const useLocalStore = defineStore('localStore', {
                     })
             }
         }
-    },
-    persist: {
-        storage: localStorage,
-        pick: ['downloadList'],
     },
 })

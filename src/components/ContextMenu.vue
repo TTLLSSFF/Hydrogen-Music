@@ -5,7 +5,6 @@
   import { addToNext, addToNextLocal } from '../utils/player/lazy'
   import { noticeOpen } from '../utils/dialog';
   import { useLibraryStore } from '../store/libraryStore';
-import { useLocalStore } from '../store/localStore';
 import { useOtherStore } from '../store/otherStore';
 import { usePlayerStore } from '../store/playerStore'
 import { useUserStore } from '../store/userStore';
@@ -22,12 +21,9 @@ import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
 import { storeToRefs } from 'pinia';
 const router = useRouter()
 const libraryStore = useLibraryStore()
-const localStore = useLocalStore()
 const otherStore = useOtherStore()
 const playerStore = usePlayerStore()
 const userStore = useUserStore()
-// 桌面端（Electron）由 preload 注入 windowApi；网页端不存在该全局
-const isDesktop = typeof windowApi !== 'undefined'
 const loadedNeteasePlaylistUserId = ref('')
 const neteaseWritablePlaylists = computed(() => {
   const accountId = String(userStore.user?.userId || '')
@@ -343,19 +339,13 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     }
     if(id == 3) {
       const song = otherStore.selectedItem
-      // 桌面端：走 Electron 本地下载队列（主进程下载器 + 本地曲库）
-      if (isDesktop) {
-        otherStore.contextMenuShow = false
-        localStore.updateDownloadList(song)
-        return
-      }
       if (!canUseSongAction(song, 'download')) {
         noticeOpen('QQ 音乐暂不支持下载', 2)
         otherStore.contextMenuShow = false
         return
       }
       if (!song || song.type === 'local') {
-        noticeOpen('本地歌曲无需通过浏览器下载', 2)
+        noticeOpen('本地歌曲无需下载', 2)
         return
       }
       otherStore.contextMenuShow = false

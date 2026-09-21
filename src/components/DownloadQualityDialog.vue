@@ -21,7 +21,7 @@ const closeDialog = () => {
     progressText.value = ''
 }
 
-const startDownload = async level => {
+const confirmDownload = async level => {
     if (downloading.value) return
     if (!itemCount.value) {
         closeDialog()
@@ -40,11 +40,12 @@ const startDownload = async level => {
             },
         })
 
+        const isDesktop = result.mode === 'desktop'
         if (result.success > 0) {
-            noticeOpen(`已推送 ${result.success} 个下载链接`, 2)
+            noticeOpen(isDesktop ? `已保存 ${result.success} 首歌曲到下载目录` : `已推送 ${result.success} 个下载链接`, 2)
         }
         if (result.failed > 0 || result.skipped > 0) {
-            noticeOpen(`下载完成，${result.failed + result.skipped} 首未推送`, 2)
+            noticeOpen(isDesktop ? `下载完成，${result.failed + result.skipped} 首未保存` : `下载完成，${result.failed + result.skipped} 首未推送`, 2)
         }
     } finally {
         downloading.value = false
@@ -65,7 +66,7 @@ const startDownload = async level => {
                             v-for="item in MUSIC_LEVEL_OPTIONS"
                             :key="item.value"
                             :disabled="downloading"
-                            @click="startDownload(item.value)"
+                            @click="confirmDownload(item.value)"
                         >
                             <span class="quality-name">{{ item.label }}</span>
                             <span class="quality-code">{{ item.value }}</span>

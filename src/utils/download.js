@@ -43,8 +43,25 @@ export function buildDownloadFileName(song, playbackInfo = {}) {
     return `${title}${artistPart}.${inferAudioExtension(playbackInfo)}`
 }
 
-export function pushBrowserDownload(url, filename) {
-    if (!url) return false
+// 桌面端（Electron）保存到设置里的下载目录；网页端交给 /download-proxy 流式代理。
+export function isDesktopDownloadAvailable() {
+    return typeof windowApi !== 'undefined'
+        && !!windowApi
+        && typeof windowApi.downloadToFolder === 'function'
+}
+
+export async function pushBrowserDownload(url, filename) {
+    if (!url) return { ok: false, error: 'missing-url' }
+
+    if (isDesktopDownloadAvailable()) {
+        try {
+            const result = await windowApi.downloadToFolder({ url, filename })
+            if (result && result.ok) return { ok: true, path: result.path }
+            return { ok: false, error: result?.error || 'downloadFailed' }
+        } catch (error) {
+            return { ok: false, error: error?.message || 'downloadFailed' }
+        }
+    }
 
     const link = document.createElement('a')
     const downloadUrl = new URL('/download-proxy', window.location.origin)
@@ -57,7 +74,7 @@ export function pushBrowserDownload(url, filename) {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-    return true
+    return { ok: true }
 }
 
 export async function pushSongsToBrowserDownloads(songs, requestedQuality, options = {}) {
@@ -70,6 +87,7 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
         failed: 0,
         skipped: 0,
         failures: [],
+        mode: isDesktopDownloadAvailable() ? 'desktop' : 'web',
     }
 
     for (let index = 0; index < list.length; index += 1) {
@@ -91,7 +109,8 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
             const playbackInfo = await resolveDownloadPlaybackInfo(song, quality)
             if (!playbackInfo?.url) throw new Error('missing download url')
 
-            pushBrowserDownload(playbackInfo.url, buildDownloadFileName(song, playbackInfo))
+            const outcome = await pushBrowserDownload(playbackInfo.url, buildDownloadFileName(song, playbackInfo))
+            if (!outcome?.ok) throw new Error(outcome?.error || 'download failed')
             result.success += 1
             onProgress?.({ ...result, index, song, status: 'success', playbackInfo })
         } catch (error) {

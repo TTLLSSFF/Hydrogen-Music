@@ -873,10 +873,6 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
         if (!isTrustedShellUrl(parsedUrl)) return
         shell.openExternal(parsedUrl.toString())
     })
-    ipcMain.on('download-start', () => {
-        win.webContents.send('download-next')
-    })
-
     const getPictureScore = pic => {
         if (!pic || !pic.data) return -1
         const type = `${pic.type || ''} ${pic.description || ''}`.toLowerCase()

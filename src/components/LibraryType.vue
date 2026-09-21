@@ -30,7 +30,6 @@
   const option = ref(0)
   const typeOne = ref(0)
   const typeTwo = ref(0)
-  const typeThree = ref(0)
   const typeFour = ref(0)
   const lastLoadedUserId = ref(null)
   const lastHandledPlaylistOverviewVersion = ref(playlistOverviewVersion.value)
@@ -274,16 +273,14 @@
         clearAccountLibraryLists()
         return false
       }
-    } else if (option.value == 2 && typeThree.value == 0) {
-      listType2.value = 0
-    } else if (option.value == 2 && typeThree.value == 1) {
-      listType2.value = 1
     } else if (option.value == 3 && typeFour.value == 0) {
       listType2.value = 0
     } else if (option.value == 3 && typeFour.value == 1) {
       listType2.value = 1
     } else if (option.value == 3 && typeFour.value == 2) {
       listType2.value = 2
+    } else if (option.value == 3 && typeFour.value == 3) {
+      listType2.value = 3
     }
 
     if(document.getElementById('libraryListScroll'))
@@ -303,8 +300,6 @@
         typeOne.value = num
     } else if (option.value == 1) {
         typeTwo.value = num
-    } else if (option.value == 2) {
-        typeThree.value = num
     } else if (option.value == 3) {
         typeFour.value = num
     }
@@ -313,8 +308,8 @@
 
   const refreshLocal = () => {
     localStore.isRefreshLocalFile = true
-    if(listType1.value == 2 && listType2.value == 1) {scanMusic({type:'downloaded',refresh:true});}
-    if(listType1.value == 3) {scanMusic({type:'local',refresh:true});}
+    if(listType1.value == 3 && listType2.value == 3) {scanMusic({type:'downloaded',refresh:true});}
+    else if(listType1.value == 3) {scanMusic({type:'local',refresh:true});}
     router.push('/mymusic')
   }
 
@@ -369,12 +364,11 @@
             <div class="type-option">
             <span v-if="!userStore.localOnlyMode" class="option" :class="{'option-selected': option == 0}" @click="changeTracker(0)" id="myPlaylist">歌单</span>
             <span v-if="!userStore.localOnlyMode" class="option" :class="{'option-selected': option == 1}" @click="changeTracker(1)">收藏</span>
-            <span v-if="!userStore.localOnlyMode" class="option" :class="{'option-selected': option == 2}" @click="changeTracker(2)">下载管理</span>
             <span class="option" :class="{'option-selected': option == 3}" @click="changeTracker(3)">本地管理</span>
             </div>
             <div class="option-tracker">
             <div class="tracker-line"></div>
-            <div :class="{'tracker': true, 'tracker0': typeTracker == 0, 'tracker1': typeTracker == 1, 'tracker2': typeTracker == 2, 'tracker3': typeTracker == 3, 'tracker-local-only': userStore.localOnlyMode}"></div>
+            <div :class="{'tracker': true, 'tracker0': typeTracker == 0, 'tracker1': typeTracker == 1, 'tracker3': typeTracker == 3, 'tracker-local-only': userStore.localOnlyMode}"></div>
             </div>
         </div>
         <div class="type-two">
@@ -385,13 +379,12 @@
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 1}" @click="changeType(1)">歌手</span>
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 2}" @click="changeType(2)">MV</span>
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 3}" @click="changeType(3)">电台</span>
-                <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 0}" @click="changeType(0)">正在下载</span>
-                <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 1}" @click="changeType(1)">下载完成</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 0}" @click="changeType(0)">全部</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 1}" @click="changeType(1)">专辑</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 2}" @click="changeType(2)">歌手</span>
+                <span v-show="option == 3 && !userStore.localOnlyMode" class="option" :class="{'option-selected': typeFour == 3}" @click="changeType(3)">已下载</span>
             </div>
-            <span class="refresh" @click="refreshLocal()" v-show="(listType1 == 2 && listType2 == 1 && localStore.downloadedFolderSettings) || (listType1 == 3 && localStore.localFolderSettings.length != 0)">刷新</span>
+            <span class="refresh" @click="refreshLocal()" v-show="(listType1 == 3 && listType2 == 3 && localStore.downloadedFolderSettings) || (listType1 == 3 && listType2 != 3 && localStore.localFolderSettings.length != 0)">刷新</span>
         </div>
     </div>
   </div>
@@ -446,13 +439,9 @@
                 width: 32Px;
                 left: 57Px;
             }
-            .tracker2{
-                width: 64Px;
-                left: 110Px;
-            }
             .tracker3{
                 width: 64Px;
-                left: 193Px;
+                left: 110Px;
             }
             .tracker-local-only{
                 left: 4Px;
