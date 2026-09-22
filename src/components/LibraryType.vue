@@ -25,6 +25,8 @@
   const { changeLibraryList, updateUserPlaylistCount } = libraryStore
   const { libraryList, libraryListAlbum, libraryListAritist, listType1, listType2, playlistOverviewVersion, playlistOverviewRefreshSilent } = storeToRefs(libraryStore)
   const localStore = useLocalStore()
+  // 本地音乐依赖桌面端文件系统能力：网页端不渲染「本地管理」页签及其子项
+  const isDesktop = typeof windowApi !== 'undefined'
 
   const typeTracker = ref(0)
   const option = ref(0)
@@ -409,8 +411,8 @@
             <div class="type-option" ref="typeOptionRef">
             <span v-if="!userStore.localOnlyMode" class="option" :class="{'option-selected': option == 0}" @click="changeTracker(0)" id="myPlaylist">歌单</span>
             <span v-if="!userStore.localOnlyMode" class="option" :class="{'option-selected': option == 1}" @click="changeTracker(1)">收藏</span>
-            <span v-if="!userStore.localOnlyMode" class="option" :class="{'option-selected': option == 2}" @click="changeTracker(2)">下载管理</span>
-            <span class="option" :class="{'option-selected': option == 3}" @click="changeTracker(3)">本地管理</span>
+            <span v-if="isDesktop && !userStore.localOnlyMode" class="option" :class="{'option-selected': option == 2}" @click="changeTracker(2)">下载管理</span>
+            <span v-if="isDesktop" class="option" :class="{'option-selected': option == 3}" @click="changeTracker(3)">本地管理</span>
             </div>
             <div class="option-tracker" ref="trackerTrackRef">
             <div class="tracker-line"></div>
@@ -425,13 +427,13 @@
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 1}" @click="changeType(1)">歌手</span>
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 2}" @click="changeType(2)">MV</span>
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 3}" @click="changeType(3)">电台</span>
-                <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 0}" @click="changeType(0)">正在下载</span>
-                <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 1}" @click="changeType(1)">下载完成</span>
-                <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 0}" @click="changeType(0)">全部</span>
-                <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 1}" @click="changeType(1)">专辑</span>
-                <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 2}" @click="changeType(2)">歌手</span>
+                <span v-show="option == 2 && isDesktop" class="option" :class="{'option-selected': typeThree == 0}" @click="changeType(0)">正在下载</span>
+                <span v-show="option == 2 && isDesktop" class="option" :class="{'option-selected': typeThree == 1}" @click="changeType(1)">下载完成</span>
+                <span v-show="option == 3 && isDesktop" class="option" :class="{'option-selected': typeFour == 0}" @click="changeType(0)">全部</span>
+                <span v-show="option == 3 && isDesktop" class="option" :class="{'option-selected': typeFour == 1}" @click="changeType(1)">专辑</span>
+                <span v-show="option == 3 && isDesktop" class="option" :class="{'option-selected': typeFour == 2}" @click="changeType(2)">歌手</span>
             </div>
-            <span class="refresh" @click="refreshLocal()" v-show="listType1 == 3 && localStore.localFolderSettings.length != 0">刷新</span>
+            <span class="refresh" @click="refreshLocal()" v-show="isDesktop && listType1 == 3 && localStore.localFolderSettings.length != 0">刷新</span>
         </div>
     </div>
   </div>

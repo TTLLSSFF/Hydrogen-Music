@@ -250,6 +250,46 @@ test('QQ public playlist detail is served without a login session', async () => 
   assert.equal(invalidContext.status, 400)
 })
 
+test('QQ public toplist detail is served without a login session', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    topListDetailService: async params => {
+      calls.push(params)
+      return {
+        status: 200,
+        body: {
+          response: {
+            code: 0,
+            topinfo: { topID: params.topId, ListName: '巅峰榜·流行指数' },
+            songlist: [{ data: { songmid: '0027rBks3lqPA3', songname: '茶汤' } }],
+            total_song_num: 100,
+          },
+          cookie: 'uin=must-not-leak',
+        },
+      }
+    },
+  })
+
+  const context = createContext('/getTopListDetail?topId=4')
+  let reached = false
+  await middleware(context, async () => { reached = true })
+
+  assert.equal(reached, false, 'toplist detail must be handled before the session-required boundary')
+  assert.deepEqual(calls, [{ topId: '4', page: 0, limit: 100 }])
+  assert.equal(context.status, 200)
+  assert.equal(context.body.response.songlist[0].data.songmid, '0027rBks3lqPA3')
+  assert.equal(JSON.stringify(context.body).includes('must-not-leak'), false)
+
+  const missingTopIdContext = createContext('/getTopListDetail')
+  await middleware(missingTopIdContext, async () => {})
+  assert.equal(missingTopIdContext.status, 400)
+
+  const postContext = createContext('/getTopListDetail?topId=4', { method: 'POST', body: {} })
+  await middleware(postContext, async () => {})
+  assert.equal(postContext.status, 405)
+})
+
 test('QQ public playlist search is served without a login session', async () => {
   const calls = []
   const middleware = createQQSecurityMiddleware({

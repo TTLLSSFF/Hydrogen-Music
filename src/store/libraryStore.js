@@ -4,7 +4,7 @@ import { getAlbumDetail, albumDynamic } from '../api/album'
 import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
 import { getArtistMV } from '../api/mv'
 import { getSongDetail } from '../api/song'
-import { getQQSongListDetail } from '../api/qqMusic'
+import { getQQSongListDetail, getQQTopListDetail, normalizeQQTopListDetail } from '../api/qqMusic'
 import { loadQQPlaylistDetail, mergeQQPlaylistSummary } from '../utils/qqLibrary.mjs'
 import { mapSongsPlayableStatus } from "../utils/songStatus";
 import { buildAlbumSearchText, buildCloudSongSearchText, buildMVSearchText } from "../utils/songFilter";
@@ -599,7 +599,10 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.resetSearchIndex()
             if (routerName != 'playlist') this.resetPlaylistHydration()
             if (routerName == 'playlist') {
-                if (source === 'qq') await this.updateQQPlaylistDetail(id, { type: options.type })
+                // 榜单（toplist）的 id 是 topId，不是歌单 disstid：走 /getTopListDetail，
+                // 否则上游会把 topId 当成歌单号返回空内容。
+                if (source === 'qq' && String(options.type || '').toLowerCase() === 'toplist') await this.updateQQTopListDetail(id)
+                else if (source === 'qq') await this.updateQQPlaylistDetail(id, { type: options.type })
                 else await this.updatePlaylistDetail(id, { ...options, source })
             }
             if (routerName == 'album') {
@@ -752,6 +755,53 @@ export const useLibraryStore = defineStore('libraryStore', {
                         source,
                     })
                     this.playlistHydrationPromise = null
+                    this.libraryChangeAnimation = false
+                }
+                throw error
+            }
+        },
+        // QQ 榜单详情：id 为 topId（数字），上游 /getTopListDetail 一次返回完整榜单，
+        // 不存在分页，因此这里不进 playlistHydration 的分页补全流程，只把状态标成
+        // 已完成，避免列表底部出现「加载中」。
+        async updateQQTopListDetail(id) {
+            const topId = String(id || '')
+            const token = createPlaylistHydrationToken(topId)
+            this.playlistHydrationToken = token
+            this.playlistHydrationPromise = null
+            this.playlistHydration = createPlaylistHydrationState({ id: topId, status: 'loading', source: 'qq' })
+            this.libraryInfo = null
+            this.librarySongs = []
+            this.libraryAlbum = null
+            this.libraryMV = null
+            this.indexLibrarySongs([])
+            try {
+                const normalized = normalizeQQTopListDetail(await getQQTopListDetail(topId), topId)
+                if (this.playlistHydrationToken !== token) return
+                const fallbackName = this.libraryInfo?.name || 'QQ 榜单'
+                this.libraryInfo = {
+                    ...normalized.playlist,
+                    id: topId,
+                    name: normalized.playlist.name || fallbackName,
+                }
+                this.librarySongs = normalized.songs
+                this.indexLibrarySongs(this.librarySongs)
+                this.playlistHydration = createPlaylistHydrationState({
+                    id: topId,
+                    total: this.librarySongs.length,
+                    loaded: this.librarySongs.length,
+                    status: 'completed',
+                    source: 'qq',
+                })
+                this.libraryChangeAnimation = false
+                this.cacheCurrentLibraryDetail(topId, 'playlist', 'qq', 'toplist')
+            } catch (error) {
+                if (this.playlistHydrationToken === token) {
+                    this.librarySongs = []
+                    this.libraryInfo = { id: topId, source: 'qq', name: 'QQ 榜单', coverImgUrl: '' }
+                    this.indexLibrarySongs([])
+                    this.playlistHydration = createPlaylistHydrationState({ id: topId, total: 0, loaded: 0, status: 'failed', source: 'qq' })
+                    this.playlistHydrationPromise = null
+                    this.playlistHydrationToken = null
                     this.libraryChangeAnimation = false
                 }
                 throw error

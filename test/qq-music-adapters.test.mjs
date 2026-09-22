@@ -22,6 +22,7 @@ import {
   normalizeQQSingerSongs,
   normalizeQQSingerAlbums,
   normalizeQQSong,
+  normalizeQQTopListDetail,
   QQ_PUBLIC_API_DISABLED_CODE,
   searchQQAll,
   searchQQCategory,
@@ -319,6 +320,76 @@ test('QQ playlist search normalizes the musicu songlist envelope', () => {
   assert.equal(playlists[0].trackCount, 99)
   assert.equal(playlists[0].source, 'qq')
   assert.deepEqual(normalizeQQSearchPlaylists({ code: 0 }), [])
+})
+
+// 榜单详情走旧版 fcg_v8_toplist_cp 模板：歌曲字段藏在 songlist[].data 内层，
+// 且只有这一层带 songmid（musicToplist.GetDetail 只有数字 songId，无法播放）。
+test('QQ toplist detail normalizes the legacy songlist envelope', () => {
+  const detail = normalizeQQTopListDetail({
+    response: {
+      code: 0,
+      topinfo: {
+        topID: '4',
+        ListName: '巅峰榜·流行指数',
+        pic_v12: 'http://y.gtimg.cn/music/photo_new/T003R300x300M0000048E6jv0avzOV.jpg',
+        info: '1.榜单定义：站内播放相对涨幅排名前100首歌曲。',
+      },
+      total_song_num: 100,
+      update_time: '2026-09-21',
+      songlist: [
+        {
+          Franking_value: '402946',
+          data: {
+            songmid: '0027rBks3lqPA3',
+            songid: 4936030,
+            songname: '茶汤',
+            albummid: '002iWKlh2DcjFL',
+            albumname: '微加幸福',
+            interval: 308,
+            singer: [{ id: 19624, mid: '000NUoMp2WAEpO', name: '郁可唯' }],
+          },
+        },
+      ],
+    },
+  })
+
+  assert.equal(detail.playlist.id, '4')
+  assert.equal(detail.playlist.name, '巅峰榜·流行指数')
+  assert.equal(detail.playlist.coverImgUrl, 'http://y.gtimg.cn/music/photo_new/T003R300x300M0000048E6jv0avzOV.jpg')
+  assert.equal(detail.playlist.trackCount, 100)
+  assert.equal(detail.playlist.source, 'qq')
+  assert.equal(detail.songs.length, 1)
+  // 播放依赖 sourceId（songmid），不能退化成数字 songId
+  assert.equal(detail.songs[0].sourceId, '0027rBks3lqPA3')
+  assert.equal(detail.songs[0].name, '茶汤')
+  assert.equal(detail.songs[0].dt, 308000)
+  assert.equal(detail.songs[0].ar[0].name, '郁可唯')
+})
+
+test('QQ toplist detail still tolerates the musicu GetDetail envelope', () => {
+  const detail = normalizeQQTopListDetail({
+    response: {
+      code: 0,
+      req_1: {
+        code: 2000,
+        data: {
+          data: {
+            topId: 26,
+            title: '巅峰榜·热歌',
+            totalNum: 2,
+            headPicUrl: 'https://example.test/top.jpg',
+            song: [{ songId: 1, title: '歌曲一', singerName: '歌手' }],
+          },
+        },
+      },
+    },
+  }, '26')
+
+  assert.equal(detail.playlist.id, '26')
+  assert.equal(detail.playlist.name, '巅峰榜·热歌')
+  assert.equal(detail.playlist.coverImgUrl, 'https://example.test/top.jpg')
+  assert.equal(detail.playlist.trackCount, 2)
+  assert.equal(detail.songs.length, 1)
 })
 
 test('QQ album detail request carries the albummid query and requires it', async () => {

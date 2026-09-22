@@ -860,7 +860,8 @@ const toggleLocalOnlyMode = async () => {
                         </div>
                     </div>
                 </div>
-                <div class="settings-item">
+                <!-- 本地音乐依赖桌面端文件系统能力，网页端整体隐藏该分组 -->
+                <div class="settings-item" v-if="isDesktop">
                     <h2 class="item-title">本地</h2>
                     <div class="line"></div>
                     <div class="item-options">

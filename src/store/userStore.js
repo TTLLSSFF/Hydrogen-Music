@@ -54,6 +54,11 @@ export const useUserStore = defineStore('userStore', {
     },
     persist: {
         storage: localStorage,
-        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','localOnlyMode','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource']
+        pick: ['user','biliUser','homePage','cloudDiskPage','personalFMPage','sirenPage','localOnlyMode','favoritePlaylistId','favoritePlaylistName','favoritePlaylistSource'],
+        // 本地音乐依赖桌面端文件系统能力：网页端强制关闭「仅本地音乐模式」，
+        // 避免历史持久化状态把网页端锁进没有入口可退出的本地模式。
+        afterHydrate: ({ store }) => {
+            if (typeof windowApi === 'undefined') store.localOnlyMode = false
+        },
     },
 })

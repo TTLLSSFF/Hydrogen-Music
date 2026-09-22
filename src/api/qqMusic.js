@@ -613,35 +613,64 @@ export function getQQTopListDetail(topId, params = {}) {
 }
 
 /**
- * 归一化 QQ 榜单详情（服务端 /getTopListDetail 返回 `response.req_1.data`，
- * 与依赖包 getRanks 控制器同款包络）。歌曲数组可能嵌套在内层 `data`，
- * 且每项可能再包装一层 `songInfo`（GetDetail 常见形状），先把 songInfo 字段
- * 展开进顶层再交给 normalizeQQSong，否则歌曲 mid 会丢失。
+ * 归一化 QQ 榜单详情。服务端 `/getTopListDetail` 走旧版 c.y.qq.com 模板，信封为
+ * `{ response: { topinfo, songlist: [{ data: 完整歌曲对象 }], total_song_num, update_time } }`；
+ * 歌曲对象（songmid/singer/albummid/interval）直接交给 normalizeQQSong。
+ * 同时兼容 musicToplist.GetDetail 的旧包络（`req_1.data.data.song[]`），
+ * 该形状只有数字 songId、没有 songmid，仅作兜底避免历史缓存解析失败。
  */
 export function normalizeQQTopListDetail(payload, fallbackId = '') {
   const body = unwrapQQResponse(payload)
+  const topinfo = body?.topinfo && typeof body.topinfo === 'object' ? body.topinfo : null
+  const rawList = Array.isArray(body?.songlist) ? body.songlist : []
+
+  if (topinfo || rawList.length > 0) {
+    // 旧版模板每项外面还包一层计数信息，歌曲字段在内层 data 上
+    const songs = rawList
+      .map(item => (item?.data && typeof item.data === 'object' ? item.data : item))
+      .filter(item => item && typeof item === 'object')
+      .map(item => normalizeQQSong(item))
+    const totalRaw = Number(body?.total_song_num)
+    const trackCount = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : songs.length
+    return {
+      playlist: {
+        id: String(firstQQValue(topinfo?.topID, fallbackId) || ''),
+        source: 'qq',
+        name: String(firstQQValue(topinfo?.ListName, topinfo?.name, '') || ''),
+        coverImgUrl: String(firstQQValue(topinfo?.pic_v12, topinfo?.pic, topinfo?.picDetail, '') || ''),
+        picUrl: String(firstQQValue(topinfo?.pic_v12, topinfo?.pic, '') || ''),
+        blurPicUrl: String(firstQQValue(topinfo?.pic_v12, topinfo?.pic, '') || ''),
+        description: String(firstQQValue(topinfo?.info, '') || ''),
+        updateTime: String(firstQQValue(body?.update_time, topinfo?.update_time, '') || ''),
+        trackCount,
+        size: trackCount,
+        followed: false,
+      },
+      songs,
+    }
+  }
+
+  // 兜底：musicToplist.GetDetail 包络
   const songData = body?.req_1?.data && typeof body.req_1.data === 'object' ? body.req_1.data : {}
-  let rawSongs = []
   const inner = songData?.data && typeof songData.data === 'object' ? songData.data : {}
-  const songKeys = ['songInfoList', 'song_info_list', 'songList', 'song_list', 'list']
+  const songKeys = ['songInfoList', 'song_info_list', 'songList', 'song_list', 'list', 'song']
   const foundArray = songKeys
     .map(key => inner?.[key])
     .concat(songKeys.map(key => songData?.[key]))
     .find(list => Array.isArray(list))
-  if (Array.isArray(foundArray)) rawSongs = foundArray
+  const rawSongs = Array.isArray(foundArray) ? foundArray : []
 
-  const name = firstQQValue(songData?.title, songData?.data?.title, songData?.subTitle) || ''
+  const name = firstQQValue(songData?.title, inner?.title, songData?.subTitle) || ''
   const cover = firstQQValue(
+    inner?.headPicUrl,
+    inner?.frontPicUrl,
     songData?.banner,
     songData?.cover,
-    songData?.headPicUrl,
-    songData?.data?.banner,
   ) || ''
-  const metaCover = firstQQValue(songData?.picUrl, songData?.picurl, cover) || ''
   const trackCount = firstPositiveQQValue(
+    inner?.totalNum,
     songData?.songNum,
     songData?.total,
-    songData?.data?.songNum,
   ) ?? 0
 
   const songs = rawSongs.map(item => {
@@ -649,11 +678,11 @@ export function normalizeQQTopListDetail(payload, fallbackId = '') {
     return normalizeQQSong(songInfo ? { ...item, ...songInfo } : item)
   })
   const playlist = {
-    id: String(firstQQValue(songData?.topId, fallbackId) || ''),
+    id: String(firstQQValue(inner?.topId, songData?.topId, fallbackId) || ''),
     source: 'qq',
     name: String(name),
     coverImgUrl: String(cover),
-    picUrl: String(metaCover),
+    picUrl: String(cover),
     blurPicUrl: String(cover),
     trackCount,
     size: trackCount,

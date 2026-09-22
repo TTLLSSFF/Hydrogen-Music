@@ -16,6 +16,16 @@ const {
   sanitizeQQProxyRequestHeaders,
   sanitizeQQProxyResponseHeaders,
 } = require('./server/qqMusicApi.cjs')
+const {
+  registerDownloadTag,
+  takeDownloadTag,
+  resolveDownloadExtension,
+  writeAudioTags,
+} = require('./server/downloadTags.cjs')
+
+const fsp = fs.promises
+// 下载标签元数据（含歌词）体积上限，防止超大请求体打爆内存
+const DOWNLOAD_TAGS_MAX_BYTES = 256 * 1024
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -152,6 +162,176 @@ function getContentDispositionFileName(filename) {
   return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
 }
 
+// 浏览器先把下载元数据 POST 到这里换成一次性 token，再用 /download-proxy?tags=<token>
+// 触发下载，服务端下载落盘后写入音频标签再回传文件。
+function handleDownloadTags(req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({ error: 'method not allowed' }))
+    return
+  }
+
+  const chunks = []
+  let size = 0
+  let tooLarge = false
+
+  req.on('data', (chunk) => {
+    if (tooLarge) return
+    size += chunk.length
+    if (size > DOWNLOAD_TAGS_MAX_BYTES) {
+      // 超限后不再缓存多余数据，但继续消费完请求体，否则客户端只会看到连接被重置
+      tooLarge = true
+      chunks.length = 0
+      return
+    }
+    chunks.push(chunk)
+  })
+
+  req.on('error', () => {
+    tooLarge = true
+  })
+
+  req.on('end', () => {
+    if (res.destroyed || res.writableEnded) return
+    if (tooLarge) {
+      const status = size > DOWNLOAD_TAGS_MAX_BYTES ? 413 : 400
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ error: status === 413 ? 'metadata too large' : 'invalid request' }))
+      return
+    }
+
+    let metadata = null
+    try {
+      metadata = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    } catch (_) {
+      metadata = null
+    }
+
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ error: 'invalid metadata' }))
+      return
+    }
+
+    const token = registerDownloadTag(metadata)
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({ token }))
+  })
+}
+
+// 把远端音频完整落到本地文件，返回上游的 Content-Type 供回传时复用。
+function fetchUrlToFile(targetUrl, filePath, req, res, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) {
+      reject(new Error('too many download redirects'))
+      return
+    }
+
+    let parsedTarget = null
+    try {
+      parsedTarget = new URL(targetUrl)
+      if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
+        throw new Error('unsupported protocol')
+      }
+    } catch (error) {
+      reject(error)
+      return
+    }
+
+    const transport = parsedTarget.protocol === 'https:' ? https : http
+    const proxyReq = transport.request(parsedTarget, {
+      method: 'GET',
+      headers: {
+        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+        Accept: 'audio/*,*/*',
+        Referer: parsedTarget.origin,
+      },
+    }, (proxyRes) => {
+      const redirectLocation = proxyRes.headers.location
+      if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && redirectLocation) {
+        proxyRes.resume()
+        const nextUrl = new URL(redirectLocation, parsedTarget).toString()
+        fetchUrlToFile(nextUrl, filePath, req, res, redirectCount + 1).then(resolve, reject)
+        return
+      }
+
+      if (proxyRes.statusCode && (proxyRes.statusCode < 200 || proxyRes.statusCode >= 300)) {
+        proxyRes.resume()
+        reject(new Error(`download status ${proxyRes.statusCode}`))
+        return
+      }
+
+      const writeStream = fs.createWriteStream(filePath)
+      pipeline(proxyRes, writeStream, (error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve({ contentType: proxyRes.headers['content-type'] || 'application/octet-stream' })
+      })
+    })
+
+    res.on('close', () => proxyReq.destroy())
+    proxyReq.on('error', reject)
+    proxyReq.end()
+  })
+}
+
+// 带标签的下载：先落临时文件 → 写 ID3/FLAC 标签 → 回传 → 清理临时目录。
+// 写标签失败不影响下载本身，仍回传原始音频。
+async function proxyDownloadWithTags(targetUrl, filename, metadata, req, res) {
+  let tempDir = ''
+
+  try {
+    let parsedTarget = null
+    try {
+      parsedTarget = new URL(targetUrl)
+      if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
+        throw new Error('unsupported protocol')
+      }
+    } catch (_) {
+      res.writeHead(400)
+      res.end('Invalid download url')
+      return
+    }
+
+    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hydrogen-download-'))
+    const format = resolveDownloadExtension(metadata, filename)
+    const tempFile = path.join(tempDir, format ? `audio.${format}` : 'audio')
+
+    const { contentType } = await fetchUrlToFile(targetUrl, tempFile, req, res)
+
+    try {
+      await writeAudioTags(tempFile, metadata)
+    } catch (error) {
+      console.warn('写入下载标签失败:', error && error.message ? error.message : error)
+    }
+
+    if (res.destroyed || res.writableEnded) return
+
+    const stat = await fsp.stat(tempFile)
+    res.writeHead(200, {
+      'Content-Type': format === 'mp3' ? 'audio/mpeg' : contentType,
+      'Content-Length': String(stat.size),
+      'Content-Disposition': getContentDispositionFileName(filename || path.basename(parsedTarget.pathname) || 'Hydrogen Music'),
+      'Cache-Control': 'no-store',
+    })
+
+    await new Promise((resolve) => {
+      pipeline(fs.createReadStream(tempFile), res, () => resolve())
+    })
+  } catch (error) {
+    if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+      console.error('Download proxy (tags) error:', error)
+    }
+    sendProxyError(res, 'Download unavailable')
+  } finally {
+    if (tempDir) {
+      fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+}
+
 function proxyDownloadUrl(targetUrl, filename, req, res, redirectCount = 0) {
   if (redirectCount > 5) {
     sendProxyError(res, 'Too many download redirects')
@@ -213,13 +393,22 @@ function proxyDownloadUrl(targetUrl, filename, req, res, redirectCount = 0) {
 function proxyDownload(req, res) {
   let targetUrl = ''
   let filename = ''
+  let tagToken = ''
   try {
     const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
     targetUrl = requestUrl.searchParams.get('url') || ''
     filename = requestUrl.searchParams.get('filename') || ''
+    tagToken = requestUrl.searchParams.get('tags') || ''
   } catch (_) {
     res.writeHead(400)
     res.end('Invalid download url')
+    return
+  }
+
+  // token 一次性消费：拿到元数据就走落盘写标签流程，否则保持零拷贝流式转发。
+  const tagMetadata = tagToken ? takeDownloadTag(tagToken) : null
+  if (tagMetadata) {
+    proxyDownloadWithTags(targetUrl, filename, tagMetadata, req, res)
     return
   }
 
@@ -377,6 +566,8 @@ function createWebServer({ distDir = DIST_DIR, tls = null } = {}) {
       proxyToSiren(req, res)
     } else if (req.url.startsWith('/github-api/') || req.url === '/github-api') {
       proxyToGithub(req, res)
+    } else if (req.url === '/download-tags' || req.url.startsWith('/download-tags?')) {
+      handleDownloadTags(req, res)
     } else if (req.url.startsWith('/download-proxy?')) {
       proxyDownload(req, res)
     } else {

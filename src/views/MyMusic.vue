@@ -20,6 +20,8 @@
   const localStore = useLocalStore()
   const { localMusicFolder, localMusicClassify, downloadedFolderSettings, localFolderSettings } = storeToRefs(localStore)
   const hasMusicAccount = computed(() => hasAnyMusicAccount())
+  // 下载记录依赖桌面端本地落盘能力：网页端不渲染「下载管理」相关列表与提示
+  const isDesktop = typeof windowApi !== 'undefined'
   const shouldShowNone = computed(() => {
     const isMyMusicRoot = router.currentRoute.value.fullPath == '/mymusic'
     const hasRestorableLibraryRoute = !!lastLibraryRoute.value && (lastLibraryRoute.value.name == 'playlist' || lastLibraryRoute.value.name == 'album' || lastLibraryRoute.value.name == 'artist')
@@ -34,12 +36,12 @@
     <div class="music-library" v-if="hasMusicAccount || userStore.localOnlyMode">
       <LibraryType class="library-type"></LibraryType>
       <LibraryList v-if="!userStore.localOnlyMode" v-show="listType1 != 2 && listType1 != 3" class="library-list"></LibraryList>
-      <DownloadList v-if="!userStore.localOnlyMode" view="downloading" v-show="listType1 == 2 && listType2 == 0" class="download-list"></DownloadList>
-      <div class="download-completed" v-if="!userStore.localOnlyMode" v-show="listType1 == 2 && listType2 == 1">
+      <DownloadList v-if="isDesktop && !userStore.localOnlyMode" view="downloading" v-show="listType1 == 2 && listType2 == 0" class="download-list"></DownloadList>
+      <div class="download-completed" v-if="isDesktop && !userStore.localOnlyMode" v-show="listType1 == 2 && listType2 == 1">
         <DownloadList view="completed" class="download-list"></DownloadList>
       </div>
       <LocalMusicList :folderlist="localMusicFolder" :classifylist="localMusicClassify" type="local" v-if="localMusicFolder" v-show="listType1 == 3" class="local-list"></LocalMusicList>
-      <div class="no-folder" @click="router.push('/settings')" v-if="!userStore.localOnlyMode && !downloadedFolderSettings && listType1 == 2 && listType2 == 1">去设置下载地址</div>
+      <div class="no-folder" @click="router.push('/settings')" v-if="isDesktop && !userStore.localOnlyMode && !downloadedFolderSettings && listType1 == 2 && listType2 == 1">去设置下载地址</div>
       <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length == 0 && listType1 == 3">去设置扫描地址</div>
     </div>
       <div class="library-view" :class="{'library-view-nologin': !hasMusicAccount && !userStore.localOnlyMode}">

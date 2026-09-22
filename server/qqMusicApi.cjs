@@ -605,15 +605,35 @@ async function searchQQPlaylistsPublic({ keyword, limit, page }) {
   }
 }
 
-// 周的 ISO 号用于构造榜单 period。复刻上游 getRanks 控制器（依赖包未导出
-// 该控制器，仅导出底层 UCommon_default 服务）的 getWeekNumber 算法，保证
-// 服务端默认实现与真实客户端请求一致。
-function getWeekNumber(d) {
-  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-  const dayNum = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return Math.ceil(((d.getTime() - yearStart.getTime()) / 864e5 + 1) / 7)
+// 榜单详情：旧版 c.y.qq.com 模板，与真实 y.qq.com 榜单页一致。
+// songlist[].data 是完整歌曲对象（songmid/songid/singer/albummid/interval），
+// 可直接交给前端 normalizeQQSong；topinfo 提供榜单标题、封面与更新时间。
+const QQ_TOPLIST_DETAIL_URL_TEMPLATE = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg?topid=___TOPID___&format=json&outCharset=utf-8&song_begin=___BEGIN___&song_num=___NUM___&platform=yqq.json&needNewCode=0&tpl=3&page=detail&type=top'
+
+async function fetchQQTopListDetail({ topId, page, limit }) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+  try {
+    const url = QQ_TOPLIST_DETAIL_URL_TEMPLATE
+      .replace('___TOPID___', String(topId))
+      .replace('___BEGIN___', String(+page || 0))
+      .replace('___NUM___', String(+limit || 100))
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        Referer: 'https://y.qq.com/',
+        'User-Agent': 'Mozilla/5.0',
+      },
+      signal: controller.signal,
+    })
+    const payload = await response.json()
+    return {
+      status: response.ok ? 200 : Number(response.status) || 502,
+      body: payload && typeof payload === 'object' ? { response: payload } : {},
+    }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // 写操作探针需要读取 JSON body。本中间件 unshift 在最前面，上游 body parser
@@ -700,34 +720,13 @@ function createQQSecurityMiddleware(options = {}) {
     params: {},
     option: {},
   }))
-  // 榜单详情是只读公共接口。依赖包未导出 getRanks 控制器（只导出了底层
-  // UCommon_default 服务），故在此复刻上游 getRanks 控制器的精确请求。
+  // 榜单详情是只读公共接口。musicToplist.ToplistInfoServer/GetDetail 虽然能返回
+  // 榜单元数据，但它的 song[] 只有数字 songId、没有 songmid，前端拿不到可播放的
+  // 歌曲标识（且 songInfoList 实测恒为空）。改用与真实 y.qq.com 榜单页一致的旧版
+  // c.y.qq.com 模板：songlist[].data 里是完整歌曲对象（songmid/singer/albummid/
+  // interval），topinfo 里是榜单标题与封面。
   // topId 由中间件校验为纯数字，page/limit 固定为 0/100（与简报约定一致）。
-  const topListDetailService = options.topListDetailService || (async ({ topId, page, limit }) => {
-    const date = new Date()
-    const week = getWeekNumber(date)
-    const data = {
-      comm: { ct: 24, cv: 4747474, format: 'json', inCharset: 'utf-8', needNewCode: 1, uin: 0 },
-      req_1: {
-        module: 'musicToplist.ToplistInfoServer',
-        method: 'GetDetail',
-        param: {
-          topId: +topId,
-          offset: +page || 0,
-          num: +limit || 100,
-          period: `${date.getFullYear()}_${week}`,
-        },
-      },
-    }
-    const props = {
-      method: 'get',
-      params: { format: 'json', data: JSON.stringify(data) },
-      option: {},
-    }
-    const responseData = (await qqServices.UCommon_default(props)).data
-    // 与依赖控制器最终响应信封保持一致：body 形如 { response: responseData }
-    return { status: 200, body: { response: responseData } }
-  })
+  const topListDetailService = options.topListDetailService || fetchQQTopListDetail
   // 分类歌单：依赖包的 playlist 模块已失效，改用旧版 c.y.qq.com 固定模板直连。
   const playlistTagsService = options.playlistTagsService || fetchQQPlaylistTags
   const playlistsByTagService = options.playlistsByTagService || fetchQQPlaylistsByTag

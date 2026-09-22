@@ -122,6 +122,27 @@ async function buildLyricPayload(song) {
     }
 }
 
+// 网页端无法在浏览器本地写 ID3/FLAC 标签：先把元数据 POST 给服务端换成一次性 token，
+// 下载时由 /download-proxy 落盘写标签后再回传文件。换 token 失败就退回无标签下载。
+async function requestDownloadTagToken(metadata) {
+    if (!metadata || typeof metadata !== 'object') return ''
+    if (!metadata.name && !metadata.album && !metadata.coverUrl && !metadata.lyrics) return ''
+
+    try {
+        const response = await fetch('/download-tags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(metadata),
+        })
+        if (!response.ok) return ''
+        const data = await response.json()
+        return typeof data?.token === 'string' ? data.token : ''
+    } catch (error) {
+        console.warn('注册下载标签失败:', error?.message || error)
+        return ''
+    }
+}
+
 export async function pushBrowserDownload(url, filename, metadata = null) {
     if (!url) return { ok: false, error: 'missing-url' }
 
@@ -136,10 +157,13 @@ export async function pushBrowserDownload(url, filename, metadata = null) {
         }
     }
 
+    const tagToken = await requestDownloadTagToken(metadata)
+
     const link = document.createElement('a')
     const downloadUrl = new URL('/download-proxy', window.location.origin)
     downloadUrl.searchParams.set('url', url)
     if (filename) downloadUrl.searchParams.set('filename', filename)
+    if (tagToken) downloadUrl.searchParams.set('tags', tagToken)
 
     link.href = downloadUrl.toString()
     link.download = filename || ''
@@ -201,17 +225,16 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
             const playbackInfo = await resolveDownloadPlaybackInfo(song, quality)
             if (!playbackInfo?.url) throw new Error('missing download url')
 
-            const metadata = store
-                ? {
-                    id: taskId,
-                    name: song?.name || '',
-                    type: inferAudioExtension(playbackInfo),
-                    artists: getSongArtists(song),
-                    album: getSongAlbum(song),
-                    coverUrl: song?.coverUrl || song?.al?.picUrl || null,
-                    lyrics: await buildLyricPayload(song),
-                }
-                : null
+            // 元数据两端都要用：桌面端交给主进程写标签，网页端换成 token 交给服务端写标签。
+            const metadata = {
+                id: taskId,
+                name: song?.name || '',
+                type: inferAudioExtension(playbackInfo),
+                artists: getSongArtists(song),
+                album: getSongAlbum(song),
+                coverUrl: song?.coverUrl || song?.al?.picUrl || null,
+                lyrics: await buildLyricPayload(song),
+            }
 
             const outcome = await pushBrowserDownload(
                 playbackInfo.url,
