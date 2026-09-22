@@ -52,6 +52,13 @@ function getContentDispositionFileName(filename) {
   return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
 }
 
+// 与 web-server.js 一致：QQ 播放地址的回源来源应为 y.qq.com，而不是流域名。
+function resolveDownloadReferer(parsedTarget) {
+  const host = String(parsedTarget?.hostname || '').toLowerCase()
+  if (host === 'qq.com' || host.endsWith('.qq.com')) return 'https://y.qq.com/'
+  return parsedTarget.origin
+}
+
 // 把远端音频完整落到本地文件，返回上游 Content-Type 供回传时复用。
 function fetchUrlToFile(targetUrl, filePath, req, res, redirectCount = 0) {
   return new Promise((resolvePromise, reject) => {
@@ -77,7 +84,7 @@ function fetchUrlToFile(targetUrl, filePath, req, res, redirectCount = 0) {
       headers: {
         'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
         Accept: 'audio/*,*/*',
-        Referer: parsedTarget.origin,
+        Referer: resolveDownloadReferer(parsedTarget),
       },
     }, (proxyRes) => {
       const redirectLocation = proxyRes.headers.location

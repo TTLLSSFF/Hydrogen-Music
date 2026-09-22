@@ -22,3 +22,21 @@ export const getQQListeningCalendar = (params) => qqRequest({ url: '/user/getLis
 export const getQQMusicGene = (params) => qqRequest({ url: '/user/getMusicGene', method: 'get', params })
 export const getQQDislikeList = (params) => qqRequest({ url: '/user/getDislikeList', method: 'get', params })
 export const qqLogout = () => qqRequest({ url: '/session/logout', method: 'post', data: {} })
+
+// 写操作：服务端会校验 songmid 与 dirId 并注入会话 cookie，未登录 QQ 时返回 401。
+// 喜欢固定写「我喜欢」歌单（服务端 dirId=201），歌单增删由调用方给出目标 dirId。
+export const setQQLike = (songmid, like) => qqRequest({
+  url: '/user/likeSong',
+  method: 'post',
+  data: { songmid, op: like ? 'add' : 'del' },
+})
+export const addQQPlaylistSong = (songmid, dirId) => qqRequest({
+  url: '/user/songList',
+  method: 'post',
+  data: { songmid, dirId, op: 'add' },
+})
+export const removeQQPlaylistSong = (songmid, dirId) => qqRequest({
+  url: '/user/songList',
+  method: 'post',
+  data: { songmid, dirId, op: 'del' },
+})

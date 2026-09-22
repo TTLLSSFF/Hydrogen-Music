@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
 import pinia from './pinia'
-import { getQQSessionStatus, getQQUserProfile, getQQUserAvatar, qqLogout } from '../api/qq'
+import { getQQSessionStatus, getQQUserProfile, getQQUserAvatar, getQQLikedSongs, qqLogout } from '../api/qq'
 import { unwrapQQResponse } from '../api/qqMusic'
 import { createQQPersistedState, createQQPersistStorage } from '../utils/qqSession.mjs'
 import { sanitizeQQPayload } from '../utils/qqSecurity.mjs'
+import { loadQQLikedSongmids } from '../utils/qqLibrary.mjs'
+import { useUserStore } from './userStore'
 
 export const useQQAccountStore = defineStore('qqAccountStore', {
   state: () => ({
@@ -38,7 +40,35 @@ export const useQQAccountStore = defineStore('qqAccountStore', {
       this.vip = null
       this.sessionToken = null
       this.loggedIn = false
+      // 喜欢状态与账号绑定：退出时一并清掉，避免下一个账号看到上一个账号的 ♡
+      useUserStore(pinia).updateQQLikelist([])
       this.persistNow()
+    },
+    // 喜欢状态按 songmid 记录（与网易云的数字 id 列表完全隔离）。
+    // 登录与切号后拉一次全量，供播放器的 ♡ 判断当前歌曲是否已喜欢。
+    async refreshLikedSongmids() {
+      const userStore = useUserStore(pinia)
+      const accountId = String(this.user?.uin || '')
+      if (!this.loggedIn || !accountId) {
+        userStore.updateQQLikelist([])
+        return []
+      }
+
+      const sessionToken = String(this.sessionToken || '')
+      const isActive = () => this.loggedIn && String(this.sessionToken || '') === sessionToken
+      try {
+        const mids = await loadQQLikedSongmids(
+          params => getQQLikedSongs({ uin: accountId, ...params }),
+          { isActive },
+        )
+        if (!isActive()) return []
+        const list = Array.isArray(mids) ? mids : []
+        userStore.updateQQLikelist(list)
+        return list
+      } catch (error) {
+        console.warn('加载 QQ 喜欢列表失败:', error?.message || error)
+        return []
+      }
     },
     async restoreSession() {
       this.loading = true
@@ -73,6 +103,8 @@ export const useQQAccountStore = defineStore('qqAccountStore', {
         const avatar = avatarData?.avatar || avatarData?.user || avatarData
         if (avatar?.avatarUrl && this.user) this.user.avatarUrl = avatar.avatarUrl
         this.vip = null
+        // 喜欢列表不阻塞登录流程，后台补齐即可
+        void this.refreshLikedSongmids()
         return this.user
       } catch (_) {
         this.clearSession()

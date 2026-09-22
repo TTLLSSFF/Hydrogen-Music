@@ -160,7 +160,7 @@ module.exports = {
   asar: true,
   // 压缩级别：maximum 产物最小，但 7za 会以 -mfb=258 -mpass=15（15 遍）压近 400MB 的
   // 产物、NSIS 也是极限压缩，且压缩期间不输出任何进度，很容易被误认为卡死。
-  // 本地构建由 scripts/build.js 置为 normal 以节省时间，发布构建保持 maximum。
+  // npm run dist 也走这一档；需要快速试跑可用 HYDROGEN_BUILD_COMPRESSION=normal 覆盖。
   compression: process.env.HYDROGEN_BUILD_COMPRESSION || 'maximum',
   // Electron locale naming differs across platforms, so keep both macOS and Windows/Linux variants.
   electronLanguages: ['en', 'en-US', 'zh_CN', 'zh_TW', 'zh-CN', 'zh-TW'],

@@ -70,18 +70,10 @@ if (!hasConfigFlag(extraArgs)) {
 }
 builderArgs.push(...extraArgs);
 
-// 本地构建（-p never）改用 normal 压缩：maximum 会对近 400MB 产物做 15 遍 7za 压缩，
-// 期间 7za / NSIS 都不输出进度，动辄十几分钟起步，很容易被当成卡死。发布构建保持 maximum。
-function isPublishBuild(args) {
-  const index = args.findIndex(arg => arg === '-p' || arg === '--publish');
-  if (index < 0) return false;
-  const target = args[index + 1];
-  return !!target && target !== 'never';
-}
-
-if (!isPublishBuild(extraArgs) && !process.env.HYDROGEN_BUILD_COMPRESSION) {
-  process.env.HYDROGEN_BUILD_COMPRESSION = 'normal';
-}
+// 压缩统一取最高档（electron-builder 的 compression 只有 store / normal / maximum，
+// 默认是 normal）。maximum 会让 7za 以 -mfb=258 -mpass=15 压近 400MB 产物，且压缩期间
+// 7za / NSIS 都不输出进度，十几分钟无输出属正常现象，不要当成卡死。
+// 需要快速出产物试跑时，用 HYDROGEN_BUILD_COMPRESSION=normal node scripts/build.js 覆盖。
 console.log(`[build] compression=${process.env.HYDROGEN_BUILD_COMPRESSION || 'maximum'}`);
 
 const buildResult = runNodeScript(getElectronBuilderCli(), builderArgs);

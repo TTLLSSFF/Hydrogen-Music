@@ -986,3 +986,29 @@ test('QQ playlist detail normalizes nested cdlist songlist responses', () => {
     { id: 123, source: 'qq', sourceId: 'song-mid-1', name: 'Song 1' },
   )
 })
+
+// 回归：QQ 上游的数字歌曲 id 字段名是全小写 songid。历史实现的取值链漏了它，
+// 导致 song.id 退化成 songmid，评论接口（只接受数字 topid）拿不到可用的资源 id。
+test('QQ song normalization exposes the numeric song id without touching song.id', () => {
+  const searchResult = normalizeQQSong({
+    songmid: '0039MnYb0qxYhV',
+    songid: 4936030,
+    songname: '搜索来源',
+  })
+  // song.id 是队列身份，必须保持 songmid，不能被改成数字
+  assert.equal(searchResult.id, '0039MnYb0qxYhV')
+  assert.equal(searchResult.sourceId, '0039MnYb0qxYhV')
+  assert.equal(searchResult.numericId, '4936030')
+
+  // 榜单来源同样带 songid
+  const toplistResult = normalizeQQSong({ songmid: 'toplist-mid', songid: 1024, title: '榜单来源' })
+  assert.equal(toplistResult.numericId, '1024')
+
+  // musicu GetDetail 只有数字 songId、没有 songmid：此时 song.id 本身就是数字
+  const detailResult = normalizeQQSong({ songId: 90210, title: 'GetDetail 来源' })
+  assert.equal(detailResult.numericId, '90210')
+
+  // 完全没有数字 id 时不产出该字段
+  const noNumeric = normalizeQQSong({ songmid: 'only-mid', songname: '无数字 id' })
+  assert.equal(noNumeric.numericId, undefined)
+})

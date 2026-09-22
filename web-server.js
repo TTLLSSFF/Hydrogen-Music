@@ -162,6 +162,14 @@ function getContentDispositionFileName(filename) {
   return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
 }
 
+// QQ 播放地址的回源来源应为 y.qq.com；直接用流域名（如 isure.stream.qqmusic.qq.com）
+// 作为 Referer 属于错误来源，可能被上游拒绝。
+function resolveDownloadReferer(parsedTarget) {
+  const host = String(parsedTarget?.hostname || '').toLowerCase()
+  if (host === 'qq.com' || host.endsWith('.qq.com')) return 'https://y.qq.com/'
+  return parsedTarget.origin
+}
+
 // 浏览器先把下载元数据 POST 到这里换成一次性 token，再用 /download-proxy?tags=<token>
 // 触发下载，服务端下载落盘后写入音频标签再回传文件。
 function handleDownloadTags(req, res) {
@@ -244,7 +252,7 @@ function fetchUrlToFile(targetUrl, filePath, req, res, redirectCount = 0) {
       headers: {
         'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
         Accept: 'audio/*,*/*',
-        Referer: parsedTarget.origin,
+        Referer: resolveDownloadReferer(parsedTarget),
       },
     }, (proxyRes) => {
       const redirectLocation = proxyRes.headers.location
@@ -356,7 +364,7 @@ function proxyDownloadUrl(targetUrl, filename, req, res, redirectCount = 0) {
     headers: {
       'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
       Accept: 'audio/*,*/*',
-      Referer: parsedTarget.origin,
+      Referer: resolveDownloadReferer(parsedTarget),
     },
   }, (proxyRes) => {
     if (res.destroyed || res.writableEnded) {

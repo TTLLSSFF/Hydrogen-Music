@@ -11,21 +11,24 @@ import {
   isProviderPlaylist,
   filterProviderPlaylists,
   findProviderPlaylist,
+  getQQCommentId,
 } from '../src/utils/providerPolicy.mjs'
 import { resolveFavoritePlaylistMeta } from '../src/utils/favoritePlaylist.js'
 
-test('QQ songs are identified by provider and block NetEase-only mutations', () => {
+test('QQ songs are identified by provider and only block missing upstream write actions', () => {
   const qqSong = { id: 123, source: 'qq' }
   assert.equal(isQQSong(qqSong), true)
   assert.equal(canUseSongAction(qqSong, 'play'), true)
-  assert.equal(canUseSongAction(qqSong, 'download'), false)
-  assert.equal(canUseSongAction(qqSong, 'like'), false)
+  // 下载复用 QQ 播放地址解析，歌单与收藏走 provider 自有写端点，均已放行
+  assert.equal(canUseSongAction(qqSong, 'download'), true)
+  assert.equal(canUseSongAction(qqSong, 'like'), true)
+  assert.equal(canUseSongAction(qqSong, 'playlistMutation'), true)
   assert.equal(canUseSongAction(qqSong, 'commentRead'), true)
+  // 评论写入类动作上游没有接口，继续阻止
   assert.equal(canUseSongAction(qqSong, 'commentWrite'), false)
   assert.equal(canUseSongAction(qqSong, 'commentLike'), false)
   assert.equal(canUseSongAction(qqSong, 'album'), true)
   assert.equal(canUseSongAction(qqSong, 'artist'), true)
-  assert.equal(canUseSongAction(qqSong, 'playlistMutation'), false)
 })
 
 test('QQ detection handles mixed queues without changing NetEase behavior', () => {
@@ -93,4 +96,25 @@ test('favorite playlist resolution ignores QQ entries in a merged list', () => {
   ])
 
   assert.deepEqual(favorite, { id: 'netease-favorite', name: '我喜欢的音乐' })
+})
+
+// QQ 旧版评论接口只接受数字 topid，songmid 会 400。取 id 必须收敛在一处，
+// 否则评论面板与评论数会再次各走一套逻辑。
+test('QQ comment id resolution only accepts numeric resource ids', () => {
+  // 归一化产出的 numericId 优先
+  assert.equal(getQQCommentId({ source: 'qq', sourceId: 'mid-1', numericId: '4936030' }), '4936030')
+  // 上游原始字段名兼容
+  assert.equal(getQQCommentId({ source: 'qq', songid: 1024 }), '1024')
+  assert.equal(getQQCommentId({ source: 'qq', song_id: '2048' }), '2048')
+  // 兜底候选
+  assert.equal(getQQCommentId({ source: 'qq', mediaId: '4096' }), '4096')
+  // songmid 是字符串 id，不能当评论资源 id
+  assert.equal(getQQCommentId({ source: 'qq', id: '0039MnYb0qxYhV', sourceId: '0039MnYb0qxYhV' }), '')
+  assert.equal(getQQCommentId({ source: 'qq', songmid: 'only-mid' }), '')
+  // 非法输入一律空串，调用方据此隐藏入口
+  assert.equal(getQQCommentId(null), '')
+  assert.equal(getQQCommentId(undefined), '')
+  assert.equal(getQQCommentId({}), '')
+  assert.equal(getQQCommentId({ numericId: 'bearbeiten' }), '')
+  assert.equal(getQQCommentId({ numericId: '1234567890123456789012' }), '')
 })

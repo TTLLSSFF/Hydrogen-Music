@@ -982,3 +982,202 @@ test('QQ safe logging context uses the real console without recursion', () => {
   assert.match(result.stdout, /QQ scoped diagnostic/)
   assert.match(result.stdout, /after QQ context/)
 })
+
+// —— QQ 写端点（喜欢 / 歌单增删）——
+// 这几个端点必须携带真实登录态：无会话一律 401，且会话 cookie 必须透传给上游。
+
+test('QQ write endpoints require a login session and never reach upstream without one', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => null,
+    allowServerSession: false,
+    songlistWriteService: async params => {
+      calls.push(params)
+      return { ok: true, code: 0, message: '' }
+    },
+  })
+
+  for (const path of ['/user/likeSong', '/user/songList']) {
+    const context = createContext(path, { method: 'POST', body: { songmid: '0039MnYb0qxYhV' } })
+    let reached = false
+    await middleware(context, async () => { reached = true })
+    assert.equal(reached, false, `${path} must be handled before the upstream router`)
+    assert.equal(context.status, 401)
+  }
+
+  assert.deepEqual(calls, [])
+})
+
+test('QQ write endpoints reject non-POST methods', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret' }),
+  })
+
+  for (const path of ['/user/likeSong', '/user/songList']) {
+    const context = createContext(path, { body: {} })
+    let reached = false
+    await middleware(context, async () => { reached = true })
+    assert.equal(reached, false, `${path} must reject GET`)
+    assert.equal(context.status, 404)
+  }
+})
+
+test('QQ like endpoint pins dirId 201 and forwards the session cookie upstream', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret', uin: '24680' }),
+    songlistWriteService: async params => {
+      calls.push(params)
+      return { ok: true, code: 0, message: '' }
+    },
+  })
+
+  const context = createContext('/user/likeSong', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV', op: 'add', dirId: 999 },
+  })
+  await middleware(context, async () => assert.fail('like must be handled by the write endpoint'))
+
+  // 喜欢固定写「我喜欢」（dirId 201），调用方传入的 dirId 必须被忽略
+  assert.deepEqual(calls, [{
+    op: 'add',
+    songmid: '0039MnYb0qxYhV',
+    dirId: 201,
+    cookie: 'uin=24680; qqmusic_key=server-secret',
+  }])
+  assert.deepEqual(context.body, { ok: true, code: 0 })
+
+  const unlikeContext = createContext('/user/likeSong', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV', op: 'del' },
+  })
+  await middleware(unlikeContext, async () => {})
+  assert.equal(calls[1].op, 'del')
+  assert.equal(calls[1].dirId, 201)
+})
+
+test('QQ playlist endpoint forwards an explicit dirId in both directions', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680' }),
+    songlistWriteService: async params => {
+      calls.push(params)
+      return { ok: true, code: 0, message: '' }
+    },
+  })
+
+  const addContext = createContext('/user/songList', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV', dirId: 7788, op: 'add' },
+  })
+  await middleware(addContext, async () => {})
+  assert.equal(addContext.status, 200)
+
+  const delContext = createContext('/user/songList', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV', dirId: 7788, op: 'del' },
+  })
+  await middleware(delContext, async () => {})
+  assert.equal(delContext.status, 200)
+
+  assert.deepEqual(calls.map(call => ({ op: call.op, dirId: call.dirId })), [
+    { op: 'add', dirId: 7788 },
+    { op: 'del', dirId: 7788 },
+  ])
+})
+
+test('QQ write endpoints validate songmid, dirId and body shape', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680' }),
+    songlistWriteService: async params => {
+      calls.push(params)
+      return { ok: true, code: 0, message: '' }
+    },
+  })
+
+  const cases = [
+    { path: '/user/likeSong', body: { songmid: 'short' } },
+    { path: '/user/likeSong', body: { songmid: 'bad-mid-with-!' } },
+    { path: '/user/likeSong', body: null },
+    { path: '/user/songList', body: { songmid: '0039MnYb0qxYhV' } },
+    { path: '/user/songList', body: { songmid: '0039MnYb0qxYhV', dirId: 0 } },
+    { path: '/user/songList', body: { songmid: '0039MnYb0qxYhV', dirId: -5 } },
+    { path: '/user/songList', body: { songmid: '0039MnYb0qxYhV', dirId: 'abc' } },
+    { path: '/user/songList', body: { songmid: '0039MnYb0qxYhV', dirId: 1, extra: 'x'.repeat(5000) } },
+  ]
+
+  for (const testCase of cases) {
+    const context = createContext(testCase.path, { method: 'POST', body: testCase.body })
+    await middleware(context, async () => {})
+    assert.equal(context.status, 400, `${testCase.path} ${JSON.stringify(testCase.body)?.slice(0, 60)}`)
+  }
+
+  assert.deepEqual(calls, [])
+})
+
+test('QQ write endpoints surface upstream rejection without leaking payloads', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret' }),
+    songlistWriteService: async () => ({ ok: false, code: 10006, message: 'need login' }),
+  })
+
+  const context = createContext('/user/likeSong', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV' },
+  })
+  await middleware(context, async () => {})
+
+  assert.equal(context.status, 409)
+  assert.deepEqual(context.body, { ok: false, code: 10006, message: 'need login' })
+  assert.equal(JSON.stringify(context.body).includes('server-secret'), false)
+})
+
+test('QQ write endpoints report an upstream exception as 502', async () => {
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680' }),
+    songlistWriteService: async () => { throw new Error('network down') },
+  })
+
+  const context = createContext('/user/songList', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV', dirId: 7788 },
+  })
+  await middleware(context, async () => {})
+
+  assert.equal(context.status, 502)
+  assert.deepEqual(context.body, { ok: false, code: 'UPSTREAM_ERROR', message: 'QQ Music write failed' })
+})
+
+test('QQ write kill-switch falls back to 404 when disabled', async () => {
+  const previous = process.env.QQ_WRITE_ENABLED
+  process.env.QQ_WRITE_ENABLED = '0'
+  try {
+    assert.equal(isQQPathAllowed('/user/likeSong'), false)
+    assert.equal(isQQPathAllowed('/user/songList'), false)
+
+    const middleware = createQQSecurityMiddleware({
+      getSession: () => ({ cookie: 'uin=24680' }),
+      songlistWriteService: async () => {
+        assert.fail('a disabled write endpoint must never reach upstream')
+      },
+    })
+    const context = createContext('/user/likeSong', {
+      method: 'POST',
+      body: { songmid: '0039MnYb0qxYhV' },
+    })
+    await middleware(context, async () => {})
+    assert.equal(context.status, 404)
+  } finally {
+    if (previous === undefined) delete process.env.QQ_WRITE_ENABLED
+    else process.env.QQ_WRITE_ENABLED = previous
+  }
+})
+
+test('QQ write endpoints are reachable through the capability allowlist', () => {
+  assert.equal(isQQPathAllowed('/user/likeSong'), true)
+  assert.equal(isQQPathAllowed('/user/songList'), true)
+  // 旧的写探针路径已随正式端点一起移除
+  assert.equal(isQQPathAllowed('/user/addSongList'), false)
+  assert.equal(isQQPathAllowed('/user/delSongList'), false)
+})

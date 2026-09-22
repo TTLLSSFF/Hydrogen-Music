@@ -3,6 +3,8 @@ import { Howl, Howler } from 'howler'
 import { songTime as formatSongTime, songTime2 as formatSongProgressTime } from './time';
 import { noticeOpen } from './dialog'
 import { checkMusic, likeMusic } from '../api/song'
+import { setQQLike } from '../api/qq.js'
+import { qqAccountStore } from '../store/qqAccountStore'
 import { getSirenLyricText, getSirenSong } from '../api/siren'
 import { updatePlaylist, getIntelligenceList, getPlaylistAll } from '../api/playlist'
 import { getLikelist, getUserPlaylist } from '../api/user'
@@ -37,7 +39,7 @@ import { isSeekInMusicVideoTiming, isValidMusicVideoTiming } from './musicVideoT
 import { preparePlayAllSongs } from './player/playAllGuard.mjs'
 import { getPlayBySource } from '../api/musicSource.js'
 import { normalizeQQPlaybackPayload } from '../api/qqMusic.js'
-import { getHeartModeBlockReason, isQQSong, isProviderPlaylist } from './providerPolicy.mjs'
+import { getHeartModeBlockReason, isQQSong, isProviderPlaylist, getQQSongMid } from './providerPolicy.mjs'
 import { getSongIdentity, normalizeMusicSource } from './musicSource.mjs'
 import {
   shouldClosePlaylistOnExternalClick,
@@ -612,6 +614,34 @@ async function resolveRestrictedFallbackPlaybackInfo(song, preferredQuality, opt
     return null
 }
 
+// QQ tracks use their provider id and must never be sent through the
+// NetEase URL/availability endpoints. 下载与播放共用同一条解析链路。
+async function resolveQQPlaybackInfo(song, quality) {
+    const providerId = song.sourceId || song.songmid || song.mid || song.id
+    if (!providerId) return null
+    const mediaId = song.mediaId
+        || song.media_mid
+        || song.mediaMid
+        || song.strMediaMid
+        || song.file?.media_mid
+        || song.file?.mediaMid
+    const resolvedQuality = getPreferredQuality(quality ?? quality.value)
+    const response = await getPlayBySource('qq', providerId, {
+        quality: resolvedQuality,
+        ...(mediaId ? { mediaId: String(mediaId) } : {}),
+    })
+    const normalized = normalizeQQPlaybackPayload(response, providerId)
+    if (!normalized?.url) return null
+    return {
+        url: normalized.url,
+        trackInfo: normalized.trackInfo || null,
+        duration: normalized.duration || getSongDurationSeconds(song),
+        source: 'qq',
+        // 下载时用来推断扩展名：QQ 的 trackInfo 常为空，这里带回实际请求到的档位
+        quality: resolvedQuality,
+    }
+}
+
 async function resolveSongPlaybackInfo(song, options = {}) {
     if (!song || typeof song !== 'object') return null
     if (song.type === 'local') {
@@ -640,26 +670,7 @@ async function resolveSongPlaybackInfo(song, options = {}) {
     // QQ tracks use their provider id and must never be sent through the
     // NetEase URL/availability endpoints.
     if (isQQSong(song)) {
-        const providerId = song.sourceId || song.songmid || song.mid || song.id
-        if (!providerId) return null
-        const mediaId = song.mediaId
-            || song.media_mid
-            || song.mediaMid
-            || song.strMediaMid
-            || song.file?.media_mid
-            || song.file?.mediaMid
-        const response = await getPlayBySource('qq', providerId, {
-            quality: getPreferredQuality(options.quality ?? quality.value),
-            ...(mediaId ? { mediaId: String(mediaId) } : {}),
-        })
-        const normalized = normalizeQQPlaybackPayload(response, providerId)
-        if (!normalized?.url) return null
-        return {
-            url: normalized.url,
-            trackInfo: normalized.trackInfo || null,
-            duration: normalized.duration || getSongDurationSeconds(song),
-            source: 'qq',
-        }
+        return resolveQQPlaybackInfo(song, options.quality ?? quality.value)
     }
 
     const playbackId = options.id ?? song.id
@@ -699,7 +710,11 @@ async function resolveSongPlaybackInfo(song, options = {}) {
 }
 
 export async function resolveDownloadPlaybackInfo(song, requestedQuality, options = {}) {
-    if (isQQSong(song)) return null
+    // QQ 下载复用播放同一条解析链路。注意不能传 checkAvailability：
+    // 那是网易云的可用性端点，QQ 歌曲送过去会拿到无意义的结果。
+    if (isQQSong(song)) {
+        return resolveQQPlaybackInfo(song, requestedQuality)
+    }
     return resolveSongPlaybackInfo(song, {
         ...options,
         quality: requestedQuality,
@@ -3625,8 +3640,34 @@ export async function likeSong(like, targetSongId = songId.value) {
             ))
             : null)
     if (isQQSong(targetSong)) {
-        noticeLikeFailure('QQ 音乐暂不支持喜欢操作')
-        return false
+        // QQ 喜欢走 provider 自有写端点，按 songmid 记录，与网易云的数字 id 列表完全隔离。
+        // 写接口尚未在真机验证过，因此这里不做乐观更新：成功后才改状态，失败只提示。
+        const qqMid = getQQSongMid(targetSong)
+        if (!qqMid) {
+            noticeLikeFailure('操作失败：没有可用的歌曲标识')
+            return false
+        }
+        if (!qqAccountStore.loggedIn) {
+            noticeLikeFailure('请先登录 QQ 音乐')
+            return false
+        }
+
+        const useCurrentPlayerSideEffects = !isExplicitTargetSong && songIdValue == songId.value
+        try {
+            await setQQLike(qqMid, like)
+        } catch (error) {
+            const errorMsg = error?.response?.data?.message || error?.message || '网络错误'
+            noticeLikeFailure(`喜欢/取消喜欢 音乐失败：${errorMsg}`)
+            return false
+        }
+
+        userStore.updateQQLikelist(applyOptimisticLikeState(qqMid, like, userStore.qqLikelist))
+        noticeOpen(like ? '已添加到我喜欢' : '已取消喜欢', 2)
+        finalizeLikeActionSideEffects({
+            clickMyPlaylist: useCurrentPlayerSideEffects,
+            closeAddPlaylist: useCurrentPlayerSideEffects,
+        })
+        return true
     }
 
     if (!userStore.user || !userStore.user.userId) {

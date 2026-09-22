@@ -195,3 +195,53 @@ export function mergeQQPlaylistLists(created = [], subscribed = [], liked = null
   }
   return result
 }
+
+// 从任意层级的「我喜欢」响应里收集 songmid。上游在不同分页/信封下把歌曲放在
+// data.songlist / data.tracks / data.songs 等位置，用深度受限的遍历比逐信封枚举更耐用。
+export function collectQQSongMids(payload, found = new Set(), depth = 0, seen = new Set()) {
+  if (depth > 10 || payload == null || typeof payload !== 'object' || seen.has(payload)) return found
+  if (Array.isArray(payload)) {
+    for (const item of payload) collectQQSongMids(item, found, depth + 1, seen)
+    return found
+  }
+
+  seen.add(payload)
+  const direct = payload.songmid ?? payload.songMid
+  const hasSongShape = direct !== undefined
+    || payload.songname !== undefined
+    || payload.songName !== undefined
+    || payload.songid !== undefined
+  const candidate = direct !== undefined ? direct : (hasSongShape ? payload.mid : undefined)
+  if (hasValue(candidate)) found.add(String(candidate))
+
+  for (const key of Object.keys(payload)) {
+    const value = payload[key]
+    if (value && typeof value === 'object') collectQQSongMids(value, found, depth + 1, seen)
+  }
+  seen.delete(payload)
+  return found
+}
+
+// 分页拉全量「我喜欢」的 songmid。喜欢状态按 songmid 记录，与网易云的数字 id 列表
+// 完全隔离，避免 checkIsLike 这类不带来源判断的 includes 互相串号。
+export async function loadQQLikedSongmids(fetchPage, options = {}) {
+  if (typeof fetchPage !== 'function') throw new TypeError('QQ liked songs page loader is required')
+
+  const pageSize = Number(options.limit) > 0 ? Math.floor(Number(options.limit)) : 100
+  const maxPages = Number(options.maxPages) > 0 ? Math.floor(Number(options.maxPages)) : 20
+  const isActive = typeof options.isActive === 'function' ? options.isActive : () => true
+  const mids = new Set()
+
+  for (let page = 0; page < maxPages; page += 1) {
+    if (!isActive()) return null
+    const response = await fetchPage({ limit: pageSize, offset: page * pageSize })
+    if (!isActive()) return null
+
+    const before = mids.size
+    for (const mid of collectQQSongMids(unwrapQQResponse(response))) mids.add(mid)
+    // 本页没有带来任何新增，视为已翻到末尾
+    if (mids.size === before) break
+  }
+
+  return [...mids]
+}

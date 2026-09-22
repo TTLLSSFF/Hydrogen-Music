@@ -10,6 +10,8 @@ const DOWNLOAD_PUSH_DELAY_MS = 650
 const DOWNLOAD_ERROR_TEXT = {
     'missing-url': '下载地址缺失',
     'missing download url': '无法解析下载地址',
+    // QQ 拿不到 purl：上游没有会员权限或该曲目无版权，与普通 HTTP 失败区分开
+    qqDownloadUnavailable: '该歌曲暂无可用下载地址（付费或版权限制）',
     noSavePath: '未设置下载目录',
     invalidDownloadUrl: '下载地址无效',
     downloadWindowUnavailable: '下载窗口不可用',
@@ -44,6 +46,10 @@ function inferAudioExtension(playbackInfo = {}) {
         const matched = String(playbackInfo.url || '').match(/\.([a-z0-9]+)(?:\?|#|$)/i)
         if (matched?.[1]) return matched[1].toLowerCase()
     }
+
+    // 地址没有后缀时退回请求档位（QQ 的 trackInfo 常为空，只靠 URL 猜不可靠）
+    const quality = String(playbackInfo.quality || '').toLowerCase()
+    if (quality === 'flac' || quality === 'ape') return 'flac'
 
     return playbackInfo.isSiren ? 'mp3' : 'mp3'
 }
@@ -203,12 +209,6 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
             onProgress?.({ ...result, index, song, status: 'skipped' })
             continue
         }
-        if (isQQSong(song)) {
-            result.skipped += 1
-            result.failures.push({ song, reason: 'qq' })
-            onProgress?.({ ...result, index, song, status: 'skipped' })
-            continue
-        }
 
         const taskId = createDownloadTaskId(song, index)
         if (store) {
@@ -223,7 +223,10 @@ export async function pushSongsToBrowserDownloads(songs, requestedQuality, optio
 
         try {
             const playbackInfo = await resolveDownloadPlaybackInfo(song, quality)
-            if (!playbackInfo?.url) throw new Error('missing download url')
+            if (!playbackInfo?.url) {
+                // QQ 没有 purl 通常意味着付费/无版权，给一条可操作的提示而不是通用的解析失败
+                throw new Error(isQQSong(song) ? 'qqDownloadUnavailable' : 'missing download url')
+            }
 
             // 元数据两端都要用：桌面端交给主进程写标签，网页端换成 token 交给服务端写标签。
             const metadata = {

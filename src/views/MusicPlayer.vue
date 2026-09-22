@@ -10,7 +10,7 @@ import { readCommentCountCache, writeCommentCountCache } from '../utils/commentC
 import { buildCoverBackdropCandidates } from '../utils/coverBackdrop';
 import { getIndexedSongOrFirst } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
-import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
+import { canUseSongAction, getQQCommentId, isQQSong } from '../utils/providerPolicy.mjs'
 import { getQQComments, normalizeQQCommentList } from '../api/qqMusic';
 const playerStore = usePlayerStore();
 const Comments = defineAsyncComponent(() => import('../components/Comments.vue'));
@@ -74,12 +74,8 @@ const isCurrentSirenSong = computed(() => currentTrack.value?.source === 'siren'
 const commentCount = ref(0);
 const commentCountRequestSerial = ref(0);
 
-// QQ 歌曲以 songmid 作为评论资源 id，缺失时退回数字 id/mediaId。
-const getQQCommentId = track => {
-    if (!track) return '';
-    return track.songmid || track.songMid || track.mid || track.id || track.songId || track.musicId || '';
-};
-
+// QQ 评论资源 id 与评论面板共用同一份实现：旧版评论接口只接受数字 topid，
+// 早期这里优先取 songmid，导致请求必然被上游 400 拒绝、评论数恒为 0。
 const commentTarget = computed(() => {
     const track = currentTrack.value;
     if (!track || track.type === 'local' || track.source === 'siren' || !canUseSongAction(track, 'commentRead')) return null;

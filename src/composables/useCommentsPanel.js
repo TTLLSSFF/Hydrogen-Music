@@ -8,7 +8,7 @@ import { noticeOpen } from '../utils/dialog'
 import { getCommentScrollPosition, setCommentScrollPosition, getLastCommentTargetKey, setLastCommentTargetKey } from '../utils/commentScrollMemory'
 import { getIndexedSongOrFirst } from '../utils/songList'
 import { formatCommentTime } from '../utils/commentFormat'
-import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
+import { canUseSongAction, getQQCommentId, isQQSong } from '../utils/providerPolicy.mjs'
 import { getQQComments, normalizeQQCommentList } from '../api/qqMusic'
 
 const FLOOR_REPLY_LIMIT = 5
@@ -68,18 +68,10 @@ export function useCommentsPanel({ emit } = {}) {
         const cur = currentTrack.value
         return cur && (cur.programId || cur.programID || cur.programid)
     })
-    // 旧版评论接口的 topid 必须是数字歌曲 id，songmid 不被接受。
-    // 只接受数字形态的候选，取不到时返回 null（面板走空态）而不是发一个必然失败的请求。
-    const qqCommentId = computed(() => {
-        const cur = currentTrack.value
-        if (!cur) return null
-        const candidates = [cur.id, cur.songId, cur.song_id, cur.musicId, cur.mediaId]
-        for (const candidate of candidates) {
-            const value = String(candidate ?? '').trim()
-            if (/^\d{1,20}$/.test(value)) return value
-        }
-        return null
-    })
+    // 旧版评论接口的 topid 必须是数字歌曲 id，songmid 不被接受。取值逻辑与
+    // MusicPlayer 共用 providerPolicy 里的同一份实现，避免两处再次分叉。
+    // 取不到时返回 null（面板走空态）而不是发一个必然失败的请求。
+    const qqCommentId = computed(() => getQQCommentId(currentTrack.value) || null)
     const musicCommentId = computed(() => {
         if (isDj.value) return null
         const cur = currentTrack.value

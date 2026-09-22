@@ -1,7 +1,8 @@
 // QQ 音乐写操作探针（手动运行，不属于 npm test）
 //
-// 用途：时间盒验证旧版未签名的 `musicu.fcg` / `music.musicasset.PlaylistDetailWrite`
-// 在真实 QQ 登录态下是否仍然可用。通过才考虑接线 UI，失败即保留现有「暂不支持」降级。
+// 用途：验证旧版未签名的 `musicu.fcg` / `music.musicasset.PlaylistDetailWrite`
+// 在真实 QQ 登录态下是否可用。UI 已接线，因此这个脚本现在用于**验收与回归**：
+// 若写操作实际不生效，把服务端 `QQ_WRITE_ENABLED=0` 关掉即可让写路径回落成 404。
 //
 // 用法：
 //   node scripts/qq-write-probe.mjs like <songmid>
@@ -16,11 +17,11 @@
 //
 // 服务端地址：
 //   默认 `http://127.0.0.1:3200`（`web-server.js` 内部拉起的 QQ API），可用 `QQ_API_BASE` 覆盖。
-//   写探针默认关闭，必须先以 `QQ_WRITE_SPIKE=1` 启动：`QQ_WRITE_SPIKE=1 npm run serve`。
+//   写端点默认开启（需要真实登录态）；`QQ_WRITE_ENABLED=0 npm run serve` 可整体关闭。
 //
 // 验证方式：写操作前后各拉一次 `/user/getUserLikedSongs`，对比 songmid 集合差异。
 //
-// 注意：探针 payload 形状（v_songInfo）与是否需要签名均**未经验证**，失败属预期结果之一。
+// 注意：写请求 payload 形状（v_songInfo）与是否需要签名均**未经验证**，失败属预期结果之一。
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3200'
 // QQ 音乐「我喜欢」是 dirId 固定为 201 的特殊歌单。
@@ -60,7 +61,7 @@ function parseProbePlan(argv) {
     const [dirId, songmid] = rest
     if (!dirId || !songmid) return null
     return {
-      path: command === 'add' ? '/user/addSonglist' : '/user/delSonglist',
+      path: '/user/songList',
       songmid,
       dirId: Number(dirId),
       op: command === 'add' ? 'add' : 'del',
@@ -134,12 +135,12 @@ function printLikedSummary(label, set) {
 
 function printFailureGuidance(plan, extra = '') {
   console.error('')
-  console.error('探针失败。请依次确认：')
-  console.error('  1. 服务端已开启写探针：`QQ_WRITE_SPIKE=1 npm run serve`（默认关闭时这三个路径返回 404）。')
+  console.error('写操作未成功。请依次确认：')
+  console.error('  1. 服务端写端点未被关闭：`QQ_WRITE_ENABLED=0` 会让 /user/likeSong 与 /user/songList 返回 404。')
   console.error(`  2. 已设置会话令牌：PowerShell 用 \`$env:QQ_SESSION_TOKEN='<sessionToken>'\`，值取自 qqAccountStore.sessionToken。`)
   console.error(`  3. 服务端地址正确（当前 ${baseUrl}），可用 \`QQ_API_BASE\` 覆盖。`)
-  console.error('  4. 该探针的 payload 形状（v_songInfo）与是否需要签名均未经验证，失败是预期结果之一；')
-  console.error('     若确认不可用，请保留「暂不支持」降级，不要接线 UI，并整体回退该 spike 提交。')
+  console.error('  4. 该写请求的 payload 形状（v_songInfo）与是否需要签名均未经验证；')
+  console.error('     若确认不可用，请以 QQ_WRITE_ENABLED=0 启动服务端，让 UI 退回明确提示，不要保留静默失败。')
   if (extra) console.error(`  补充信息：${extra}`)
   console.error('')
 }

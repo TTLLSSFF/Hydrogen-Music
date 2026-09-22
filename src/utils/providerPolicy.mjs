@@ -1,14 +1,12 @@
 import { normalizeMusicSource } from './musicSource.mjs'
 
 // QQ 评论读取（commentRead）已放行：服务端 `/getComments` 为公共只读端点。
-// 写入类动作仍全部阻止——上游没有写接口，点赞/回复/发评论一律降级提示。
+// 下载与歌单相关能力走 provider 自有链路（下载复用 QQ 播放地址解析，
+// 歌单/收藏走 /user/likesong 与 /user/songlist 写端点），同样放行。
+// 只剩评论的写入类动作阻止——上游没有写接口，点赞/回复/发评论一律降级提示。
 const QQ_BLOCKED_SONG_ACTIONS = new Set([
-  'like',
   'commentWrite',
   'commentLike',
-  'download',
-  'collect',
-  'playlistMutation',
 ])
 
 export const QQ_HEART_MODE_MESSAGE = '播放列表里存在QQ音乐来源的曲目，心动模式无效'
@@ -17,8 +15,32 @@ export function isQQSong(song) {
   return normalizeMusicSource(song?.source) === 'qq'
 }
 
+// QQ 旧版评论接口的 topid 只接受纯数字资源 id，songmid 会被上游 400 拒绝。
+// 数字 id 在归一化时落在独立的 numericId 字段上（song.id 是队列身份，不能改）。
+const QQ_COMMENT_ID_PATTERN = /^\d{1,20}$/
+
+// 取 QQ 评论资源 id：由 useCommentsPanel 与 MusicPlayer 共用，避免两处逻辑再次分叉。
+// 全部候选都不符合数字形态时返回空串，调用方据此隐藏入口而不是发一个必然失败的请求。
+export function getQQCommentId(song) {
+  if (!song || typeof song !== 'object') return ''
+  const candidates = [song.numericId, song.songid, song.song_id, song.musicId, song.mediaId]
+  for (const candidate of candidates) {
+    const value = String(candidate ?? '').trim()
+    if (QQ_COMMENT_ID_PATTERN.test(value)) return value
+  }
+  return ''
+}
+
 export function containsQQSongs(songs) {
   return Array.isArray(songs) && songs.some(isQQSong)
+}
+
+// QQ 写接口（喜欢、歌单增删）一律以 songmid 定位歌曲，与展示用的数字 id 无关。
+// player 的喜欢分支与 playlistMutation 共用这一份，避免两处取值规则再次分叉。
+export function getQQSongMid(song) {
+  if (!song || typeof song !== 'object') return ''
+  const mid = song.sourceId || song.songmid || song.songMid || song.mid || ''
+  return String(mid || '').trim()
 }
 
 export function canUseSongAction(song, action) {

@@ -242,7 +242,9 @@ const openMenu = (e, item) => {
     otherStore.selectedPlaylist = libraryInfo.value
 
     if (isQQSong(item)) {
-        otherStore.selectedPlaylist = null
+        // 「从歌单中删除」需要当前歌单上下文：只有歌曲本身就在 QQ 歌单里时才带上，
+        // 其他场景（搜索、榜单等）保持为空，避免写操作打到错误目标。
+        otherStore.selectedPlaylist = isQQSong(libraryInfo.value) ? libraryInfo.value : null
         otherStore.menuTree = otherStore.treeQQ
     } else if (props.contextMenuMode === 'siren' || item?.source === 'siren') {
         otherStore.selectedPlaylist = null

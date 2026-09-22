@@ -223,6 +223,16 @@ export function normalizeQQPlaylist(item = {}, options = {}) {
     // musicu 歌单搜索用 song_count 承载曲目数
     value.song_count,
   ) ?? firstQQValue(value.songnum, value.songCount, value.trackCount, value.size, value.num0, value.subtitle, value.song_count))
+  // 写歌单用的是 dirId（数字），与展示用的 disstid 不是同一个标识。
+  // 上游字段大小写不稳定，且不能退化成 disstid，否则「加入歌单」会打到错误目标。
+  const dirId = String(firstQQValue(
+    value.dirid,
+    value.dirId,
+    value.dirID,
+    value.dir_id,
+    /^\d+$/.test(String(value.id ?? '').trim()) ? value.id : '',
+    /^\d+$/.test(String(id ?? '').trim()) ? id : '',
+  ) ?? '').replace(/[^0-9]/g, '')
   return {
     ...value,
     id: normalizeQQId(id),
@@ -233,6 +243,7 @@ export function normalizeQQPlaylist(item = {}, options = {}) {
     // that use the common album/playlist image contract.
     picUrl: String(firstQQValue(value.picUrl, coverImgUrl, '') || ''),
     trackCount,
+    ...(dirId ? { dirId } : {}),
   }
 }
 
@@ -1323,6 +1334,16 @@ export function normalizeQQSong(song = {}) {
   const songName = firstQQValue(value.songname, value.songName, value.song_name, value.name, value.title) || ''
   const songId = firstQQValue(value.id, value.songId, value.song_id, mid)
   const mediaId = readQQMediaId(value)
+  // QQ 上游的数字歌曲 id 字段名是全小写 songid（搜索结果/榜单都带），历史实现遗漏了它，
+  // 导致 song.id 退化为 songmid 而评论接口（只接受数字 topid）拿不到可用 id。
+  // 这里显式归一，不再依赖展开残留；song.id 本身保持原样以免影响队列身份。
+  const numericSongId = String(firstQQValue(
+    value.songid,
+    value.song_id,
+    value.songId,
+    value.musicId,
+    /^\d+$/.test(String(value.id ?? '').trim()) ? value.id : '',
+  ) ?? '').replace(/[^0-9]/g, '')
   const vipOnly = readQQVipOnly(value)
   return {
     ...value,
@@ -1339,6 +1360,7 @@ export function normalizeQQSong(song = {}) {
     albumMid,
     coverUrl: String(coverUrl),
     vipOnly,
+    ...(numericSongId ? { numericId: numericSongId } : {}),
     ...(mediaId ? { mediaId: String(mediaId) } : {}),
     ...(duration > 0 ? { dt: duration, duration } : {}),
   }

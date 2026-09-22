@@ -23,6 +23,7 @@ import { useLibraryStore } from '../store/libraryStore';
 import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
 import { canAccessQQMyMusic, canUseSongAction, findProviderPlaylist, isQQSong } from '../utils/providerPolicy.mjs';
+import { getWritablePlaylistId } from '../utils/playlistMutation.mjs';
 import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs';
 import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
 
@@ -590,8 +591,8 @@ const enterSelectionMode = () => {
 
 //下载所选歌曲
 const downloadSelected = async () => {
-    if (isQQPlaylist.value || (selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'download'))) {
-        noticeOpen('QQ 音乐暂不支持下载', 2);
+    if ((selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'download'))) {
+        noticeOpen('所选歌曲暂不支持下载', 2);
         return;
     }
     if (selectedDownloadSongs.value.length === 0) {
@@ -608,8 +609,8 @@ const downloadSelected = async () => {
 
 //添加到歌单
 const addSelectedToPlaylist = async () => {
-    if (isQQSong(libraryInfo.value) || (selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
-        noticeOpen('QQ 音乐暂不支持歌单修改', 2);
+    if ((selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
+        noticeOpen('所选歌曲暂不支持歌单修改', 2);
         return;
     }
     if (selectedDownloadSongs.value.length === 0) {
@@ -618,9 +619,7 @@ const addSelectedToPlaylist = async () => {
     }
 
     try {
-        const { updatePlaylist } = await import('../api/playlist');
-
-        // 显示歌单选择弹窗，但保存选中的歌曲列表
+        // 显示歌单选择弹窗，但保存选中的歌曲列表（弹窗内部按来源分流写入）
         otherStore.selectedItems = [...selectedDownloadSongs.value];
         otherStore.addPlaylistShow = true;
 
@@ -665,16 +664,37 @@ const addSelectedToPlayerList = async () => {
 
 //从歌单中删除
 const deleteSelectedFromPlaylist = async () => {
-    if (isQQSong(libraryInfo.value) || (selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
-        noticeOpen('QQ 音乐暂不支持歌单修改', 2);
+    if ((selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
+        noticeOpen('所选歌曲暂不支持歌单修改', 2);
         return;
     }
     if (selectedDownloadSongs.value.length === 0) {
         noticeOpen('请先选择歌曲', 2);
         return;
     }
-    if (!libraryInfo.value?.id) {
+    if (!getWritablePlaylistId(libraryInfo.value)) {
         noticeOpen('当前不在歌单页面', 2);
+        return;
+    }
+
+    // QQ 歌单走 provider 自有写端点；网易云特有的缓存与详情刷新对它不适用
+    if (isQQSong(libraryInfo.value)) {
+        const { removeSongsFromPlaylist } = await import('../utils/playlistMutation.mjs');
+        const qqResult = await removeSongsFromPlaylist({
+            playlist: libraryInfo.value,
+            songs: selectedDownloadSongs.value,
+        });
+        if (!qqResult.ok) {
+            noticeOpen('删除失败', 2);
+            return;
+        }
+        const removedIds = new Set(selectedDownloadSongs.value.map(song => String(song.id)));
+        const remaining = (librarySongs.value || []).filter(song => !removedIds.has(String(song.id)));
+        librarySongs.value = remaining;
+        downloadSelectionMode.value = false;
+        selectedDownloadSongs.value = [];
+        selectionMenuExpanded.value = false;
+        noticeOpen(`已删除 ${qqResult.total} 首歌曲`, 2);
         return;
     }
 
@@ -879,10 +899,10 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                         <span>选择</span>
                                     </div>
                                     <div class="selection-menu" :class="{ 'selection-menu-expanded': selectionMenuExpanded && downloadSelectionMode }">
-                                        <div class="selection-menu-item" v-if="!isQQPlaylist" @click="downloadSelected">下载</div>
-                                        <div class="selection-menu-item" v-if="!isQQPlaylist" @click="addSelectedToPlaylist">添加到歌单</div>
+                                        <div class="selection-menu-item" @click="downloadSelected">下载</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist || !!getWritablePlaylistId(libraryInfo)" @click="addSelectedToPlaylist">添加到歌单</div>
                                         <div class="selection-menu-item" @click="addSelectedToPlayerList">添加到播放列表</div>
-                                        <div class="selection-menu-item" v-if="!isQQPlaylist" @click="deleteSelectedFromPlaylist">从歌单中删除</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist || !!getWritablePlaylistId(libraryInfo)" @click="deleteSelectedFromPlaylist">从歌单中删除</div>
                                         <div class="operation-download-select">
                                             <button @click="selectAllDownloadSongs()">全选</button>
                                             <button @click="cancelDownloadSelection()">取消</button>

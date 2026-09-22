@@ -43,10 +43,10 @@
 /user/getUserCollectedSongLists
 ```
 
-写操作探针（`/user/likeSong`、`/user/addSongList`、`/user/delSongList`）默认 **404**，仅在服务端以 `QQ_WRITE_SPIKE=1` 启动时放行且只接受 `POST`。它用于验证旧版未签名 `musicu.fcg` 的 `music.musicasset.PlaylistDetailWrite`（`AddSonglist` / `DelSonglist`，`dirId=201` 表示「我喜欢」）是否仍然可用，响应只回 `{ ok, code, message }`，不暴露任何上游原始数据或凭证。验证通过前不会接入任何 UI。
+写端点（`/user/likeSong`、`/user/songList`）只接受 `POST`，且**必须携带真实登录态**——无会话时会在会话闸门处直接返回 `401`，不会触达上游。它们走旧版未签名 `musicu.fcg` 的 `music.musicasset.PlaylistDetailWrite`（`AddSonglist` / `DelSonglist`，`dirId=201` 表示「我喜欢」，喜欢端点固定写该歌单），会话 cookie 通过 `option.headers.Cookie` 透传给上游。响应只回 `{ ok, code }`，不暴露任何上游原始数据或凭证。服务端以 `QQ_WRITE_ENABLED=0` 启动可整体关闭写路径（回落成 `404`）。真机验收与回归用 `scripts/qq-write-probe.mjs`。
 
-QQ 下载、收藏或歌单写操作、好友/粉丝、勋章、听歌日历、音乐基因和不喜欢列表均明确禁用。`/getMusicPlay` 仅按当前登录账号自身的权益取流，账号有权播放的会员曲目可正常播放，但不提供任何 VIP 特权接口。前端适配器会返回"不支持"错误，服务端白名单也会以 `404` 拦截，避免旧调用绕过产品边界。QQ 歌曲不会触发网易云喜欢、歌单、评论或最近播放副作用。
+QQ 写操作（收藏、加入/移出歌单）与下载已接入 UI：下载复用 QQ 播放地址解析链路，写操作走上面的 provider 自有端点。好友/粉丝、勋章、听歌日历、音乐基因和不喜欢列表仍明确禁用。`/getMusicPlay` 仅按当前登录账号自身的权益取流，账号有权播放的会员曲目可正常播放，但不提供任何 VIP 特权接口。前端适配器会返回"不支持"错误，服务端白名单也会以 `404` 拦截，避免旧调用绕过产品边界。QQ 歌曲不会触发网易云喜欢、歌单、评论或最近播放副作用。
 
 QQ 扫码登录状态码：`800` 过期、`801` 等待扫码、`802` 已扫码待确认、`803` 登录成功。Cookie 仅由服务端 QQ API 进程持有，不写入 Pinia、localStorage、URL、响应体或日志。
 
-上游包未提供可靠写操作的功能（喜欢歌曲写入、收藏/取消收藏、关注/取消关注、发表评论等）保持禁用，不伪造成功结果。Cookie 只在服务端会话中流转，不写入前端持久化状态、URL、响应体或日志。
+上游包未提供可靠写操作的功能（收藏/取消收藏、关注/取消关注、发表评论等）保持禁用，不伪造成功结果。Cookie 只在服务端会话中流转，不写入前端持久化状态、URL、响应体或日志。

@@ -109,21 +109,24 @@ const QQ_PRIVATE_PATHS = new Set([
   '/session/logout',
 ])
 
-// —— QQ 写操作探针（默认关闭，独立于正式接口）——
-// 上游依赖包只有只读服务，写操作（喜欢 / 加入歌单）需要逆向旧版未签名的
-// musicu.fcg。在真实登录态验证通过之前，这三条路径一律 404，不对外暴露。
-const QQ_WRITE_SPIKE_ENV = 'QQ_WRITE_SPIKE'
-const QQ_WRITE_SPIKE_PATHS = new Set([
+// —— QQ 写操作（喜欢 / 歌单增删）——
+// 上游依赖包只有只读服务，写操作走旧版未签名的 musicu.fcg 的
+// music.musicasset.PlaylistDetailWrite 模块。这类接口**必须携带真实登录态**
+// （通过 option.headers.Cookie 透传），因此端点一律挂在会话闸门之后，
+// 无 cookie 会在闸门处直接 401，不会走到上游。
+// QQ_WRITE_ENABLED=0 可一键关闭（默认开启），关闭后写路径回落成 404。
+const QQ_WRITE_ENABLED_ENV = 'QQ_WRITE_ENABLED'
+const QQ_WRITE_PATHS = new Set([
   '/user/likesong',
-  '/user/addsonglist',
-  '/user/delsonglist',
+  '/user/songlist',
 ])
 // QQ 音乐「我喜欢」是 dirId 固定为 201 的特殊歌单。
 const QQ_MY_LIKE_DIR_ID = 201
-const QQ_WRITE_SPIKE_BODY_MAX_BYTES = 4096
+const QQ_WRITE_BODY_MAX_BYTES = 4096
+const QQ_WRITE_SONGMID_PATTERN = /^[A-Za-z0-9]{8,20}$/
 
-function isQQWriteSpikeEnabled() {
-  return String(process.env[QQ_WRITE_SPIKE_ENV] || '') === '1'
+function isQQWriteEnabled() {
+  return String(process.env[QQ_WRITE_ENABLED_ENV] || '') !== '0'
 }
 
 function normalizeQQPath(pathname) {
@@ -133,7 +136,7 @@ function normalizeQQPath(pathname) {
 function isQQPathAllowed(pathname) {
   const normalizedPath = normalizeQQPath(pathname)
   if (QQ_PRIVATE_PATHS.has(normalizedPath) || QQ_ALLOWED_EXACT_PATHS.has(normalizedPath)) return true
-  if (isQQWriteSpikeEnabled() && QQ_WRITE_SPIKE_PATHS.has(normalizedPath)) return true
+  if (isQQWriteEnabled() && QQ_WRITE_PATHS.has(normalizedPath)) return true
   return QQ_ALLOWED_PATH_PATTERNS.some(pattern => pattern.test(normalizedPath))
 }
 const SENSITIVE_CANONICAL_KEYS = new Set([
@@ -636,38 +639,39 @@ async function fetchQQTopListDetail({ topId, page, limit }) {
   }
 }
 
-// 写操作探针需要读取 JSON body。本中间件 unshift 在最前面，上游 body parser
-// 不会执行，因此这里直接消费请求流是安全的；带大小上限防止滥用。
-function readQQProbeJsonBody(req) {
-  return new Promise(resolve => {
-    const chunks = []
-    let size = 0
-    let settled = false
-    const finish = value => {
-      if (settled) return
-      settled = true
-      resolve(value)
+// 写操作需要读取 JSON body。本中间件 unshift 在最前面，上游 body parser 不会执行，
+// 因此这里直接消费请求流是安全的。上限比只读端点更严（4KB），因为写请求携带的
+// 只有 songmid / dirId / op 三个字段。超限时继续消费完请求体，否则客户端只会
+// 看到连接被重置而拿不到真实的 400。
+async function readQQWriteJsonBody(ctx) {
+  if (ctx.request?.body !== undefined) {
+    const body = ctx.request.body
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+    return JSON.stringify(body).length > QQ_WRITE_BODY_MAX_BYTES ? null : body
+  }
+  if (!ctx.req) return null
+
+  const buffers = []
+  let size = 0
+  let oversize = false
+  for await (const chunk of ctx.req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buffer.byteLength
+    if (size > QQ_WRITE_BODY_MAX_BYTES) {
+      oversize = true
+      buffers.length = 0
+      continue
     }
-    req.on('data', chunk => {
-      size += chunk.length
-      if (size > QQ_WRITE_SPIKE_BODY_MAX_BYTES) {
-        finish(null)
-        req.destroy?.()
-        return
-      }
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      if (chunks.length === 0) return finish({})
-      try {
-        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-        finish(parsed && typeof parsed === 'object' ? parsed : null)
-      } catch (_) {
-        finish(null)
-      }
-    })
-    req.on('error', () => finish(null))
-  })
+    buffers.push(buffer)
+  }
+  if (oversize) return null
+  if (!buffers.length) return {}
+  try {
+    const parsed = JSON.parse(Buffer.concat(buffers).toString('utf8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch (_) {
+    return null
+  }
 }
 
 // 分类歌单：依赖包的 playlist.web_srf 模块（get_tags / get_playlist_by_tag）
@@ -785,6 +789,38 @@ function createQQSecurityMiddleware(options = {}) {
   const singerAlbumsService = options.singerAlbumsService || fetchQQSingerAlbumsPage
   // 歌单详情：依赖包的 playlist 模块已失效，改用 CgiGetDiss（无需登录）。
   const songListDetailService = options.songListDetailService || fetchQQSongListDetail
+
+  // 喜欢 / 歌单增删：旧版 musicu.fcg 的 music.musicasset.PlaylistDetailWrite。
+  // 关键点是必须把会话 cookie 交给上游——UCommon_default 会把 option 展开成
+  // http options，option.headers.Cookie 能透传到底层请求。做成可注入的服务，
+  // 一旦真机验证发现该模块不可用，可以换成 c.y.qq.com 直连而不动端点契约。
+  async function writeQQSonglist({ op, songmid, dirId, cookie }) {
+    const data = {
+      comm: { ct: 24, cv: 0, format: 'json' },
+      req_1: {
+        module: 'music.musicasset.PlaylistDetailWrite',
+        method: op === 'del' ? 'DelSonglist' : 'AddSonglist',
+        param: {
+          dirId,
+          v_songInfo: [{ songMid: songmid, songType: 0 }],
+        },
+      },
+    }
+    const props = {
+      method: 'get',
+      params: { format: 'json', data: JSON.stringify(data) },
+      option: { headers: { Cookie: cookie } },
+    }
+    const raw = (await qqServices.UCommon_default(props)).data
+    const result = raw?.req_1 || {}
+    const code = Number(result?.code ?? -1)
+    return {
+      ok: code === 0,
+      code,
+      message: String(result?.subcode ?? result?.msg ?? '').slice(0, 200),
+    }
+  }
+  const songlistWriteService = options.songlistWriteService || writeQQSonglist
 
   // 分类标签（无参）：返回 { data: { categories: [{ categoryGroupName, items: [...] }] } }。
   async function fetchQQPlaylistTags() {
@@ -1465,10 +1501,10 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
 
     // The retained QQ surface is read-only. Reject non-GET methods even when
     // an upstream package later adds a handler under an existing path.
-    // 唯一的例外是显式开启的写操作探针，且只接受 POST。
+    // 唯一的例外是显式声明的写端点（喜欢 / 歌单增删），且只接受 POST。
     const requestMethod = String(ctx.method || 'GET').toUpperCase()
-    const isWriteSpikeRequest = isQQWriteSpikeEnabled() && QQ_WRITE_SPIKE_PATHS.has(normalizedPath)
-    if (isWriteSpikeRequest ? requestMethod !== 'POST' : requestMethod !== 'GET') {
+    const isWriteRequest = isQQWriteEnabled() && QQ_WRITE_PATHS.has(normalizedPath)
+    if (isWriteRequest ? requestMethod !== 'POST' : requestMethod !== 'GET') {
       writeJson(ctx, 404, { error: 'Not found' })
       return
     }
@@ -1541,54 +1577,36 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
       return
     }
 
-    // 写操作探针（默认关闭）：验证旧版 musicu.fcg 的 PlaylistDetailWrite 是否
-    // 仍然可用。响应只回状态码，不暴露任何上游原始数据或凭证。
-    if (isWriteSpikeRequest) {
-      const probeBody = await readQQProbeJsonBody(ctx.req)
-      if (!probeBody) {
+    // 写操作（喜欢 / 歌单增删）：位于会话闸门之后，无 cookie 已在上面被 401 拦下，
+    // 所以这里能确定 sessionCookie 存在。响应只回状态码，不暴露上游原始数据或凭证。
+    if (isWriteRequest) {
+      const writeBody = await readQQWriteJsonBody(ctx)
+      if (!writeBody) {
         writeJson(ctx, 400, { ok: false, code: 'INVALID_BODY', message: 'a JSON body is required' })
         return
       }
-      const songmid = getSingleValue(probeBody.songmid).trim()
-      if (!/^[A-Za-z0-9]{8,20}$/.test(songmid)) {
+      const songmid = getSingleValue(writeBody.songmid).trim()
+      if (!QQ_WRITE_SONGMID_PATTERN.test(songmid)) {
         writeJson(ctx, 400, { ok: false, code: 'INVALID_SONGMID', message: 'songmid is invalid' })
         return
       }
+      // 喜欢固定写「我喜欢」歌单（dirId 201），歌单增删由调用方给出目标 dirId
       const isLikePath = normalizedPath === '/user/likesong'
-      const dirId = isLikePath ? QQ_MY_LIKE_DIR_ID : Math.trunc(Number(probeBody.dirId))
+      const dirId = isLikePath ? QQ_MY_LIKE_DIR_ID : Math.trunc(Number(writeBody.dirId))
       if (!Number.isFinite(dirId) || dirId <= 0) {
         writeJson(ctx, 400, { ok: false, code: 'INVALID_DIRID', message: 'dirId is invalid' })
         return
       }
-      const isRemove = normalizedPath === '/user/delsonglist'
-        || (isLikePath && String(probeBody.op || '').toLowerCase() === 'del')
-      const probeData = {
-        comm: { ct: 24, cv: 0, format: 'json' },
-        req_1: {
-          module: 'music.musicasset.PlaylistDetailWrite',
-          method: isRemove ? 'DelSonglist' : 'AddSonglist',
-          param: {
-            dirId,
-            v_songInfo: [{ songMid: songmid, songType: 0 }],
-          },
-        },
-      }
+      const op = String(writeBody.op || 'add').toLowerCase() === 'del' ? 'del' : 'add'
       try {
-        const probeProps = {
-          method: 'get',
-          params: { format: 'json', data: JSON.stringify(probeData) },
-          option: {},
-        }
-        const probeRaw = (await qqServices.UCommon_default(probeProps)).data
-        const probeResult = probeRaw?.req_1 || {}
-        const probeCode = Number(probeResult?.code ?? -1)
-        writeJson(ctx, 200, {
-          ok: probeCode === 0,
-          code: probeCode,
-          message: String(probeResult?.subcode ?? probeResult?.msg ?? '').slice(0, 200),
+        const result = await songlistWriteService({ op, songmid, dirId, cookie: sessionCookie })
+        writeJson(ctx, result.ok ? 200 : 409, {
+          ok: result.ok,
+          code: result.code,
+          ...(result.ok ? {} : { message: result.message || 'QQ Music rejected the write' }),
         })
       } catch (_) {
-        writeJson(ctx, 502, { ok: false, code: 'UPSTREAM_ERROR', message: 'QQ Music write probe failed' })
+        writeJson(ctx, 502, { ok: false, code: 'UPSTREAM_ERROR', message: 'QQ Music write failed' })
       }
       return
     }
