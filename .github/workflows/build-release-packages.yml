@@ -11,7 +11,7 @@ on:
         required: false
       overwrite_existing:
         description: Overwrite assets when the release already exists and is published.
-        default: false
+        default: true
         required: false
         type: boolean
   push:
@@ -152,7 +152,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          OVERWRITE_EXISTING: ${{ github.event.inputs.overwrite_existing || 'false' }}
+          OVERWRITE_EXISTING: ${{ github.event.inputs.overwrite_existing || 'true' }}
         shell: bash
         run: |
           mapfile -t assets < <(find _release-assets -maxdepth 1 -type f -print | sort)
