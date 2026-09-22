@@ -1,6 +1,20 @@
 # Auto detect text files and perform LF normalization
-* text=auto
+# 检出到工作区也写 LF：否则 Windows 上 core.autocrlf 会让索引记录的 size 与磁盘上的
+# CRLF 文件对不上，git status 就会报出「标红但 git diff 为空」的假改动。
+* text=auto eol=lf
 
 *.sh text eol=lf
 .github/workflows/*.yml text eol=lf
 scripts/mpv-audio-only/*.txt text eol=lf
+
+# 二进制文件不做任何行尾转换。text=auto 通常能自动识别，这里显式声明，
+# 避免被误判成文本而在检出时把字节改坏。
+*.png binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.otf binary
+*.ttf binary
+*.zip binary
+*.gz binary
