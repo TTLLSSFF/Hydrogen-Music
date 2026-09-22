@@ -24,11 +24,12 @@ export const getQQDislikeList = (params) => qqRequest({ url: '/user/getDislikeLi
 export const qqLogout = () => qqRequest({ url: '/session/logout', method: 'post', data: {} })
 
 // 写操作：服务端会校验 songmid 与 dirId 并注入会话 cookie，未登录 QQ 时返回 401。
-// 喜欢固定写「我喜欢」歌单（服务端 dirId=201），歌单增删由调用方给出目标 dirId。
-export const setQQLike = (songmid, like) => qqRequest({
+// 喜欢固定写「我喜欢」（服务端 dirId=201）；官方客户端提交的是数字 songId，
+// 所以有 numericId 时要一并带上，只发 songmid 会被上游拒（实测 80105）。
+export const setQQLike = (songmid, like, songId) => qqRequest({
   url: '/user/likeSong',
   method: 'post',
-  data: { songmid, op: like ? 'add' : 'del' },
+  data: { songmid, op: like ? 'add' : 'del', ...(songId ? { songId } : {}) },
 })
 export const addQQPlaylistSong = (songmid, dirId) => qqRequest({
   url: '/user/songList',

@@ -3609,6 +3609,19 @@ function finalizeLikeActionSideEffects({ clickMyPlaylist = true, closeAddPlaylis
     }
 }
 
+// QQ 的「我喜欢」写入在服务端启用了签名/加密校验（实测 80105）：官方客户端走
+// musics.fcg + ag-1 加密协议，第三方客户端目前写不进去。这里给可操作的提示，
+// 而不是把上游报文原样弹给用户，同时保留上游码便于排查。
+const QQ_LIKE_UNSUPPORTED_CODE = 80105
+
+function formatQQLikeFailure(error) {
+    const body = error?.response?.data
+    if (Number(body?.code) === QQ_LIKE_UNSUPPORTED_CODE) {
+        return 'QQ 音乐暂不支持第三方客户端修改「我喜欢」，请到 QQ 音乐官方客户端操作（code 80105）'
+    }
+    return `喜欢/取消喜欢 音乐失败：${body?.message || error?.message || '网络错误'}`
+}
+
 export async function likeSong(like, targetSongId = songId.value) {
     const songIdValue = targetSongId
     const isExplicitTargetSong = arguments.length > 1
@@ -3641,12 +3654,15 @@ export async function likeSong(like, targetSongId = songId.value) {
             : null)
     if (isQQSong(targetSong)) {
         // QQ 喜欢走 provider 自有写端点，按 songmid 记录，与网易云的数字 id 列表完全隔离。
-        // 写接口尚未在真机验证过，因此这里不做乐观更新：成功后才改状态，失败只提示。
+        // 真机验证结论：普通歌单写入可用，但「我喜欢」被上游的签名/加密校验挡住（80105），
+        // 所以不做乐观更新：成功才改状态，失败给明确提示（见 formatQQLikeFailure）。
         const qqMid = getQQSongMid(targetSong)
         if (!qqMid) {
             noticeLikeFailure('操作失败：没有可用的歌曲标识')
             return false
         }
+        // 服务端用的是官方客户端那套 payload（数字 songId），所以把 numericId 一并带上
+        const qqNumericId = /^\d+$/.test(String(targetSong?.numericId ?? '')) ? String(targetSong.numericId) : ''
         if (!qqAccountStore.loggedIn) {
             noticeLikeFailure('请先登录 QQ 音乐')
             return false
@@ -3654,10 +3670,9 @@ export async function likeSong(like, targetSongId = songId.value) {
 
         const useCurrentPlayerSideEffects = !isExplicitTargetSong && songIdValue == songId.value
         try {
-            await setQQLike(qqMid, like)
+            await setQQLike(qqMid, like, qqNumericId)
         } catch (error) {
-            const errorMsg = error?.response?.data?.message || error?.message || '网络错误'
-            noticeLikeFailure(`喜欢/取消喜欢 音乐失败：${errorMsg}`)
+            noticeLikeFailure(formatQQLikeFailure(error))
             return false
         }
 

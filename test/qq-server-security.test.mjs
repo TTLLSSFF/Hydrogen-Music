@@ -975,7 +975,9 @@ test('QQ safe logging context uses the real console without recursion', () => {
   const result = spawnSync(process.execPath, ['-e', script], {
     cwd: process.cwd(),
     encoding: 'utf8',
-    timeout: 5000,
+    // 冷启动要加载整个 QQ 依赖树，机器忙时会到 10s 以上；这里测的是日志行为，
+    // 不是启动速度，所以给足余量（原先 5s 会随机器负载随机变红）。
+    timeout: 30000,
   })
 
   assert.equal(result.status, 0, result.stderr)
@@ -1022,7 +1024,7 @@ test('QQ write endpoints reject non-POST methods', async () => {
   }
 })
 
-test('QQ like endpoint pins dirId 201 and forwards the session cookie upstream', async () => {
+test('QQ like endpoint pins dirId 201 and forwards the numeric songId', async () => {
   const calls = []
   const middleware = createQQSecurityMiddleware({
     getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret', uin: '24680' }),
@@ -1034,26 +1036,49 @@ test('QQ like endpoint pins dirId 201 and forwards the session cookie upstream',
 
   const context = createContext('/user/likeSong', {
     method: 'POST',
-    body: { songmid: '0039MnYb0qxYhV', op: 'add', dirId: 999 },
+    body: { songmid: '0039MnYb0qxYhV', songId: 449205, op: 'add', dirId: 999 },
   })
   await middleware(context, async () => assert.fail('like must be handled by the write endpoint'))
 
-  // 喜欢固定写「我喜欢」（dirId 201），调用方传入的 dirId 必须被忽略
+  // 喜欢固定写「我喜欢」（dirId 201，官方客户端同款），调用方传入的 dirId 必须被忽略；
+  // uin 与数字 songId 一并透传：前者是 comm 里的账号身份，后者是官方 payload 用的歌曲标识。
   assert.deepEqual(calls, [{
     op: 'add',
     songmid: '0039MnYb0qxYhV',
     dirId: 201,
     cookie: 'uin=24680; qqmusic_key=server-secret',
+    songId: 449205,
+    uin: '24680',
   }])
   assert.deepEqual(context.body, { ok: true, code: 0 })
 
   const unlikeContext = createContext('/user/likeSong', {
     method: 'POST',
-    body: { songmid: '0039MnYb0qxYhV', op: 'del' },
+    body: { songmid: '0039MnYb0qxYhV', songId: 449205, op: 'del' },
   })
   await middleware(unlikeContext, async () => {})
   assert.equal(calls[1].op, 'del')
   assert.equal(calls[1].dirId, 201)
+})
+
+test('QQ like without a numeric songId keeps the songmid-only request working', async () => {
+  const calls = []
+  const middleware = createQQSecurityMiddleware({
+    getSession: () => ({ cookie: 'uin=24680', uin: '24680' }),
+    songlistWriteService: async params => {
+      calls.push(params)
+      return { ok: true, code: 0, message: '' }
+    },
+  })
+
+  const context = createContext('/user/likeSong', {
+    method: 'POST',
+    body: { songmid: '0039MnYb0qxYhV', songId: 'not-a-number' },
+  })
+  await middleware(context, async () => {})
+
+  assert.equal(context.status, 200)
+  assert.equal('songId' in calls[0], false)
 })
 
 test('QQ playlist endpoint forwards an explicit dirId in both directions', async () => {
@@ -1119,7 +1144,7 @@ test('QQ write endpoints validate songmid, dirId and body shape', async () => {
 test('QQ write endpoints surface upstream rejection without leaking payloads', async () => {
   const middleware = createQQSecurityMiddleware({
     getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret' }),
-    songlistWriteService: async () => ({ ok: false, code: 10006, message: 'need login' }),
+    songlistWriteService: async () => ({ ok: false, code: 80105, message: 'code 80105' }),
   })
 
   const context = createContext('/user/likeSong', {
@@ -1129,7 +1154,7 @@ test('QQ write endpoints surface upstream rejection without leaking payloads', a
   await middleware(context, async () => {})
 
   assert.equal(context.status, 409)
-  assert.deepEqual(context.body, { ok: false, code: 10006, message: 'need login' })
+  assert.deepEqual(context.body, { ok: false, code: 80105, message: 'code 80105' })
   assert.equal(JSON.stringify(context.body).includes('server-secret'), false)
 })
 
@@ -1147,6 +1172,166 @@ test('QQ write endpoints report an upstream exception as 502', async () => {
 
   assert.equal(context.status, 502)
   assert.deepEqual(context.body, { ok: false, code: 'UPSTREAM_ERROR', message: 'QQ Music write failed' })
+})
+
+test('QQ write requests carry the account identity in the upstream comm', async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options })
+    return { json: async () => ({ code: 0, req_1: { code: 0 } }) }
+  }
+
+  try {
+    const middleware = createQQSecurityMiddleware({
+      getSession: () => ({
+        cookie: 'uin=o024680; qm_keyst=musickey-value; skey=@skey-value',
+        uin: '24680',
+        loginUin: '24680',
+      }),
+    })
+
+    const addContext = createContext('/user/likeSong', {
+      method: 'POST',
+      body: { songmid: '0039MnYb0qxYhV', songId: 449205, op: 'add' },
+    })
+    await middleware(addContext, async () => {})
+    assert.equal(addContext.status, 200)
+    assert.deepEqual(addContext.body, { ok: true, code: 0 })
+
+    const delContext = createContext('/user/songList', {
+      method: 'POST',
+      body: { songmid: '0039MnYb0qxYhV', dirId: 7788, op: 'del' },
+    })
+    await middleware(delContext, async () => {})
+    assert.equal(delContext.status, 200)
+
+    assert.equal(requests.length, 2)
+    const [addRequest, delRequest] = requests
+    assert.equal(addRequest.url, 'https://u.y.qq.com/cgi-bin/musicu.fcg')
+    assert.equal(addRequest.options.method, 'POST')
+    // 账号身份必须同时出现在 cookie 头和 comm 里；只有 cookie、comm 里没有
+    // uin/authst 的请求会被上游当成匿名请求拒绝。
+    assert.match(addRequest.options.headers.Cookie, /uin=24680/)
+    assert.match(addRequest.options.headers.Cookie, /qqmusic_key=musickey-value/)
+
+    const addPayload = JSON.parse(addRequest.options.body)
+    assert.equal(addPayload.comm.uin, 24680)
+    assert.equal(addPayload.comm.loginUin, 24680)
+    assert.equal(addPayload.comm.authst, 'musickey-value')
+    assert.equal(addPayload.comm.ct, 24)
+    assert.equal(addPayload.comm.cv, 4747474)
+    assert.equal(addPayload.comm.platform, 'yqq.json')
+    // comm 与官方网页端默认值对齐（needNewCode / inCharset / outCharset / notice）
+    assert.equal(addPayload.comm.needNewCode, 1)
+    assert.equal(addPayload.comm.inCharset, 'utf-8')
+    assert.equal(addPayload.comm.outCharset, 'utf-8')
+    assert.equal(addPayload.comm.notice, 0)
+    // 官方每次请求都带 g_tk；cookie 里只有 skey（没有 p_skey）时用 skey 算
+    assert.equal(Number.isInteger(addPayload.comm.g_tk) && addPayload.comm.g_tk > 0, true)
+    assert.equal(addPayload.comm.g_tk_new_20200303, addPayload.comm.g_tk)
+    // v_songInfo 必须是官方客户端那套形状：{ songType, songId }，数字 id 而非 songmid
+    assert.deepEqual(addPayload.req_1, {
+      module: 'music.musicasset.PlaylistDetailWrite',
+      method: 'AddSonglist',
+      param: { dirId: 201, v_songInfo: [{ songType: 0, songId: 449205 }] },
+    })
+
+    const delPayload = JSON.parse(delRequest.options.body)
+    assert.equal(delPayload.req_1.method, 'DelSonglist')
+    assert.equal(delPayload.req_1.param.dirId, 7788)
+    // 没有数字 id 时退回 songmid，老路径仍然可用
+    assert.deepEqual(delPayload.req_1.param.v_songInfo, [{ songType: 0, songMid: '0039MnYb0qxYhV' }])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('QQ write reports the envelope code when the upstream omits req_1', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ json: async () => ({ code: 1000, subcode: 1000 }) })
+
+  try {
+    const middleware = createQQSecurityMiddleware({
+      getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret', uin: '24680' }),
+    })
+
+    const context = createContext('/user/likeSong', {
+      method: 'POST',
+      body: { songmid: '0039MnYb0qxYhV' },
+    })
+    await middleware(context, async () => {})
+
+    assert.equal(context.status, 409)
+    assert.equal(context.body.ok, false)
+    assert.equal(context.body.code, 1000)
+    // 失败原因要能直接看到，而不是笼统的「拒绝写入」
+    assert.match(context.body.message, /code 1000/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('QQ write retries against musics.fcg with a zzc sign when the unsigned call is rejected', async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options })
+    // 未签名被拒（80105），签名那次成功
+    const unsigned = !String(url).includes('musics.fcg')
+    return {
+      json: async () => (unsigned ? { code: 80105, req_1: { code: 80105 } } : { code: 0, req_1: { code: 0 } }),
+    }
+  }
+
+  try {
+    const middleware = createQQSecurityMiddleware({
+      getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret; skey=@skey-value', uin: '24680' }),
+    })
+
+    const context = createContext('/user/likeSong', {
+      method: 'POST',
+      body: { songmid: '0039MnYb0qxYhV', songId: 449205 },
+    })
+    await middleware(context, async () => {})
+
+    assert.equal(context.status, 200)
+    assert.deepEqual(context.body, { ok: true, code: 0 })
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0].url, 'https://u.y.qq.com/cgi-bin/musicu.fcg')
+    assert.match(requests[1].url, /^https:\/\/u\.y\.qq\.com\/cgi-bin\/musics\.fcg\?_=\d+&sign=zzc[a-z0-9]+$/)
+    // 两次提交的 payload 必须完全一致（签名的输入就是这份 body）
+    assert.equal(requests[1].options.body, requests[0].options.body)
+    assert.equal(requests[1].options.method, 'POST')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('QQ write reports both codes when the signed retry also fails', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async url => ({
+    json: async () => (String(url).includes('musics.fcg') ? { code: 9001 } : { code: 80105 }),
+  })
+
+  try {
+    const middleware = createQQSecurityMiddleware({
+      getSession: () => ({ cookie: 'uin=24680; qqmusic_key=server-secret; skey=@skey-value', uin: '24680' }),
+    })
+
+    const context = createContext('/user/likeSong', {
+      method: 'POST',
+      body: { songmid: '0039MnYb0qxYhV' },
+    })
+    await middleware(context, async () => {})
+
+    assert.equal(context.status, 409)
+    assert.equal(context.body.code, 9001)
+    assert.match(context.body.message, /code 9001/)
+    assert.match(context.body.message, /unsigned code 80105/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('QQ write kill-switch falls back to 404 when disabled', async () => {

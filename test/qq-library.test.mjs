@@ -5,7 +5,6 @@ import {
   loadQQPlaylistDetail,
   mergeQQPlaylistSummary,
   mergeQQPlaylistLists,
-  collectQQSongMids,
   loadQQLikedSongmids,
 } from '../src/utils/qqLibrary.mjs'
 
@@ -142,45 +141,57 @@ test('QQ liked playlist is merged independently from created playlists', () => {
 
 // 喜欢状态按 songmid 记录，必须与网易云的数字 id 列表完全隔离，
 // 否则 checkIsLike 这类不带来源判断的 includes 会互相串号。
-test('QQ liked songmids are collected from every documented envelope', () => {
-  const fromSonglist = collectQQSongMids({
-    data: { songlist: [{ songmid: 'mid-1' }, { songMid: 'mid-2' }] },
+// 加载分两步：/user/getUserLikedSongs 只有歌单元信息，必须先取 id 再拉歌单详情。
+test('QQ liked songmids come from the liked playlist detail, not the metadata envelope', async () => {
+  const requests = []
+  const mids = await loadQQLikedSongmids({
+    fetchLikedMeta: async () => {
+      requests.push('meta')
+      // 元信息里只有歌单信息，没有任何 songmid
+      return { response: { code: 0, data: { info: { id: '2370991765', title: '我喜欢', songCount: 2 } } } }
+    },
+    fetchPlaylistDetail: async id => {
+      requests.push(`detail:${id}`)
+      return {
+        response: {
+          code: 0,
+          data: {
+            cdlist: [{
+              disstid: id,
+              title: '我喜欢',
+              songlist: [
+                { mid: 'mid-1', name: '歌曲一', singer: [{ mid: 's1', name: '歌手' }] },
+                { mid: 'mid-2', name: '歌曲二' },
+                { mid: 'mid-1', name: '重复歌曲' },
+              ],
+            }],
+          },
+        },
+      }
+    },
   })
-  assert.deepEqual([...fromSonglist].sort(), ['mid-1', 'mid-2'])
 
-  const fromTracks = collectQQSongMids({
-    data: { tracks: [{ mid: 'mid-3', songname: '歌曲三' }] },
-  })
-  assert.deepEqual([...fromTracks], ['mid-3'])
-
-  // 数字 songid 出现时说明该条目是歌曲，允许退化到 mid
-  const fromSongs = collectQQSongMids({ songs: [{ mid: 'mid-4', songid: 42 }] })
-  assert.deepEqual([...fromSongs], ['mid-4'])
-
-  // 非歌曲对象里的 mid（例如歌单封面）不能被当成歌曲标识
-  const unrelated = collectQQSongMids({ data: { info: { mid: 'playlist-mid' } } })
-  assert.deepEqual([...unrelated], [])
-
-  assert.deepEqual([...collectQQSongMids(null)], [])
+  assert.deepEqual(mids.sort(), ['mid-1', 'mid-2'])
+  assert.deepEqual(requests, ['meta', 'detail:2370991765'])
 })
 
-test('QQ liked songmids paginate until a page adds nothing new', async () => {
-  const calls = []
-  const pages = [
-    { data: { songlist: [{ songmid: 'mid-1' }, { songmid: 'mid-2' }] } },
-    { data: { songlist: [{ songmid: 'mid-3' }] } },
-    { data: { songlist: [] } },
-  ]
+test('QQ liked songmids load tolerates missing ids and aborted sessions', async () => {
+  const noId = await loadQQLikedSongmids({
+    fetchLikedMeta: async () => ({ response: { code: 0, data: { info: { title: '我喜欢' } } } }),
+    fetchPlaylistDetail: async () => assert.fail('must not load a detail without a playlist id'),
+  })
+  assert.deepEqual(noId, [])
 
-  const mids = await loadQQLikedSongmids(async params => {
-    calls.push(params)
-    return pages[calls.length - 1]
-  }, { limit: 2 })
+  // 会话失效时放弃本次加载，不要把空列表写进 store
+  const aborted = await loadQQLikedSongmids({
+    fetchLikedMeta: async () => ({ response: { code: 0, data: { info: { id: '2370991765' } } } }),
+    fetchPlaylistDetail: async () => assert.fail('must not load a detail after the session changed'),
+    isActive: () => false,
+  })
+  assert.deepEqual(aborted, [])
 
-  assert.deepEqual(mids.sort(), ['mid-1', 'mid-2', 'mid-3'])
-  assert.deepEqual(calls.map(call => call.offset), [0, 2, 4])
-
-  // 会话失效时放弃本次加载，返回 null 而不是写空列表
-  const aborted = await loadQQLikedSongmids(async () => pages[0], { isActive: () => false })
-  assert.equal(aborted, null)
+  await assert.rejects(
+    () => loadQQLikedSongmids({ fetchLikedMeta: async () => ({}) }),
+    /loaders are required/,
+  )
 })

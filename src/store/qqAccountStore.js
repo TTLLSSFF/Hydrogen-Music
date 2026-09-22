@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import pinia from './pinia'
 import { getQQSessionStatus, getQQUserProfile, getQQUserAvatar, getQQLikedSongs, qqLogout } from '../api/qq'
-import { unwrapQQResponse } from '../api/qqMusic'
+import { getQQSongListDetail, unwrapQQResponse } from '../api/qqMusic'
 import { createQQPersistedState, createQQPersistStorage } from '../utils/qqSession.mjs'
 import { sanitizeQQPayload } from '../utils/qqSecurity.mjs'
 import { loadQQLikedSongmids } from '../utils/qqLibrary.mjs'
@@ -45,7 +45,8 @@ export const useQQAccountStore = defineStore('qqAccountStore', {
       this.persistNow()
     },
     // 喜欢状态按 songmid 记录（与网易云的数字 id 列表完全隔离）。
-    // 登录与切号后拉一次全量，供播放器的 ♡ 判断当前歌曲是否已喜欢。
+    // 登录与切号后拉一次全量，供播放器的 ♡ 判断当前歌曲是否已喜欢；
+    // 具体两步加载（元信息取歌单 id → 歌单详情取歌曲）收在 loadQQLikedSongmids 里。
     async refreshLikedSongmids() {
       const userStore = useUserStore(pinia)
       const accountId = String(this.user?.uin || '')
@@ -57,13 +58,13 @@ export const useQQAccountStore = defineStore('qqAccountStore', {
       const sessionToken = String(this.sessionToken || '')
       const isActive = () => this.loggedIn && String(this.sessionToken || '') === sessionToken
       try {
-        const mids = await loadQQLikedSongmids(
-          params => getQQLikedSongs({ uin: accountId, ...params }),
-          { isActive },
-        )
+        const list = await loadQQLikedSongmids({
+          fetchLikedMeta: () => getQQLikedSongs({ uin: accountId }),
+          fetchPlaylistDetail: id => getQQSongListDetail(id),
+          isActive,
+        })
         if (!isActive()) return []
-        const list = Array.isArray(mids) ? mids : []
-        userStore.updateQQLikelist(list)
+        userStore.updateQQLikelist(Array.isArray(list) ? list : [])
         return list
       } catch (error) {
         console.warn('加载 QQ 喜欢列表失败:', error?.message || error)

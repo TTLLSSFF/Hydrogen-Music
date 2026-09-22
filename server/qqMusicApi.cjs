@@ -1,4 +1,4 @@
-const { randomBytes } = require('node:crypto')
+const { createHash, randomBytes } = require('node:crypto')
 const { AsyncLocalStorage } = require('node:async_hooks')
 const path = require('node:path')
 
@@ -120,10 +120,87 @@ const QQ_WRITE_PATHS = new Set([
   '/user/likesong',
   '/user/songlist',
 ])
-// QQ 音乐「我喜欢」是 dirId 固定为 201 的特殊歌单。
+// 「我喜欢」的 dirId：QQ 音乐网页播放器自身就是写死 201 的
+// （profile 页取消喜欢直接调 AddSonglist/DelSonglist 传 201），后端会把 201
+// 映射到当前账号的「我喜欢」文件夹，所以这里不需要按账号解析。
 const QQ_MY_LIKE_DIR_ID = 201
 const QQ_WRITE_BODY_MAX_BYTES = 4096
 const QQ_WRITE_SONGMID_PATTERN = /^[A-Za-z0-9]{8,20}$/
+// 写操作必须走带登录态的 musicu 调用：POST + JSON body，账号身份放在 payload 的 comm 里。
+// 依赖包内部所有需要登录的模块都走这套约定（callUserMusicu / buildComm），
+// 只带 Cookie 头、comm 里没有 uin/authst 的请求会被上游按匿名处理并拒绝。
+const QQ_MUSICU_WRITE_URL = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+// 官方网页端的 musicu 请求默认 needSign：命中后切到 musics.fcg 并带 sign 参数。
+// 未签名请求对普通歌单能过，写「我喜欢」会被拒（实测 80105），因此失败后按
+// 依赖包同款的 zzc 签名重试一次（算法取自 @sansenjian/qq-music-api 的 userMusicu）。
+const QQ_MUSICS_WRITE_URL = 'https://u.y.qq.com/cgi-bin/musics.fcg'
+const QQ_SIGN_PART_1_INDEXES = [23, 14, 6, 36, 16, 7, 19]
+const QQ_SIGN_PART_2_INDEXES = [16, 1, 32, 12, 19, 27, 8, 5]
+const QQ_SIGN_SCRAMBLE_VALUES = [
+  89, 39, 179, 150, 218, 82, 58, 252, 177, 52,
+  186, 123, 120, 64, 242, 133, 143, 161, 121, 179,
+]
+const QQ_WRITE_COMM_CT = 24
+const QQ_WRITE_COMM_CV = 4747474
+const QQ_WRITE_TIMEOUT_MS = 10000
+
+// 与依赖包 loginUtils.getGtk 一致：djb2(token) & 0x7fffffff。
+// 官方网页端每次请求都带 g_tk / g_tk_new_20200303；依赖包只从 p_skey 取，
+// 但扫码登录的 cookie 往往只有 skey，所以调用方要把两个 token 都传进来。
+function getQQGtk(token) {
+  const source = String(token || '')
+  let hash = 5381
+  for (let index = 0; index < source.length; index += 1) hash += (hash << 5) + source.charCodeAt(index)
+  return hash & 2147483647
+}
+
+// write 请求签名（zzc）：sha1(payload) 取 7+8 个字符夹在打散后的 base64 里。
+function getQQWriteSign(payload) {
+  const hash = createHash('sha1').update(payload, 'utf8').digest('hex').toUpperCase()
+  const part1 = QQ_SIGN_PART_1_INDEXES.map(index => hash[index]).join('')
+  const part2 = QQ_SIGN_PART_2_INDEXES.map(index => hash[index]).join('')
+  const scrambled = Buffer.from(QQ_SIGN_SCRAMBLE_VALUES.map((value, index) => (
+    value ^ parseInt(hash.slice(index * 2, index * 2 + 2), 16)
+  ))).toString('base64').replace(/[\\/+=]/g, '')
+  return `zzc${part1}${scrambled}${part2}`.toLowerCase()
+}
+
+// 写请求统一走 POST + JSON body（官方 web 端也是 POST），超时与其它上游调用一致。
+// headers 由调用方给（上游头常量定义在中间件工厂作用域内）。
+async function postQQWriteRequest({ url, body, headers }) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), QQ_WRITE_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: controller.signal,
+    })
+    return await response.json()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// 上游拒绝时经常只回 envelope 层的 code（req_1 整个缺失），所以两层都读，
+// 并把 code/subcode 带进 message，便于在 UI 上直接看到失败原因。
+function describeQQWriteResult(parsed) {
+  const result = parsed?.req_1 && typeof parsed.req_1 === 'object' ? parsed.req_1 : {}
+  const code = Number(result.code ?? parsed?.code ?? -1)
+  const subcode = Number(result.subcode ?? parsed?.subcode ?? 0)
+  const upstreamMessage = getSingleValue(result.msg || result.tips || parsed?.msg).trim()
+  const detail = [
+    `code ${Number.isFinite(code) ? code : -1}`,
+    subcode ? `subcode ${subcode}` : '',
+    upstreamMessage,
+  ].filter(Boolean).join(' / ')
+  return {
+    ok: code === 0,
+    code,
+    message: detail.slice(0, 200),
+  }
+}
 
 function isQQWriteEnabled() {
   return String(process.env[QQ_WRITE_ENABLED_ENV] || '') !== '0'
@@ -790,34 +867,70 @@ function createQQSecurityMiddleware(options = {}) {
   // 歌单详情：依赖包的 playlist 模块已失效，改用 CgiGetDiss（无需登录）。
   const songListDetailService = options.songListDetailService || fetchQQSongListDetail
 
-  // 喜欢 / 歌单增删：旧版 musicu.fcg 的 music.musicasset.PlaylistDetailWrite。
-  // 关键点是必须把会话 cookie 交给上游——UCommon_default 会把 option 展开成
-  // http options，option.headers.Cookie 能透传到底层请求。做成可注入的服务，
-  // 一旦真机验证发现该模块不可用，可以换成 c.y.qq.com 直连而不动端点契约。
-  async function writeQQSonglist({ op, songmid, dirId, cookie }) {
-    const data = {
-      comm: { ct: 24, cv: 0, format: 'json' },
+  // 喜欢 / 歌单增删：musicu.fcg 的 music.musicasset.PlaylistDetailWrite。
+  // 账号身份必须写进 comm（uin / loginUin / authst / g_tk），且官方网页端对这类请求
+  // 默认 needSign（切到 musics.fcg 带 sign），所以未签名失败后会按依赖包同款签名重试。
+  async function writeQQSonglist({ op, songmid, songId, dirId, cookie, uin }) {
+    const effectiveCookie = normalizeQQUpstreamCookie(cookie)
+    const accountUin = normalizeQQUin(uin || parseCookieUin(effectiveCookie))
+    const authst = getQQCookieValue(effectiveCookie, 'qqmusic_key')
+    const numericUin = /^\d+$/.test(accountUin) ? Number(accountUin) : 0
+    // v_songInfo 的形状照抄 QQ 音乐网页播放器：它发的是 { songType, songId }（数字 id），
+    // 不是 songMid。官方客户端从不发 songMid。
+    const numericSongId = Number.isFinite(Number(songId)) && Number(songId) > 0 ? Number(songId) : 0
+    const vSongInfo = [{
+      songType: 0,
+      ...(numericSongId ? { songId: numericSongId } : { songMid: songmid }),
+    }]
+    // comm 的字段与官方网页端默认值对齐（needNewCode:1、inCharset/outCharset/notice），
+    // 并像官方那样总是带 g_tk：扫码登录通常只有 skey，所以 p_skey 缺失时用 skey 算。
+    const gtk = getQQGtk(getQQCookieValue(effectiveCookie, 'p_skey') || getQQCookieValue(effectiveCookie, 'skey'))
+    const payload = {
+      comm: {
+        cv: QQ_WRITE_COMM_CV,
+        ct: QQ_WRITE_COMM_CT,
+        format: 'json',
+        inCharset: 'utf-8',
+        outCharset: 'utf-8',
+        notice: 0,
+        platform: 'yqq.json',
+        needNewCode: 1,
+        ...(numericUin ? { uin: numericUin, loginUin: numericUin } : {}),
+        ...(authst ? { authst } : {}),
+        ...(gtk ? { g_tk: gtk, g_tk_new_20200303: gtk } : {}),
+      },
       req_1: {
         module: 'music.musicasset.PlaylistDetailWrite',
         method: op === 'del' ? 'DelSonglist' : 'AddSonglist',
         param: {
           dirId,
-          v_songInfo: [{ songMid: songmid, songType: 0 }],
+          v_songInfo: vSongInfo,
         },
       },
     }
-    const props = {
-      method: 'get',
-      params: { format: 'json', data: JSON.stringify(data) },
-      option: { headers: { Cookie: cookie } },
-    }
-    const raw = (await qqServices.UCommon_default(props)).data
-    const result = raw?.req_1 || {}
-    const code = Number(result?.code ?? -1)
+
+    const body = JSON.stringify(payload)
+    const writeHeaders = { ...QQ_UPSTREAM_HEADERS, 'Content-Type': 'application/json', Cookie: effectiveCookie }
+
+    const first = describeQQWriteResult(await postQQWriteRequest({
+      url: QQ_MUSICU_WRITE_URL,
+      body,
+      headers: writeHeaders,
+    }))
+    if (first.code === 0) return first
+
+    // 未签名被拒 → 签名重试一次；两次都失败时以签名那次为准，但把未签名的码一并带出，
+    // 否则「换了签名还是同一个错」和「换签名后错误变了」这两种情况会分不清。
+    const signed = describeQQWriteResult(await postQQWriteRequest({
+      url: `${QQ_MUSICS_WRITE_URL}?_=${Date.now()}&sign=${getQQWriteSign(body)}`,
+      body,
+      headers: writeHeaders,
+    }))
+    if (signed.code === 0) return signed
+    if (signed.code === first.code) return signed
     return {
-      ok: code === 0,
-      code,
-      message: String(result?.subcode ?? result?.msg ?? '').slice(0, 200),
+      ...signed,
+      message: [signed.message, `unsigned code ${first.code}`].filter(Boolean).join(' / ').slice(0, 200),
     }
   }
   const songlistWriteService = options.songlistWriteService || writeQQSonglist
@@ -1590,7 +1703,12 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
         writeJson(ctx, 400, { ok: false, code: 'INVALID_SONGMID', message: 'songmid is invalid' })
         return
       }
-      // 喜欢固定写「我喜欢」歌单（dirId 201），歌单增删由调用方给出目标 dirId
+      // 写接口需要账号 uin 参与构造上游 comm：优先用会话里的（桌面端会显式带 uin），
+      // 退化到 cookie 里的 uin，再退化到空（此时上游多半会拒绝，message 里能看到 code）。
+      const writeUin = normalizeQQUin(
+        activeSession?.uin || activeSession?.loginUin || clientUin || parseCookieUin(sessionCookie),
+      )
+      // 喜欢固定写「我喜欢」（官方客户端也写死 201），歌单增删由调用方给出目标 dirId
       const isLikePath = normalizedPath === '/user/likesong'
       const dirId = isLikePath ? QQ_MY_LIKE_DIR_ID : Math.trunc(Number(writeBody.dirId))
       if (!Number.isFinite(dirId) || dirId <= 0) {
@@ -1598,8 +1716,17 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
         return
       }
       const op = String(writeBody.op || 'add').toLowerCase() === 'del' ? 'del' : 'add'
+      // 数字 songId：官方客户端用 songId 提交，缺失时退回 songMid 保持兼容。
+      const songId = Math.trunc(Number(writeBody.songId))
       try {
-        const result = await songlistWriteService({ op, songmid, dirId, cookie: sessionCookie })
+        const result = await songlistWriteService({
+          op,
+          songmid,
+          dirId,
+          cookie: sessionCookie,
+          ...(Number.isFinite(songId) && songId > 0 ? { songId } : {}),
+          ...(writeUin ? { uin: writeUin } : {}),
+        })
         writeJson(ctx, result.ok ? 200 : 409, {
           ok: result.ok,
           code: result.code,

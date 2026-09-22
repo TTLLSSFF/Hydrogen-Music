@@ -24,7 +24,9 @@
 // 注意：写请求 payload 形状（v_songInfo）与是否需要签名均**未经验证**，失败属预期结果之一。
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3200'
-// QQ 音乐「我喜欢」是 dirId 固定为 201 的特殊歌单。
+// QQ 音乐「我喜欢」的 dirId 固定为 201（官方客户端也写死 201），服务端会忽略这里传的值。
+// 注意：探针只带 songmid，而 UI 会额外带上数字 songId（官方 payload 的形状），
+// 所以真机验收以 UI 为准，探针只用于快速排查。
 const LIKE_DIR_ID = 201
 const LIKED_PAGE_SIZE = 100
 const LIKED_MAX_PAGES = 20
