@@ -1,7 +1,7 @@
 {
   "name": "hydrogenmusic",
   "private": true,
-  "version": "26.9.22.1",
+  "version": "26.9.23",
   "description": "A modern music player built with Electron and Vue.js",
   "main": "background.js",
   "author": {

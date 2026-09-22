@@ -245,7 +245,16 @@ async function main() {
     ? release.assets.find(asset => asset.name === appimageName && asset.state === 'uploaded')
     : null;
   if (!appimageAsset?.browser_download_url) {
-    throw new Error(`Release ${tag} does not contain an uploaded ${appimageName}`);
+    // 不匹配时把实际上传的资产名打出来：最常见的原因是 package.json 的版本号被
+    // electron-builder 规范化过（26.9.22.1 -> 26.9.2-2.1），产物名和 tag 对不上。
+    const uploaded = (Array.isArray(release.assets) ? release.assets : [])
+      .filter(asset => asset.state === 'uploaded')
+      .map(asset => asset.name)
+      .sort();
+    const detail = uploaded.length
+      ? `\nUploaded assets:\n${uploaded.map(name => `  - ${name}`).join('\n')}`
+      : '\nThe release has no uploaded assets.';
+    throw new Error(`Release ${tag} does not contain an uploaded ${appimageName}${detail}`);
   }
 
   const appimage = await sha256FromReleaseAsset(appimageAsset);
