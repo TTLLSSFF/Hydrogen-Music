@@ -1002,7 +1002,8 @@ function normalizeQQCommentItem(raw) {
 
 /**
  * 评论列表：一次请求同时返回最新与热门（上游 needhot=1），
- * 归一化为 { comments, hotComments, total, hasMore, nextPage }。
+ * 归一化为 { comments, hotComments, total, hotTotal, hasMore, nextPage }。
+ * total 是评论总数，hotTotal 是热门总数（热门列表本身有硬上限，两者不能互推）。
  */
 export function normalizeQQCommentList(payload) {
   const body = unwrapQQResponse(payload)
@@ -1022,10 +1023,17 @@ export function normalizeQQCommentList(payload) {
     const total = Number.isFinite(legacyTotal) && legacyTotal > 0
       ? legacyTotal
       : comments.length + hotComments.length
+    // 热门区上限由上游决定（实测最多 15 条），hot_comment.commenttotal 才是真实热门总数，
+    // 拿数组长度当数量会让面板显示成页大小。
+    const legacyHotTotal = Number(body?.hot_comment?.commenttotal)
+    const hotTotal = Number.isFinite(legacyHotTotal) && legacyHotTotal > 0
+      ? legacyHotTotal
+      : hotComments.length
     return {
       comments,
       hotComments,
       total,
+      hotTotal,
       // morecomment 为 1 表示还有下一页
       hasMore: normalizeQQBooleanFlag(body?.morecomment),
       nextPage: 1,
@@ -1055,6 +1063,7 @@ export function normalizeQQCommentList(payload) {
     comments,
     hotComments,
     total,
+    hotTotal: hotComments.length,
     hasMore: hasMoreFlag !== undefined && hasMoreFlag !== null && hasMoreFlag !== ''
       ? normalizeQQBooleanFlag(hasMoreFlag)
       : (total > 0 ? comments.length < total : comments.length > 0),

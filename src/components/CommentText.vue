@@ -27,6 +27,14 @@
             draggable="false"
           />
         </template>
+        <template v-else-if="segment.type === 'image-placeholder'">
+          <span class="media-placeholder" title="评论配图">
+            <svg class="media-placeholder-icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+              <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+            </svg>
+            <span>{{ segment.content }}</span>
+          </span>
+        </template>
         <template v-else-if="segment.type === 'emoji'">
           <span 
             class="emoji emoji-text"
@@ -193,6 +201,27 @@ const copyText = async () => {
 
 .emoji-text {
   line-height: 1;
+}
+
+/* 带图评论的占位块：QQ 只给 [图片] 占位符，不给图片地址 */
+.media-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-size: 0.85em;
+  line-height: 1.4;
+  vertical-align: -0.15em;
+  opacity: 0.7;
+  user-select: none;
+}
+
+.media-placeholder-icon {
+  flex: none;
+  fill: currentColor;
 }
 
 .emoji:hover {

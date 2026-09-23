@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createShuffledList } from '../src/utils/player/queue.js'
 import { normalizeQueueSong } from '../src/utils/player/queueSong.js'
 import { getSongIdentity } from '../src/utils/musicSource.mjs'
+import { getQQCommentId } from '../src/utils/providerPolicy.mjs'
 import { createPlaybackTarget, isPlaybackTargetCurrent } from '../src/utils/player/targetIdentity.mjs'
 
 test('shuffle keeps QQ and NetEase songs with equal raw IDs distinct', () => {
@@ -50,4 +51,17 @@ test('queue normalization preserves QQ mediaId required for VIP playback URLs', 
     name: 'QQ VIP song',
   })
   assert.equal(song.mediaId, 'qq-media-mid')
+})
+
+test('queue normalization preserves the QQ numeric id behind the comment entry', () => {
+  const song = normalizeQueueSong({
+    id: '002V8Vde2dKIEx',
+    source: 'qq',
+    sourceId: '002V8Vde2dKIEx',
+    numericId: '5170189',
+    songid: 5170189,
+    name: '答案',
+  })
+  assert.equal(song.numericId, '5170189')
+  assert.equal(getQQCommentId(song), '5170189')
 })

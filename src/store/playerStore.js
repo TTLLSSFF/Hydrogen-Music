@@ -82,7 +82,7 @@ const playerPersistStorage = createDedupedLocalStorage()
 
 // 播放器持久化字段（对应旧 pinia-plugin-persistedstate 的 pick 清单，结构保持不变：
 // 同一 key「playerStore」下只存这些字段，不含巨大队列以免拖垮序列化性能）。
-const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','musicVideo','lyricBlur','showSongTranslation','gaplessPlayback','coverBlur','audioVisualizer','localHifiOutput','localHifiOutputMode','localHifiMpvPath','localHifiAudioDevice']
+const PERSISTED_PLAYER_FIELDS = ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','musicVideo','lyricBlur','showSongTranslation','qqNeteaseLyricBridge','gaplessPlayback','coverBlur','audioVisualizer','localHifiOutput','localHifiOutputMode','localHifiMpvPath','localHifiAudioDevice']
 
 function readPersistedPlayerState() {
     try {
@@ -148,6 +148,7 @@ export const usePlayerStore = defineStore('playerStore', {
             playerShow: true,
             lyricBlur: toBoolean(persisted.lyricBlur, false),
             showSongTranslation: toBoolean(persisted.showSongTranslation, true), // 歌曲名是否显示翻译（原名 (翻译)）
+            qqNeteaseLyricBridge: toBoolean(persisted.qqNeteaseLyricBridge, false), // QQ 歌曲缺翻译/罗马音时是否借用网易云同曲目（时间轴对不上则不采用）
             gaplessPlayback: toBoolean(persisted.gaplessPlayback, false), // 是否预缓冲下一首以减少切歌空隙
             isDesktopLyricOpen: false, // 桌面歌词是否打开
             coverBlur: toBoolean(persisted.coverBlur, false), // 播放页使用封面模糊背景
@@ -198,6 +199,7 @@ export function initPlayerPersistence() {
             musicVideo: store.musicVideo,
             lyricBlur: store.lyricBlur,
             showSongTranslation: store.showSongTranslation,
+            qqNeteaseLyricBridge: store.qqNeteaseLyricBridge,
             gaplessPlayback: store.gaplessPlayback,
             coverBlur: store.coverBlur,
             audioVisualizer: store.audioVisualizer,

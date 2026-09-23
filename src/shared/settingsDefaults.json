@@ -20,6 +20,7 @@
       "lyricInterlude": 13,
       "searchAssistLimit": 8,
       "showSongTranslation": true,
+      "qqNeteaseLyricBridge": false,
       "gaplessPlayback": false,
       "audioVisualizer": false,
       "localHifiOutput": false,

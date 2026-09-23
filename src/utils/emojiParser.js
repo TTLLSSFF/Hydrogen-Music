@@ -7,7 +7,14 @@
  */
 
 const NETEASE_EMOJI_BASE_URL = 'https://s1.music.126.net/style/web2/emoji/emoji_{ID}@2x.png';
-const EMOJI_TOKEN_PATTERN = /\[([^\[\]\r\n]{1,32})\]/g;
+// QQ 评论正文里的表情是 [em]e401328[/em] 这种表情码。它必须排在网易云 [名字]
+// 之前匹配：否则正则先命中 [em]（token 名 em），解析失败后整串原样显示成乱码。
+const QQ_EMOJI_TOKEN_PATTERN = /\[em\](e\d+)\[\/em\]/;
+const QQ_EMOJI_BASE_URL = 'https://qzonestyle.gtimg.cn/qzone/em/{ID}.gif';
+// 带图评论在旧版评论接口里只留 [图片] 这个占位符，图片地址不在响应里，
+// 因此渲染成占位块而不是把方括号原样当正文丢出去。
+const QQ_IMAGE_PLACEHOLDER = '[图片]';
+const EMOJI_TOKEN_PATTERN = /\[em\]e\d+\[\/em\]|\[([^\[\]\r\n]{1,32})\]/g;
 
 // 来自网易云音乐 PC Web 的官方表情 ID 映射。
 export const NETEASE_EMOJI_IDS = Object.freeze({
@@ -444,7 +451,35 @@ export function getNeteaseEmojiUrl(id) {
   return NETEASE_EMOJI_BASE_URL.replace('{ID}', String(id));
 }
 
+export function getQQEmojiUrl(code) {
+  if (!code) return '';
+  return QQ_EMOJI_BASE_URL.replace('{ID}', String(code));
+}
+
 export function resolveEmojiToken(token) {
+  const qqMatch = typeof token === 'string' ? token.match(QQ_EMOJI_TOKEN_PATTERN) : null;
+  if (qqMatch) {
+    const code = qqMatch[1];
+    return {
+      type: 'image',
+      source: 'qq',
+      name: code,
+      original: `[em]${code}[/em]`,
+      content: '[表情]',
+      src: getQQEmojiUrl(code)
+    };
+  }
+
+  if (token === QQ_IMAGE_PLACEHOLDER) {
+    return {
+      type: 'image-placeholder',
+      source: 'qq',
+      name: '图片',
+      original: QQ_IMAGE_PLACEHOLDER,
+      content: '图片'
+    };
+  }
+
   const name = normalizeEmojiName(token);
   if (!name) return null;
 

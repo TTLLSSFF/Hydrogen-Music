@@ -64,6 +64,7 @@ function normalizeMusicSettings(music = {}) {
     normalized.searchAssistLimit = normalizeSearchAssistLimit(normalized.searchAssistLimit)
     normalized.level = normalizeMusicLevel(normalized.level)
     normalized.showSongTranslation = normalized.showSongTranslation !== false
+    normalized.qqNeteaseLyricBridge = normalized.qqNeteaseLyricBridge === true
     normalized.gaplessPlayback = normalized.gaplessPlayback === true
     normalized.audioVisualizer = normalized.audioVisualizer === true
     normalized.localHifiOutput = normalized.localHifiOutput === true

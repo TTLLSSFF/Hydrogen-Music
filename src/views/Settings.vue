@@ -15,6 +15,7 @@ import FontSelector from '../components/FontSelector.vue'
 import UpdateDialog from '../components/UpdateDialog.vue'
 import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue'
 import { checkForUpdates as runAppUpdateCheck } from '@/utils/appUpdate'
+import { clearQQNeteaseLyricBridgeCache } from '@/utils/player/qqLyricBridge.mjs'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout, initializeCurrentAccountSession } from '@/utils/accountSession'
 import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from '@/utils/settingsSnapshot'
@@ -289,6 +290,7 @@ const setAppSettings = () => {
             lyricInterlude: lyricInterlude.value,
             searchAssistLimit: searchAssistLimit.value,
             showSongTranslation: playerStore.showSongTranslation,
+            qqNeteaseLyricBridge: playerStore.qqNeteaseLyricBridge,
             gaplessPlayback: playerStore.gaplessPlayback,
             audioVisualizer: playerStore.audioVisualizer,
             localHifiOutput: playerStore.localHifiOutput,
@@ -511,6 +513,12 @@ const setCoverBlur = () => setConfirmedPlayerFlag('coverBlur', PERFORMANCE_CONFI
 const setGaplessPlayback = () => setConfirmedPlayerFlag('gaplessPlayback', GAPLESS_CONFIRM_MESSAGE)
 const setAudioVisualizer = () => setConfirmedPlayerFlag('audioVisualizer', PERFORMANCE_CONFIRM_MESSAGE)
 const setMusicVideo = () => setConfirmedPlayerFlag('musicVideo', PERFORMANCE_CONFIRM_MESSAGE)
+// QQ 歌曲的翻译/罗马音要按「歌名 + 歌手」去网易云匹配：开关一变就得清掉匹配缓存，
+// 否则之前匹配失败（或被关闭时跳过）的歌曲会一直被缓存成「没有翻译」。
+const toggleQQNeteaseLyricBridge = () => {
+    playerStore.qqNeteaseLyricBridge = !playerStore.qqNeteaseLyricBridge
+    clearQQNeteaseLyricBridgeCache()
+}
 const buildHifiOutputConfig = () => ({
     mpvPath: playerStore.localHifiMpvPath,
     mode: playerStore.localHifiOutputMode,
@@ -787,6 +795,19 @@ const toggleLocalOnlyMode = async () => {
                                     </div>
                                     <Transition name="toggle">
                                         <div class="toggle-on" v-show="playerStore.showSongTranslation"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option">
+                            <div class="option-name">QQ 歌词翻译/罗马音匹配网易云</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="toggleQQNeteaseLyricBridge()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.qqNeteaseLyricBridge }">
+                                        {{ playerStore.qqNeteaseLyricBridge ? '已开启' : '已关闭' }}
+                                    </div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="playerStore.qqNeteaseLyricBridge"></div>
                                     </Transition>
                                 </div>
                             </div>

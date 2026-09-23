@@ -27,13 +27,14 @@ import { loadStoredPlaylist, persistPlaylistBeforeExit, saveStoredPlaybackProgre
 import { createNextShuffledCycle, createShuffledList, haveSameSongIds } from './player/queue'
 import { normalizeQueueSong, normalizeQueueSongs } from './player/queueSong'
 import { getPrefetchedSongAssets, getSongAssetKey, prefetchSongAssets } from './player/assetPrefetch'
-import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong } from './player/lyricFallback'
+import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong, searchNeteaseLyricBridgeCandidates, fetchNeteaseLyricBridgeTrack } from './player/lyricFallback'
 import { createDecodedAudioPlayer } from './player/webAudioGapless'
 import { ensureAudioCrossOrigin, normalizeAudioUrl } from './player/audioPlaybackCompat'
 import { resolveActivatedPlaybackPosition } from './player/activationProgress.mjs'
 import { createHifiOutputPlayer } from './player/hifiOutputPlayer'
 import { runIdleTask } from './player/idleTask'
-import { createEmptyLyric, hasUsableLyricPayload } from './player/lyricPayload'
+import { createEmptyLyric, getLyricText, hasUsableLyricPayload } from './player/lyricPayload'
+import { bridgeQQNeteaseLyricTracks } from './player/qqLyricBridge.mjs'
 import { verifyStoredMusicVideo } from './musicVideoLookup'
 import { isSeekInMusicVideoTiming, isValidMusicVideoTiming } from './musicVideoTiming'
 import { preparePlayAllSongs } from './player/playAllGuard.mjs'
@@ -1040,6 +1041,38 @@ function hydrateSongAssets(song, targetSongId, options = {}) {
     if (applyPrefetchedLyricForSong(song, targetSongId)) return Promise.resolve(true)
 
     return loadRemoteLyricForSong(song, targetSongId, options.emptyFallback === true)
+}
+
+// 开关打开后按需再补一次 QQ 歌曲的网易云翻译/罗马音：歌曲加载时开关可能还没打开
+//（或那次匹配失败并被缓存），用户点「译 / ABC」图标时再试一次，成功后立即刷新歌词行。
+export async function applyCurrentSongQQNeteaseLyricBridge() {
+    const currentSong = getCurrentSong()
+    const currentSongId = normalizePlayerSongId(songId.value || currentSong?.id)
+    if (!currentSong || !currentSongId || !isQQSong(currentSong) || isSirenSong(currentSong)) return false
+
+    const payload = lyric.value
+    if (!payload || typeof payload !== 'object') return false
+    if (getLyricText(payload.tlyric).trim() || getLyricText(payload.romalrc).trim()) return true
+
+    const targetIdentity = getPlaybackTargetIdentity(currentSong, currentSongId)
+    const isTargetCurrent = () => isPlaybackTargetCurrent(
+        { id: currentSongId, identity: targetIdentity },
+        getCurrentSong(),
+        songId.value,
+    )
+    const bridged = await bridgeQQNeteaseLyricTracks({
+        song: currentSong,
+        payload,
+        searchCandidates: searchNeteaseLyricBridgeCandidates,
+        fetchCandidateLyric: fetchNeteaseLyricBridgeTrack,
+        isActive: isTargetCurrent,
+        force: true,
+    })
+    if (!bridged || !isTargetCurrent()) return false
+
+    // 换一个新对象引用，让 usePlayerRuntime 的 lyric 监听重建歌词行（译文才会显示出来）
+    lyric.value = bridged
+    return true
 }
 
 function resetSongSwitchPosition() {

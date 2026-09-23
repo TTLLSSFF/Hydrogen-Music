@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import { songTime2 } from '../utils/time';
 import VueSlider from 'vue-slider-component';
 import OverflowMarquee from './base/OverflowMarquee.vue';
-import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode, prefetchIntelligenceMode, likeSong } from '../utils/player/lazy';
+import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode, prefetchIntelligenceMode, likeSong, applyCurrentSongQQNeteaseLyricBridge } from '../utils/player/lazy';
 import { getDjDetail, subDj } from '../api/dj';
 import { useUserStore } from '../store/userStore';
 import { usePlayerStore } from '../store/playerStore';
@@ -232,6 +232,42 @@ const hasRomaLyric = computed(() => {
     if (!lyricsObjArr.value || !Array.isArray(lyricsObjArr.value)) return false;
     return lyricsObjArr.value.some(item => item.rlyric && item.rlyric.trim() !== '');
 });
+
+// QQ 上游已不再返回歌词翻译与罗马音：旧版 fcg_query_lyric_new.fcg 与 musicu.fcg 的
+// PlayLyricInfo（含 hasMultiTrans=true 的歌）实测 trans/roma 恒为空，翻译只在官方
+// 客户端的加密协议里。两个图标因此会整块消失、看起来像功能坏了——这里对 QQ 歌曲
+// 保留图标，点下去明确提示上游没有这份数据（与 QQ 评论/喜欢写入的降级方式一致）。
+const isQQTranslationUnavailable = computed(() => isQQSong(currentSong.value) && !hasTransLyric.value);
+const isQQRomanizationUnavailable = computed(() => isQQSong(currentSong.value) && !hasRomaLyric.value);
+
+const toggleLyricTrack = async (field, unavailable, unavailableMessage) => {
+    if (unavailable.value) {
+        // 开关打开时按需再匹配一次网易云（歌曲加载时开关可能还没开），拿到就地显示
+        if (playerStore.qqNeteaseLyricBridge && isQQSong(currentSong.value)) {
+            const bridged = await applyCurrentSongQQNeteaseLyricBridge();
+            if (bridged) {
+                if (lyricType.value.indexOf(field) == -1) lyricType.value.push(field);
+                return;
+            }
+        }
+        noticeOpen(unavailableMessage, 2);
+        return;
+    }
+    const index = lyricType.value.indexOf(field);
+    if (index != -1) lyricType.value.splice(index, 1);
+    else lyricType.value.push(field);
+};
+
+const toggleTransLyric = () => toggleLyricTrack(
+    'trans',
+    isQQTranslationUnavailable,
+    playerStore.qqNeteaseLyricBridge ? '未在网易云匹配到该歌曲的翻译' : 'QQ 音乐未提供该歌曲的翻译',
+);
+const toggleRomaLyric = () => toggleLyricTrack(
+    'roma',
+    isQQRomanizationUnavailable,
+    playerStore.qqNeteaseLyricBridge ? '未在网易云匹配到该歌曲的罗马音' : 'QQ 音乐未提供该歌曲的罗马音（音译）',
+);
 
 const toAlbum = () => {
     const song = currentSong.value;
@@ -510,11 +546,12 @@ const toggleDjSub = async isSubscribe => {
                         p-id="16256"
                     ></path>
                 </svg>
-                <!-- 罗马音歌词图标 - 只有在当前歌曲有罗马音歌词时才显示 -->
+                <!-- 罗马音歌词图标 - 只有在当前歌曲有罗马音歌词时才显示；
+                     QQ 歌曲另有保留图标的降级（见 isQQRomanizationUnavailable） -->
                 <svg
                     t="1673182533775"
                     v-show="hasRomaLyric && lyricType.indexOf('roma') != -1 && lyricType.indexOf('noRoma') == -1"
-                    @click="lyricType.splice(lyricType.indexOf('roma'), 1)"
+                    @click="toggleRomaLyric"
                     class="icon lyric-toggle active"
                     viewBox="0 0 1024 1024"
                     version="1.1"
@@ -531,8 +568,8 @@ const toggleDjSub = async isSubscribe => {
                 </svg>
                 <svg
                     t="1673182533775"
-                    v-show="hasRomaLyric && lyricType.indexOf('roma') == -1 && lyricType.indexOf('noRoma') == -1"
-                    @click="lyricType.push('roma')"
+                    v-show="(hasRomaLyric || isQQRomanizationUnavailable) && lyricType.indexOf('roma') == -1 && lyricType.indexOf('noRoma') == -1"
+                    @click="toggleRomaLyric"
                     class="icon lyric-toggle inactive"
                     viewBox="0 0 1024 1024"
                     version="1.1"
@@ -547,11 +584,12 @@ const toggleDjSub = async isSubscribe => {
                         fill="#8a8a8a"
                     ></path>
                 </svg>
-                <!-- 翻译歌词图标 - 只有在当前歌曲有翻译歌词时才显示 -->
+                <!-- 翻译歌词图标 - 只有在当前歌曲有翻译歌词时才显示；
+                     QQ 歌曲另有保留图标的降级（见 isQQTranslationUnavailable） -->
                 <svg
                     t="1673182625534"
                     v-show="hasTransLyric && lyricType.indexOf('trans') != -1 && lyricType.indexOf('noTrans') == -1"
-                    @click="lyricType.splice(lyricType.indexOf('trans'), 1)"
+                    @click="toggleTransLyric"
                     class="icon lyric-toggle active"
                     viewBox="0 0 1024 1024"
                     version="1.1"
@@ -568,8 +606,8 @@ const toggleDjSub = async isSubscribe => {
                 </svg>
                 <svg
                     t="1673182625534"
-                    v-show="hasTransLyric && lyricType.indexOf('trans') == -1 && lyricType.indexOf('noTrans') == -1"
-                    @click="lyricType.push('trans')"
+                    v-show="(hasTransLyric || isQQTranslationUnavailable) && lyricType.indexOf('trans') == -1 && lyricType.indexOf('noTrans') == -1"
+                    @click="toggleTransLyric"
                     class="icon lyric-toggle inactive"
                     viewBox="0 0 1024 1024"
                     version="1.1"

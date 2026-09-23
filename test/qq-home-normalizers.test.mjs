@@ -131,6 +131,7 @@ test('QQ comments read both the newest and hot lists from the legacy payload', (
       ],
     },
     hot_comment: {
+      commenttotal: 37,
       commentlist: [
         {
           commentid: '1!hot',
@@ -157,7 +158,18 @@ test('QQ comments read both the newest and hot lists from the legacy payload', (
   assert.equal(result.comments[0].liked, false)
   // commenttotal 为 0 时退回实际条数，避免前端显示「0 条评论」
   assert.equal(result.total, 2)
+  // 热门列表有硬上限（实测最多 15 条），热门总数只能取 hot_comment.commenttotal，
+  // 否则面板会把页大小显示成真实热门数。
+  assert.equal(result.hotTotal, 37)
   assert.equal(result.hasMore, true)
+})
+
+test('QQ hot total falls back to the hot list length when the payload omits it', () => {
+  const result = normalizeQQCommentList({
+    comment: { commentlist: [] },
+    hot_comment: { commentlist: [{ commentid: '1!hot', rootcommentcontent: '热门', nick: 'n' }] },
+  })
+  assert.equal(result.hotTotal, 1)
 })
 
 test('QQ comments keep the commentId contract used by the panel', () => {

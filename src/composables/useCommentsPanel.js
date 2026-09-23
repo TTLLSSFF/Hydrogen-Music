@@ -85,6 +85,9 @@ export function useCommentsPanel({ emit } = {}) {
     const hotComments = ref([])
     const loading = ref(false)
     const total = ref(0)
+    // 热门区单独计数：上游热门列表有硬上限（实测最多 15 条），拿数组长度当数量
+    // 会把「HOT COMMENTS [15]」这类页大小显示成真实热门总数。
+    const hotTotal = ref(0)
     const hasMore = ref(true)
     const nextCursor = ref('0')
     const pageNo = ref(1)
@@ -272,6 +275,7 @@ export function useCommentsPanel({ emit } = {}) {
                 code: 200,
                 comments: (Array.isArray(list) ? list : []).map(normalizeQQCommentForPanel).filter(Boolean),
                 total: toPositiveInt(normalized.total),
+                hotTotal: toPositiveInt(normalized.hotTotal),
                 hasMore: isHotRequest ? false : !!normalized.hasMore,
                 cursor: '',
             }
@@ -446,9 +450,11 @@ export function useCommentsPanel({ emit } = {}) {
 
                 if (hotResponse && hotResponse.code === 200) {
                     hotComments.value = hotResponse.comments || []
+                    hotTotal.value = toPositiveInt(hotResponse.hotTotal) || hotComments.value.length
                     fetchSucceeded = true
                 } else {
                     hotComments.value = []
+                    hotTotal.value = 0
                 }
             } else {
                 const latestResponse = await requestCommentList({
@@ -636,6 +642,7 @@ export function useCommentsPanel({ emit } = {}) {
                 hotComments.value = []
                 floorReplies.value = {}
                 total.value = 0
+                hotTotal.value = 0
                 hasMore.value = false
                 nextCursor.value = '0'
                 pageNo.value = 1
@@ -684,6 +691,7 @@ export function useCommentsPanel({ emit } = {}) {
         hotComments,
         loading,
         total,
+        hotTotal,
         hasMore,
         newComment,
         replyingTo,

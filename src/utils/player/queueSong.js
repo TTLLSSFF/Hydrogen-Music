@@ -87,6 +87,11 @@ export function normalizeQueueSong(song) {
         'id',
         'songId',
         'musicId',
+        // QQ 评论/写接口只认数字资源 id（songmid 会被上游拒），归一化时它落在独立字段上。
+        // 队列若把它丢掉，入队后 getQQCommentId 就会取空、评论入口被隐藏。
+        'numericId',
+        'songid',
+        'song_id',
         'source',
         'sourceId',
         'mediaId',

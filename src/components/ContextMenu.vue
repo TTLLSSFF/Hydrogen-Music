@@ -16,6 +16,7 @@ import { useUserStore } from '../store/userStore';
    isQQSong,
  } from '../utils/providerPolicy.mjs'
 import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
+import { normalizeMusicSource } from '../utils/musicSource.mjs'
 import { withCoverParam } from '../utils/coverBackdrop'
 import { getLikelist, getUserPlaylistCount, getUserPlaylist } from '../api/user'
 import { getQQPlaylists } from '../api/qq'
@@ -48,12 +49,32 @@ const loadedQQPlaylistUserId = ref('')
 const qqWritablePlaylists = computed(() => (
   qqAccountStore.loggedIn ? qqDialogPlaylists.value : []
 ))
-const writablePlaylists = computed(() => [
-  ...neteaseWritablePlaylists.value,
-  ...qqWritablePlaylists.value,
-])
-// 创建歌单走的是网易云接口，没有网易云账号时该入口不可用
-const canCreateNeteasePlaylist = computed(() => !!userStore.user?.userId)
+// 待添加歌曲的来源：QQ 歌曲只能写 QQ 歌单（dirId + songmid），网易云歌曲只能写网易云歌单
+// （pid + songid）。两套歌单混在一个列表里时，用户会把 QQ 歌曲点进网易云歌单——必然失败。
+// 批量选择里混了两种来源时不做过滤（没有能同时覆盖两者的目标歌单）。
+const selectedSongSource = computed(() => {
+  const items = Array.isArray(otherStore.selectedItems) && otherStore.selectedItems.length > 0
+    ? otherStore.selectedItems
+    : [otherStore.selectedItem]
+  const sources = new Set(
+    items
+      .filter(item => item && typeof item === 'object')
+      .map(item => normalizeMusicSource(item.source)),
+  )
+  return sources.size === 1 ? Array.from(sources)[0] : ''
+})
+const writablePlaylists = computed(() => {
+  if (selectedSongSource.value === 'qq') return qqWritablePlaylists.value
+  if (selectedSongSource.value === 'netease') return neteaseWritablePlaylists.value
+  return [
+    ...neteaseWritablePlaylists.value,
+    ...qqWritablePlaylists.value,
+  ]
+})
+// 创建歌单走的是网易云接口，QQ 歌曲写不进新建的网易云歌单，因此只对网易云歌曲展示该入口
+const canCreateNeteasePlaylist = computed(() => (
+  !!userStore.user?.userId && selectedSongSource.value !== 'qq'
+))
 const getPlaylistCover = item => withCoverParam(
   item?.coverImgUrl || item?.img1v1Url || item?.picUrl || item?.coverUrl,
   150,

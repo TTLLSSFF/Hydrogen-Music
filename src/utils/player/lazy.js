@@ -90,3 +90,4 @@ export const savePlaylist = lazyPlayerExport('savePlaylist');
 export const clearQQPlaybackState = lazyPlayerExport('clearQQPlaybackState');
 export const initPlayerExternalBridge = lazyPlayerExport('initPlayerExternalBridge');
 export const resolveDownloadPlaybackInfo = lazyPlayerExport('resolveDownloadPlaybackInfo');
+export const applyCurrentSongQQNeteaseLyricBridge = lazyPlayerExport('applyCurrentSongQQNeteaseLyricBridge');

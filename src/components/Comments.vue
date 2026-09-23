@@ -10,6 +10,7 @@ const {
     hotComments,
     loading,
     total,
+    hotTotal,
     hasMore,
     newComment,
     replyingTo,
@@ -90,7 +91,7 @@ const {
             <div class="section-header">
                 <div class="section-title-wrapper">
                     <span class="section-title">HOT COMMENTS</span>
-                    <span class="section-count">[{{ hotComments.length }}]</span>
+                    <span class="section-count">[{{ hotTotal }}]</span>
                 </div>
                 <div class="section-line"></div>
             </div>
