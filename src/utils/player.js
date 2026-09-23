@@ -2381,6 +2381,8 @@ export function addToList(listType, songlist, listMeta = null, options = {}) {
     // if (listInfo.value && listInfo.value.type === 'personalfm' && listType !== 'personalfm') {
     //     ...
     // }
+    // 队列被整体替换后，之前登记的「心动模式待触发」就不该再生效
+    playerStore.heartModeArmed = false
     const normalizedSongList = (options.normalized === true ? songlist : normalizeQueueSongs(songlist))
         .filter(song => !userStore.localOnlyMode || song.type === 'local')
     let listId = 'none'
@@ -2953,6 +2955,7 @@ export function playLast() {
     const target = getPlaybackTarget(PLAYBACK_DIRECTION_PREVIOUS)
     if (!target) return
     addSong(target.id, target.index, true)
+    void applyArmedHeartModeOnSongSwitch()
 }
 export function playNext() {
     // FM模式下的特殊逻辑：触发自定义事件播放下一首FM歌曲
@@ -2969,6 +2972,7 @@ export function playNext() {
     if (target.nextShuffledList) commitNextShuffledCycle(target.nextShuffledList)
     addSong(target.id, target.index, true)
     if (target.nextShuffledList) savePlaylist()
+    void applyArmedHeartModeOnSongSwitch()
 }
 const clearLycAnimation = () => {
     isLyricDelay.value = false
@@ -3041,16 +3045,32 @@ export async function changePlayMode() {
         return
     }
 
+    // 已登记未生效时再点一下就是取消：同时继续往下走一档，
+    // 否则「随机 → 心动」这一步会一直卡在原地（点了又取消、取消了又点）。
+    if (playerStore.heartModeArmed) {
+        playerStore.heartModeArmed = false
+        noticeOpen('已取消心动模式', 2)
+        applyPlayMode(playMode.value != 3 ? playMode.value + 1 : 0, { inFM: false })
+        return
+    }
+
+    if (playMode.value == 3 && isFavoritePlaylistPlaybackContext()) {
+        if (armHeartMode()) return
+    }
+
     applyPlayMode(playMode.value != 3 ? playMode.value + 1 : 0, { inFM: false })
 }
 
-export async function toggleHeartMode() {
-    if (!listInfo.value || listInfo.value.type !== 'playlist' || !listInfo.value.id) {
-        noticeOpen('心动模式需要正在播放歌单', 2)
-        return false
-    }
-    if (!songList.value || songList.value.length === 0) {
-        noticeOpen('心动模式需要正在播放歌单', 2)
+/**
+ * 登记心动模式。
+ *
+ * 这里只写状态、不拉推荐：播放顺序是一档一档点过去的，如果点到的瞬间就替换队列，
+ * 单纯调整播放顺序也会把正在听的歌单换掉。真正的推荐拉取交给下一次切歌
+ * （见 applyArmedHeartModeOnSongSwitch）。
+ */
+function armHeartMode() {
+    if (!userStore.user?.userId) {
+        noticeOpen('登录后才能使用心动模式', 2)
         return false
     }
     const qqBlockReason = getHeartModeBlockReason(songList.value)
@@ -3058,54 +3078,23 @@ export async function toggleHeartMode() {
         noticeOpen(qqBlockReason, 2)
         return false
     }
-    const seedId = songId.value || songList.value[0].id
-    const playlistId = listInfo.value.id
-    try {
-        const result = await getIntelligenceList({ id: seedId, pid: playlistId })
-        if (result.data && result.data.length > 0) {
-            const newList = result.data.map(item => item.songInfo).filter(Boolean)
-            if (newList.length > 0) {
-                const normalizedList = normalizeQueueSongs(newList)
-                songList.value = normalizedList
-                shuffledList.value = null
-                shuffleIndex.value = null
-                if (playMode.value == 3) {
-                    applyPlayMode(3, { syncExternal: false })
-                }
-                addSong(songList.value[0].id, 0, true)
-                return true
-            }
-        }
-        noticeOpen('心动模式暂不可用', 2)
-        return false
-    } catch (error) {
-        console.error('心动模式加载失败:', error)
-        noticeOpen('心动模式加载失败', 2)
-        return false
-    }
+    playerStore.heartModeArmed = true
+    noticeOpen('心动模式已开启 · 切歌后生效', 2)
+    return true
 }
 
 /**
- * 拉取心动模式推荐（不改动播放器状态）。
- * 私人漫游等没有歌单上下文的场景以当前正在播放的歌曲为种子，
- * pid 退回「我喜欢的音乐」——上游只接受该类型的歌单。
+ * 切歌时的心动模式触发点。
+ *
+ * 只在「我喜欢的音乐」上下文里生效，且只触发一次：用完就清掉登记，
+ * 之后就在生成的推荐队列里按顺序播放。
  */
-export async function fetchHeartModeRecommendations({ seedId, playlistId } = {}) {
-    const resolvedSeedId = seedId || songId.value
-    const resolvedPlaylistId = playlistId
-        || (listInfo.value?.type === 'playlist' ? listInfo.value.id : '')
-        || userStore.favoritePlaylistId
-    if (!resolvedSeedId || !resolvedPlaylistId) return []
+async function applyArmedHeartModeOnSongSwitch() {
+    if (!playerStore.heartModeArmed) return false
+    if (!isFavoritePlaylistPlaybackContext()) return false
 
-    try {
-        const result = await getIntelligenceList({ id: resolvedSeedId, pid: resolvedPlaylistId })
-        if (Number(result?.code) !== 200) return []
-        const items = Array.isArray(result?.data) ? result.data : []
-        return normalizeQueueSongs(items.map(item => item?.songInfo || item?.song).filter(Boolean))
-    } catch (error) {
-        console.error('心动模式推荐加载失败:', error)
-        return []
-    }
+    playerStore.heartModeArmed = false
+    return startIntelligencePlayback({ preserveCurrent: true })
 }
 
 export function playAll(listType, list, listMeta = null) {

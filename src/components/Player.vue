@@ -98,6 +98,7 @@ const {
     coverBlur,
     showSongTranslation,
     isDesktopLyricOpen,
+    heartModeArmed,
 } = storeToRefs(playerStore);
 const playlistWidgetLoaded = ref(false);
 const isActivePlaylistSurface = computed(() => getActivePlaylistSurface(widgetState.value) === 'player');
@@ -899,7 +900,7 @@ const toggleDjSub = async isSubscribe => {
                 </svg>
 
                 <svg
-                    v-show="isIntelligenceMode"
+                    v-show="isIntelligenceMode || heartModeArmed"
                     @click="changePlayMode()"
                     class="icon intelligence-mode-icon"
                     viewBox="0 0 32 32"

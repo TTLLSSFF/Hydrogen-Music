@@ -116,6 +116,7 @@ export const usePlayerStore = defineStore('playerStore', {
             // volumeBeforeMuted: 0,//静音前音量
             playMode: [0,1,2,3].includes(Number(persisted.playMode)) ? Number(persisted.playMode) : 0,//0为顺序播放，1为列表循环，2为单曲循环，3为随机播放
             listInfo: persisted.listInfo && typeof persisted.listInfo === 'object' && !Array.isArray(persisted.listInfo) ? persisted.listInfo : null,
+            heartModeArmed: false, // 心动模式已登记、等待下一次切歌才真正拉取推荐（不需要持久化）
             songList: null,//播放列表
             shuffledList: null,//随机播放列表
             shuffleIndex: toPositiveInteger(persisted.shuffleIndex),//随机播放列表的索引
