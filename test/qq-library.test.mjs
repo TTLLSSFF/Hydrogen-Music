@@ -65,6 +65,40 @@ test('QQ playlist detail keeps list summary metadata when detail omits it', () =
   )
 })
 
+// 「我喜欢」的封面以侧边栏列表项为准：详情接口回的是官方那张爱心封面，与列表里的
+// 歌曲封面不是同一张图，详情页必须和侧边栏显示同一张（用户要求统一成列表那张）。
+test('QQ playlist detail keeps the list summary cover when it has one', () => {
+  const merged = mergeQQPlaylistSummary(
+    {
+      id: '201',
+      source: 'qq',
+      name: '我喜欢',
+      coverImgUrl: 'https://y.gtimg.cn/photo/song-cover.jpg',
+      trackCount: 4,
+    },
+    {
+      id: '201',
+      source: 'qq',
+      title: '我喜欢',
+      logo: 'https://y.gtimg.cn/photo/liked-heart.jpg',
+      songnum: 4,
+      songlist: [{ mid: 'mid-1' }],
+    },
+  )
+
+  assert.equal(merged.coverImgUrl, 'https://y.gtimg.cn/photo/song-cover.jpg')
+  assert.equal(merged.picUrl, 'https://y.gtimg.cn/photo/song-cover.jpg')
+})
+
+test('QQ playlist detail falls back to its own cover when the list summary has none', () => {
+  const merged = mergeQQPlaylistSummary(
+    { id: '1', source: 'qq', name: '歌单' },
+    { id: '1', source: 'qq', title: '歌单', logo: 'https://y.gtimg.cn/photo/detail.jpg', songlist: [] },
+  )
+
+  assert.equal(merged.coverImgUrl, 'https://y.gtimg.cn/photo/detail.jpg')
+})
+
 test('QQ playlist detail retries alternate liked-playlist ids only after an empty result', async () => {
   const calls = []
   const result = await loadQQPlaylistDetail(async id => {

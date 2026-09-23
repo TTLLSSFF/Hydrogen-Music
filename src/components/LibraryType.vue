@@ -95,6 +95,7 @@
     try {
       const likedResponse = await getQQLikedSongs({ uin: requestUserId, limit: 1, offset: 0 })
       if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      // 列表项保留元信息里的封面（歌曲封面）：详情页合并时以它为准，两处显示同一张
       return normalizeQQLikedPlaylist(likedResponse)
     } catch (error) {
       if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false

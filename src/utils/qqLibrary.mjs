@@ -171,6 +171,11 @@ export function mergeQQPlaylistSummary(summary, detail) {
   const trackCount = Number(normalizedDetail.trackCount) > 0
     ? normalizedDetail.trackCount
     : base.trackCount
+  // 封面以列表项（summary）为准：QQ 的列表/元信息接口给的是歌曲封面，而歌单详情接口
+  // 对「我喜欢」回的是官方那张爱心封面，两者不是同一张图。侧边栏用列表项、详情页用
+  // 详情接口，就会各显示一张。这里统一成列表项那张（列表项没有封面时才退回详情接口的）。
+  const coverImgUrl = hasValue(base.coverImgUrl) ? base.coverImgUrl : normalizedDetail.coverImgUrl
+  const picUrl = hasValue(base.picUrl) ? base.picUrl : normalizedDetail.picUrl
 
   return {
     ...base,
@@ -178,8 +183,8 @@ export function mergeQQPlaylistSummary(summary, detail) {
     id: hasValue(normalizedDetail.id) ? normalizedDetail.id : base.id,
     source: 'qq',
     name: hasUsableDetailName ? normalizedDetail.name : base.name,
-    coverImgUrl: hasValue(normalizedDetail.coverImgUrl) ? normalizedDetail.coverImgUrl : base.coverImgUrl,
-    picUrl: hasValue(normalizedDetail.picUrl) ? normalizedDetail.picUrl : base.picUrl,
+    coverImgUrl,
+    picUrl,
     trackCount,
     ...(Number(trackCount) > 0 ? { size: Number(trackCount) } : {}),
   }

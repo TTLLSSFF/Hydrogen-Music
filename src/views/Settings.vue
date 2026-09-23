@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onActivated, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, nextTick, onActivated, onBeforeUnmount, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { noticeOpen, dialogOpen } from '@/utils/dialog'
 import { applySettingsSnapshot, initSettings } from '@/utils/initApp'
@@ -628,7 +628,9 @@ const toGithub = () => {
 const checkForUpdates = () => {
     if (isDesktop && typeof windowApi.checkForUpdate === 'function') {
         showUpdateDialog.value = true
-        windowApi.checkForUpdate()
+        // 弹窗是在 onMounted 里订阅更新事件的，等它挂载后再发起检查：
+        // 否则「检查更新」很快返回（自动更新不可用等）时事件没人接收，弹窗会一直停在“正在检查更新”
+        nextTick(() => windowApi.checkForUpdate())
         return
     }
     void runAppUpdateCheck().then(result => {

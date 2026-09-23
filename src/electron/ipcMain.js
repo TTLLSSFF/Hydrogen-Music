@@ -110,6 +110,42 @@ async function showOpenDirectoryDialog() {
     return filePaths[0]
 }
 
+// 「检查更新」必须是会结束的：electron-updater 在未打包（开发）环境会直接返回 null，
+// 网络/代理不通时又会一直挂着（既不报错也不返回），两种情况都不会给渲染层任何事件，
+// 更新弹窗就会永远转圈。所以这里统一兜底到 GitHub Release 接口（macOS 走的一直是这条路径），
+// 保证「发现新版本 / 已是最新 / 检查失败」三个终态一定会到达渲染层。
+const UPDATE_CHECK_TIMEOUT_MS = 12000
+const UPDATE_HTTP_TIMEOUT_MS = 8000
+const UPDATE_LATEST_RELEASE_API = 'https://api.github.com/repos/TTLLSSFF/Hydrogen-Music/releases/latest'
+const UPDATE_RELEASE_TAG_PAGE = 'https://github.com/TTLLSSFF/Hydrogen-Music/releases/tag/'
+
+function isNewerVersion(candidate, current) {
+    const toParts = value => String(value || '').split('.').map(part => parseInt(part, 10) || 0)
+    const next = toParts(candidate)
+    const now = toParts(current)
+    for (let index = 0; index < Math.max(next.length, now.length); index += 1) {
+        const nextPart = next[index] || 0
+        const nowPart = now[index] || 0
+        if (nextPart > nowPart) return true
+        if (nextPart < nowPart) return false
+    }
+    return false
+}
+
+async function fetchLatestGitHubRelease() {
+    const { data } = await axios.get(UPDATE_LATEST_RELEASE_API, {
+        headers: { 'User-Agent': 'HydrogenMusic-Updater' },
+        timeout: UPDATE_HTTP_TIMEOUT_MS,
+    })
+    let latest = String(data?.tag_name || data?.name || '')
+    if (latest.startsWith('v')) latest = latest.slice(1)
+    if (!latest) throw new Error('GitHub Release 未返回版本号')
+    return {
+        version: latest,
+        pageUrl: data?.html_url || `${UPDATE_RELEASE_TAG_PAGE}v${latest}`,
+    }
+}
+
 module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
     moduleState.win = win
     moduleState.app = app
@@ -1789,72 +1825,101 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
 
     // 处理应用更新相关的 IPC 事件
     ipcMain.on('check-for-update', async () => {
-        // 在 macOS 上，改为使用 GitHub API 手动检查
-        if (process.platform === 'darwin') {
-            try {
-                const current = app.getVersion();
-                const api = 'https://api.github.com/repos/TTLLSSFF/Hydrogen-Music/releases/latest';
-                const { data } = await axios.get(api, { headers: { 'User-Agent': 'HydrogenMusic-Updater' } });
-                let latest = data.tag_name || data.name || '';
-                if (typeof latest === 'string' && latest.startsWith('v')) latest = latest.slice(1);
-
-                const isNewer = (a, b) => {
-                    const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
-                    const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
-                    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-                        const da = pa[i] || 0, db = pb[i] || 0;
-                        if (da > db) return true;
-                        if (da < db) return false;
-                    }
-                    return false;
-                };
-
-                if (latest && isNewer(latest, current)) {
-                    const pageUrl = data.html_url || `https://github.com/TTLLSSFF/Hydrogen-Music/releases/tag/v${latest}`;
-                    console.log('手动检查更新完成（macOS），发现新版本:', latest, pageUrl);
-                    win.webContents.send('manual-update-available', latest, pageUrl);
-                } else {
-                    console.log('手动检查更新完成（macOS），当前已是最新版本');
-                    win.webContents.send('update-not-available');
-                }
-            } catch (error) {
-                console.error('手动检查更新失败（macOS）:', error);
-                win.webContents.send('update-error', error.message || '检查更新失败');
+        // 一次手动检查只允许一个终态：事件监听和超时是并发的，谁先到谁说话
+        let settled = false
+        let timeoutTimer = null
+        let fallbackPending = false
+        let updaterError = ''
+        const finish = (channel, ...args) => {
+            if (settled) return
+            settled = true
+            if (timeoutTimer) {
+                clearTimeout(timeoutTimer)
+                timeoutTimer = null
             }
-            return;
+            win.webContents.send(channel, ...args)
         }
 
-        // 其他平台走 electron-updater
+        // GitHub Release 兜底检查：自动更新器不可用、报错、超时都走这里，
+        // 至少给用户一个确定的结果，而不是让弹窗停在「正在检查更新」
+        const checkViaGitHubRelease = async (reason = '') => {
+            if (settled || fallbackPending) return
+            fallbackPending = true
+            if (reason) console.warn(`[更新] ${reason}，改用 GitHub Release 接口检查`)
+            try {
+                const release = await fetchLatestGitHubRelease()
+                if (isNewerVersion(release.version, app.getVersion())) {
+                    console.log('[更新] 发现新版本:', release.version, release.pageUrl)
+                    finish('manual-update-available', release.version, release.pageUrl)
+                    return
+                }
+                console.log('[更新] 当前已是最新版本:', app.getVersion())
+                finish('update-not-available')
+            } catch (error) {
+                const message = error?.message || '检查更新失败'
+                console.error('[更新] 检查更新失败:', message)
+                finish('update-error', (updaterError ? `${message}（自动更新：${updaterError}）` : message).slice(0, 200))
+            }
+        }
+
+        // macOS 没有可用的自动更新包（未签名），一直走 GitHub 接口
+        if (process.platform === 'darwin') {
+            await checkViaGitHubRelease()
+            return
+        }
+
+        // 其他平台优先走 electron-updater（能拿到下载地址才能应用内更新）
         const { autoUpdater } = require("electron-updater");
-        // 为手动检查设置一次性事件监听器
-        const handleUpdateAvailable = (info) => {
-            console.log('手动检查更新完成，发现新版本:', info.version);
-            win.webContents.send('manual-update-available', info.version);
+        const detachListeners = () => {
             autoUpdater.removeListener('update-available', handleUpdateAvailable);
             autoUpdater.removeListener('update-not-available', handleUpdateNotAvailable);
             autoUpdater.removeListener('error', handleUpdateError);
+        };
+        // 为手动检查设置一次性事件监听器
+        const handleUpdateAvailable = (info) => {
+            console.log('手动检查更新完成，发现新版本:', info?.version);
+            detachListeners();
+            finish('manual-update-available', info?.version);
         };
         const handleUpdateNotAvailable = () => {
             console.log('手动检查更新完成，当前已是最新版本');
-            win.webContents.send('update-not-available');
-            autoUpdater.removeListener('update-available', handleUpdateAvailable);
-            autoUpdater.removeListener('update-not-available', handleUpdateNotAvailable);
-            autoUpdater.removeListener('error', handleUpdateError);
+            detachListeners();
+            finish('update-not-available');
         };
+        // 自动更新器报错（代理、限流、release 还是草稿…）时不把上游报文直接弹给用户，
+        // 先用 GitHub 接口确认一遍是否真的有新版，那边也失败才报错
         const handleUpdateError = (error) => {
-            console.error('手动检查更新失败:', error);
-            win.webContents.send('update-error', error.message);
-            autoUpdater.removeListener('update-available', handleUpdateAvailable);
-            autoUpdater.removeListener('update-not-available', handleUpdateNotAvailable);
-            autoUpdater.removeListener('error', handleUpdateError);
+            updaterError = error?.message || String(error || '');
+            console.error('手动检查更新失败:', updaterError);
+            detachListeners();
+            void checkViaGitHubRelease('自动更新器报错');
         };
         autoUpdater.once('update-available', handleUpdateAvailable);
         autoUpdater.once('update-not-available', handleUpdateNotAvailable);
         autoUpdater.once('error', handleUpdateError);
-        autoUpdater.checkForUpdates().catch(error => {
-            console.error('检查更新失败:', error);
-            win.webContents.send('update-error', error.message);
-        });
+        // 网络黑洞时 electron-updater 既不报错也不返回，到点就放弃它
+        timeoutTimer = setTimeout(() => {
+            timeoutTimer = null;
+            detachListeners();
+            // 放弃掉这个挂在 updater 上的 promise，否则下次点击会继续等它、
+            // 一直走到超时才会走兜底检查
+            try { autoUpdater.checkForUpdatesPromise = null } catch (_) {}
+            void checkViaGitHubRelease(`自动更新器 ${UPDATE_CHECK_TIMEOUT_MS / 1000}s 无响应`);
+        }, UPDATE_CHECK_TIMEOUT_MS);
+        try {
+            const result = await autoUpdater.checkForUpdates();
+            // 未打包运行 / 缺少 app-update.yml 时 electron-updater 直接返回 null 且不发事件
+            if (!settled && result == null) {
+                detachListeners();
+                void checkViaGitHubRelease('自动更新不可用（未打包运行或缺少 app-update.yml）');
+            }
+        } catch (error) {
+            if (!settled) {
+                updaterError = error?.message || String(error || '');
+                detachListeners();
+                void checkViaGitHubRelease('自动更新器报错');
+            }
+        }
     });
 
     ipcMain.on('download-update', () => {
