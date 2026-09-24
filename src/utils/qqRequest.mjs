@@ -1,7 +1,6 @@
 import { containsQQSecret, sanitizeQQPayload } from './qqSecurity.mjs'
-import { shouldUseAnonymousValidation, assertAnonymousValidationRequest } from './androidValidation.mjs'
 
-const QQ_API_BASE_URL = import.meta.env?.VITE_QQ_API_BASE_URL || '/api/qq'
+const QQ_API_BASE_URL = '/api/qq'
 const QQ_REQUEST_TIMEOUT_MS = 10000
 
 function assertSafeQQRequest(config) {
@@ -26,9 +25,8 @@ export function createQQRequestConfig(config = {}) {
     url,
     method: String(config.method || 'get').toLowerCase(),
   }
-  const androidAnonymousValidation = shouldUseAnonymousValidation(safeConfig, 'qq')
   try {
-    if (!androidAnonymousValidation && typeof localStorage !== 'undefined' && !config.headers?.['X-QQ-Music-Session']) {
+    if (typeof localStorage !== 'undefined' && !config.headers?.['X-QQ-Music-Session']) {
       const raw = localStorage.getItem('qqAccountStore')
       const token = raw ? JSON.parse(raw)?.sessionToken : ''
       if (token) safeConfig.headers = { ...(safeConfig.headers || {}), 'X-QQ-Music-Session': token }
@@ -42,7 +40,6 @@ export function createQQRequestConfig(config = {}) {
   safeConfig.withCredentials = false
   safeConfig.credentials = 'omit'
 
-  if (androidAnonymousValidation) assertAnonymousValidationRequest(safeConfig, 'qq')
   assertSafeQQRequest(safeConfig)
   return safeConfig
 }
