@@ -5,6 +5,8 @@
   const otherStore = useOtherStore()
   const show = ref(true)
   const showChangelog = ref(false)
+  const isDesktop = typeof windowApi !== 'undefined' && typeof windowApi.toRegister === 'function'
+  const goToDownload = () => windowApi.toRegister('https://github.com/TTLLSSFF/Hydrogen-Music/releases/latest')
 
   const stripMarkdown = value => String(value || '')
     .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -83,7 +85,8 @@
                         <div class="version">{{ otherStore.newVersion }}</div>
                     </div>
                     <div class="update-option">
-                        <div class="to-update" @click="openChangelog()">查看更新日志</div>
+                        <div v-if="isDesktop" class="to-update" @click="goToDownload()">前往下载</div>
+                        <div v-else class="to-update" @click="openChangelog()">查看更新日志</div>
                         <div class="close" @click="close()">不要了，走了</div>
                         <svg t="1676132470655" class="close-icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2020" width="200" height="200"><path d="M745.610572 75.641771l-496.221642 0c-28.741601 0-51.259454 25.084305-51.259454 57.107649l0 789.362029 74.170257 0 0-772.299421 445.333648 0-331.506183 29.153994 0 766.881015 336.575642-27.442002 0 3.706415 74.170257 0L796.873096 132.74942C796.875143 100.725052 774.35729 75.641771 745.610572 75.641771zM428.767344 533.386076c-11.995195 0-21.719674-9.724479-21.719674-21.719674 0-11.995195 9.724479-21.719674 21.719674-21.719674 11.995195 0 21.719674 9.724479 21.719674 21.719674C450.487018 523.661597 440.763562 533.386076 428.767344 533.386076z" fill="#ffffff" p-id="2021"></path></svg>
                     </div>
