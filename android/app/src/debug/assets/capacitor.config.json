@@ -1,0 +1,12 @@
+{
+  "appId": "io.hydrogenmusic.validation",
+  "appName": "Hydrogen 验证版",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  },
+  "android": {
+    "loggingBehavior": "none",
+    "webContentsDebuggingEnabled": true
+  }
+}

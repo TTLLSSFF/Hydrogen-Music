@@ -770,6 +770,38 @@ const QQ_COMMENT_URL_TEMPLATE = 'https://c.y.qq.com/base/fcgi-bin/fcg_global_com
 const QQ_COMMENT_SORT_TYPES = new Set([1, 2])
 const QQ_COMMENT_DEFAULT_SORT_TYPE = 1
 
+// 跨域白名单：Android 验证版（Capacitor WebView）加载的是本地打包资源，页面来源是
+// localhost，访问公网网关时属于跨域请求。桌面端走主进程 IPC、网页端是同源 /api/qq，
+// 都不需要 CORS，因此这里只放行 WebView 自身的来源，避免放开任意站点。
+const QQ_CORS_ALLOWED_ORIGINS = new Set([
+  'http://localhost',
+  'https://localhost',
+  'capacitor://localhost',
+])
+
+function createQQCorsMiddleware() {
+  return async function qqCorsMiddleware(ctx, next) {
+    const origin = String(ctx.get('origin') || '')
+    if (!QQ_CORS_ALLOWED_ORIGINS.has(origin)) {
+      await next()
+      return
+    }
+
+    ctx.set('Access-Control-Allow-Origin', origin)
+    ctx.set('Access-Control-Allow-Credentials', 'true')
+    ctx.set('Vary', 'Origin')
+    // 预检必须在业务路由之前结束：安全中间件对非 GET 路由一律返回 405
+    if (ctx.method === 'OPTIONS') {
+      ctx.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+      ctx.set('Access-Control-Allow-Headers', ctx.get('access-control-request-headers') || 'Content-Type')
+      ctx.status = 204
+      return
+    }
+
+    await next()
+  }
+}
+
 function createQQSecurityMiddleware(options = {}) {
   const getLoginQr = options.getLoginQr || (async () => qqServices.getQQLoginQr({}))
   const checkLoginQr = options.checkLoginQr || checkQQLoginQrWithStatus
@@ -1790,6 +1822,10 @@ app.middleware.unshift(createQQSecurityMiddleware({
   allowServerSession: false,
 }))
 
+// CORS 必须排在安全中间件之前：预检 OPTIONS 不属于业务路由，
+// 否则会被安全中间件的 405 拦截，浏览器拿不到放行结果。
+app.middleware.unshift(createQQCorsMiddleware())
+
 function startQQMusicApi(port = QQ_API_PORT) {
   if (server) return Promise.resolve(server)
   return new Promise((resolve, reject) => {
@@ -1811,6 +1847,7 @@ module.exports = {
   startQQMusicApi,
   stopQQMusicApi,
   createQQSecurityMiddleware,
+  createQQCorsMiddleware,
   hasSensitiveQQQuery,
   persistQQLoginSession,
   clearQQLoginSession,

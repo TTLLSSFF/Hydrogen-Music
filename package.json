@@ -17,6 +17,9 @@
     "preview": "vite preview",
     "postinstall": "node scripts/patch-ncm-api.cjs",
     "serve": "node web-server.js",
+    "android:gateway": "node scripts/android-validation-gateway.cjs",
+    "android:sync": "cap sync android",
+    "android:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-debug.ps1",
     "start": "nodemon --exec electron . --watch ./ --ext js,vue,html,css,json",
     "_dist": "vite build && node scripts/build.js -p always",
     "dist": "vite build && node scripts/build.js -p never",
@@ -24,6 +27,8 @@
     "mpv:download:all": "node scripts/mpv-audio-only/download-artifacts.cjs --platform all"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
     "@neteasecloudmusicapienhanced/api": "^4.35.1",
     "@sansenjian/qq-music-api": "^2.5.0",
     "axios": "^1.12.2",
@@ -41,6 +46,7 @@
     "node-id3": "^0.2.9"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "electron": "^38.3.0",
     "electron-builder": "^26.1.0",

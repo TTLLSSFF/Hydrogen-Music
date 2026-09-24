@@ -6,7 +6,9 @@ import { spawnSync } from 'node:child_process'
 
 const require = createRequire(import.meta.url)
 const {
+  app,
   createQQSecurityMiddleware,
+  createQQCorsMiddleware,
   hasSensitiveQQQuery,
   persistQQLoginSession,
   clearQQLoginSession,
@@ -1365,4 +1367,53 @@ test('QQ write endpoints are reachable through the capability allowlist', () => 
   // 旧的写探针路径已随正式端点一起移除
   assert.equal(isQQPathAllowed('/user/addSongList'), false)
   assert.equal(isQQPathAllowed('/user/delSongList'), false)
+})
+
+// Android 验证版的 WebView 来源是 localhost，访问公网网关属于跨域请求。
+// CORS 只放行 WebView 自身来源，且预检必须在安全中间件之前结束。
+function createCorsContext(method, headers = {}) {
+  const responseHeaders = new Map()
+  return {
+    method,
+    headers: { ...headers },
+    set(name, value) { responseHeaders.set(String(name).toLowerCase(), value) },
+    get(name) {
+      const field = String(name).toLowerCase()
+      return this.headers[field] ?? ''
+    },
+    responseHeaders,
+  }
+}
+
+test('QQ CORS replies to WebView preflight before the security middleware can reject it', async () => {
+  const corsMiddleware = app.middleware[0]
+  const context = createCorsContext('OPTIONS', {
+    origin: 'http://localhost',
+    'access-control-request-method': 'GET',
+    'access-control-request-headers': 'x-qq-music-session',
+  })
+  let reachedNext = false
+  await corsMiddleware(context, async () => { reachedNext = true })
+
+  assert.equal(reachedNext, false)
+  assert.equal(context.status, 204)
+  assert.equal(context.responseHeaders.get('access-control-allow-origin'), 'http://localhost')
+  assert.equal(context.responseHeaders.get('access-control-allow-credentials'), 'true')
+  assert.match(context.responseHeaders.get('access-control-allow-headers'), /x-qq-music-session/i)
+})
+
+test('QQ CORS is limited to the WebView origin and keeps credentials readable', async () => {
+  const corsMiddleware = createQQCorsMiddleware()
+
+  const allowed = createCorsContext('GET', { origin: 'http://localhost' })
+  let allowedNext = false
+  await corsMiddleware(allowed, async () => { allowedNext = true })
+  assert.equal(allowedNext, true)
+  assert.equal(allowed.responseHeaders.get('access-control-allow-origin'), 'http://localhost')
+
+  const foreign = createCorsContext('GET', { origin: 'https://evil.example' })
+  let foreignNext = false
+  await corsMiddleware(foreign, async () => { foreignNext = true })
+  assert.equal(foreignNext, true)
+  assert.equal(foreign.responseHeaders.get('access-control-allow-origin'), undefined)
 })

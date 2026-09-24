@@ -5,6 +5,7 @@ import { useUserStore } from '../store/userStore'
 import { clearAccountScopedState } from './accountState'
 import { noticeOpen } from "./dialog";
 import { resolveNcmBridgeUrl } from './ncmApiBridge.mjs'
+import { shouldUseAnonymousValidation, assertAnonymousValidationRequest } from './androidValidation.mjs'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 const request = axios.create({
@@ -253,6 +254,7 @@ function triggerAutoLogout(reason) {
 
 // 请求拦截器
 request.interceptors.request.use(async function (config) {
+  if (shouldUseAnonymousValidation(config)) return assertAnonymousValidationRequest(config)
   await ensureNcmApiReady()
   config.params = config.params || {}
   config.headers = config.headers || {}
