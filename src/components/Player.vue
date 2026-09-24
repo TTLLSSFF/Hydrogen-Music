@@ -44,6 +44,9 @@ const switchRightPanel = mode => {
 
 const commentCountText = computed(() => props.commentCountBadge || '0');
 const commentCountLen = computed(() => commentCountText.value.length);
+// #region debug-point D:badge-prop
+watch(() => props.commentCountBadge, badge => { if (import.meta.env.DEV) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'D', location: 'Player:badge-prop', msg: '[DEBUG] badge prop', data: { badge, text: commentCountText.value }, ts: Date.now() }) }).catch(() => {}); }, { immediate: true, flush: 'post' });
+// #endregion
 
 const commentCountBadgeWidth = computed(() => {
     const len = commentCountLen.value;

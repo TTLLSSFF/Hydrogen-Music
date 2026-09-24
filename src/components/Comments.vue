@@ -9,6 +9,8 @@ const {
     comments,
     hotComments,
     loading,
+    loadError,
+    retryComments,
     total,
     hotTotal,
     hasMore,
@@ -252,7 +254,7 @@ const {
             <div class="section-header">
                 <div class="section-title-wrapper">
                     <span class="section-title">LATEST COMMENTS</span>
-                    <span class="section-count">[{{ total }}]</span>
+                    <span class="section-count">[{{ loadError ? '—' : total }}]</span>
                 </div>
                 <div class="section-line"></div>
             </div>
@@ -435,7 +437,11 @@ const {
                 </div>
 
                 <!-- 暂无评论 -->
-                <div class="empty-status" v-if="!loading && comments.length === 0 && hotComments.length === 0">
+                <div class="empty-status" v-if="!loading && loadError" role="alert">
+                    <span>{{ loadError }}</span>
+                    <button class="floor-more" type="button" @click="retryComments">重试</button>
+                </div>
+                <div class="empty-status" v-if="!loading && !loadError && comments.length === 0 && hotComments.length === 0">
                     <div class="status-frame">
                         <div class="frame-corner frame-tl"></div>
                         <div class="frame-corner frame-tr"></div>

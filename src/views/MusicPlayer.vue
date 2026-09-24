@@ -110,6 +110,7 @@ const commentTarget = computed(() => {
 });
 
 const formatCommentCount = total => {
+    if (total === null) return '—';
     const count = Number(total);
     if (!Number.isFinite(count) || count <= 0) return '0';
     if (count < 10000) return `${Math.floor(count)}`;
@@ -117,6 +118,9 @@ const formatCommentCount = total => {
 };
 
 const commentCountBadge = computed(() => formatCommentCount(commentCount.value));
+// #region debug-point C:entry-state
+watch([commentTarget, commentCount, commentCountBadge, rightPanelMode], () => { if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location?.hostname)) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'C', location: 'MusicPlayer:entry-state', msg: '[DEBUG] entry state', data: { target: commentTarget.value, count: commentCount.value, badge: commentCountBadge.value, mode: rightPanelMode.value, serial: commentCountRequestSerial.value }, ts: Date.now() }) }).catch(() => {}); }, { immediate: true });
+// #endregion
 
 const fetchCommentCount = async target => {
     const serial = ++commentCountRequestSerial.value;
@@ -128,9 +132,7 @@ const fetchCommentCount = async target => {
 
     const cachedCount = readCommentCountCache(target.key);
     const hasCachedCount = cachedCount !== null;
-    if (cachedCount !== null) {
-        commentCount.value = cachedCount;
-    }
+    commentCount.value = cachedCount ?? 0;
 
     try {
         if (target.type === 'qq') {
@@ -167,17 +169,25 @@ const fetchCommentCount = async target => {
             }
         }
     } catch (_) {
+        // #region debug-point C:entry-error
+        if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location?.hostname)) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'C', location: 'MusicPlayer:entry-error', msg: '[DEBUG] entry request failed', data: { target: target.key, serial, currentSerial: commentCountRequestSerial.value, hasCachedCount, status: _?.status, name: _?.name }, ts: Date.now() }) }).catch(() => {});
+        // #endregion
         if (serial !== commentCountRequestSerial.value) return;
         if (!hasCachedCount) {
-            commentCount.value = 0;
+            commentCount.value = null;
         }
     }
 };
 
 const handleCommentTotalChange = payload => {
     const currentTarget = commentTarget.value;
+    // #region debug-point C:panel-event
+    if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location?.hostname)) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'C', location: 'MusicPlayer:panel-event', msg: '[DEBUG] panel total received', data: { target: currentTarget?.key, eventTarget: payload?.targetKey, total: payload?.total }, ts: Date.now() }) }).catch(() => {});
+    // #endregion
     if (!currentTarget || !payload || payload.targetKey !== currentTarget.key) return;
 
+    // 面板已取得总数，废弃更早发出的入口请求，避免迟到的失败或旧值覆盖它。
+    commentCountRequestSerial.value++;
     const total = Number(payload.total);
     commentCount.value = Number.isFinite(total) && total > 0 ? Math.floor(total) : 0;
     writeCommentCountCache(currentTarget.key, commentCount.value);

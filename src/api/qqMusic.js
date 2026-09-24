@@ -769,7 +769,11 @@ export function getQQPersonalRecommend() {
 }
 
 export async function getQQComments({ id, type = 1, page = 0, pagesize = 20 }) {
-  return qqRequest({ url: '/getComments', method: 'get', params: { id, type, page, pagesize } })
+  // #region debug-point A:request-result
+  const result = await qqRequest({ url: '/getComments', method: 'get', params: { id, type, page, pagesize } })
+  if (import.meta.env?.DEV) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'A', location: 'qqMusic:getQQComments', msg: '[DEBUG] request result', data: { id, page, pagesize, code: result?.code, total: result?.total, commenttotal: result?.comment?.commenttotal, listLength: result?.comment?.commentlist?.length, hasData: !!result?.data, hasResponse: !!result?.response }, ts: Date.now() }) }).catch(() => {})
+  return result
+  // #endregion
 }
 
 /** 歌单分类标签：旧版 c.y.qq.com 分类接口 → [{ id, name, hot }]。 */
@@ -1006,13 +1010,37 @@ function normalizeQQCommentItem(raw) {
  * total 是评论总数，hotTotal 是热门总数（热门列表本身有硬上限，两者不能互推）。
  */
 export function normalizeQQCommentList(payload) {
-  const body = unwrapQQResponse(payload)
+  let body = payload
+  for (let depth = 0; depth < 8; depth++) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new Error('Invalid QQ comments response')
+    }
+    if (['code', 'subcode'].some(key => body[key] != null && Number(body[key]) !== 0)) {
+      throw new Error('QQ comments request failed')
+    }
+    const wrapped = body.response ?? body.body
+    if (wrapped && typeof wrapped === 'object') {
+      body = wrapped
+    } else if (body.data && typeof body.data === 'object' && !body.comment) {
+      body = body.data
+    } else {
+      break
+    }
+  }
+  if (!['comment', 'hot_comment', 'comments', 'commentList', 'comment_list', 'commentlist',
+    'hotComments', 'hotCommentList', 'hot_comment_list', 'hotcommentlist', 'hot_comments', 'hotList']
+    .some(key => Object.prototype.hasOwnProperty.call(body, key))) {
+    throw new Error('Invalid QQ comments response')
+  }
+  // #region debug-point B:normalize-input
+  if (import.meta.env?.DEV) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'B', location: 'qqMusic:normalize-input', msg: '[DEBUG] normalization input after unwrap', data: { wrapped: body !== payload, alreadyNormalized: Array.isArray(body?.comments), total: body?.total, totalCount: body?.totalCount, commenttotal: body?.comment?.commenttotal, hotTotal: body?.hotTotal, listLength: body?.comment?.commentlist?.length ?? body?.comments?.length }, ts: Date.now() }) }).catch(() => {})
+  // #endregion
   // 旧版评论接口（服务端实际使用的那个）结构为
   // { comment: { commentlist, commenttotal }, hot_comment: { commentlist }, morecomment }，
   // 热门评论在独立的 hot_comment 节点下，不能靠 BFS 猜测。
   const legacyComments = body?.comment?.commentlist
   const legacyHot = body?.hot_comment?.commentlist
-  if (Array.isArray(legacyComments) || Array.isArray(legacyHot)) {
+  if (body?.comment && 'commentlist' in body.comment || body?.hot_comment && 'commentlist' in body.hot_comment) {
     const comments = (Array.isArray(legacyComments) ? legacyComments : [])
       .filter(isQQCommentLike)
       .map(normalizeQQCommentItem)
@@ -1020,13 +1048,13 @@ export function normalizeQQCommentList(payload) {
       .filter(isQQCommentLike)
       .map(normalizeQQCommentItem)
     const legacyTotal = Number(body?.comment?.commenttotal)
-    const total = Number.isFinite(legacyTotal) && legacyTotal > 0
+    const total = Number.isFinite(legacyTotal) && legacyTotal >= 0
       ? legacyTotal
-      : comments.length + hotComments.length
+      : 0
     // 热门区上限由上游决定（实测最多 15 条），hot_comment.commenttotal 才是真实热门总数，
     // 拿数组长度当数量会让面板显示成页大小。
     const legacyHotTotal = Number(body?.hot_comment?.commenttotal)
-    const hotTotal = Number.isFinite(legacyHotTotal) && legacyHotTotal > 0
+    const hotTotal = Number.isFinite(legacyHotTotal) && legacyHotTotal >= 0
       ? legacyHotTotal
       : hotComments.length
     return {
@@ -1346,13 +1374,9 @@ export function normalizeQQSong(song = {}) {
   // QQ 上游的数字歌曲 id 字段名是全小写 songid（搜索结果/榜单都带），历史实现遗漏了它，
   // 导致 song.id 退化为 songmid 而评论接口（只接受数字 topid）拿不到可用 id。
   // 这里显式归一，不再依赖展开残留；song.id 本身保持原样以免影响队列身份。
-  const numericSongId = String(firstQQValue(
-    value.songid,
-    value.song_id,
-    value.songId,
-    value.musicId,
-    /^\d+$/.test(String(value.id ?? '').trim()) ? value.id : '',
-  ) ?? '').replace(/[^0-9]/g, '')
+  const numericSongId = [value.numericId, value.songid, value.song_id, value.songId, value.musicId, value.id]
+    .map(candidate => String(candidate ?? '').trim())
+    .find(candidate => /^\d{1,20}$/.test(candidate)) || ''
   const vipOnly = readQQVipOnly(value)
   return {
     ...value,

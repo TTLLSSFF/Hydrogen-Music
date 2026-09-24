@@ -830,7 +830,23 @@ function createQQSecurityMiddleware(options = {}) {
       .replace('___PAGE___', String(Math.max(Number(page) || 0, 0)))
       .replace('___SIZE___', String(pagesize))
       .replace('___SORT___', String(QQ_COMMENT_SORT_TYPES.has(sortType) ? sortType : QQ_COMMENT_DEFAULT_SORT_TYPE))
-    return fetchQQUpstreamJson(url)
+    const response = await fetchQQUpstreamJson(url)
+    const body = response.body
+    if (response.status === 200 && Number(body.code) === 0
+      && (body.subcode == null || Number(body.subcode) === 0)
+      && body.comment && Number(body.comment.commenttotal) === 0) {
+      // cmd=8 can return real comments with a zero total; cmd=4 owns the resource count.
+      const countResponse = await fetchQQUpstreamJson(url.replace('&cmd=8&', '&cmd=4&'))
+      const countBody = countResponse.body
+      const total = Number(countBody.commenttotal)
+      if (countResponse.status !== 200 || Number(countBody.code) !== 0
+        || (countBody.subcode != null && Number(countBody.subcode) !== 0)
+        || countBody.commenttotal == null || !Number.isSafeInteger(total) || total < 0) {
+        throw new Error('QQ Music comment count unavailable')
+      }
+      body.comment.commenttotal = total
+    }
+    return response
   }
   const commentsService = options.commentsService || fetchQQComments
   // 个性化推荐（猜你喜欢）：依赖包用的 music.web_srf_svr / get_recommend 模块
@@ -985,7 +1001,13 @@ async function fetchQQUpstreamJson(url) {
   const timer = setTimeout(() => controller.abort(), 10000)
   try {
     const response = await fetch(url, { headers: QQ_UPSTREAM_HEADERS, signal: controller.signal })
+    // #region debug-point A:comment-upstream-status
+    if (process.env.QQ_COMMENT_DEBUG === '1' && url.includes('fcg_global_comment')) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'investigation', hypothesisId: 'A', location: 'qqMusicApi:comment-http', data: { id: new URL(url).searchParams.get('topid'), cmd: new URL(url).searchParams.get('cmd'), status: response.status, contentType: response.headers?.get('content-type') }, ts: Date.now() }) }).catch(() => {})
+    // #endregion
     const payload = await response.json()
+    // #region debug-point A:comment-upstream-business
+    if (process.env.QQ_COMMENT_DEBUG === '1' && url.includes('fcg_global_comment')) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'investigation', hypothesisId: 'A', location: 'qqMusicApi:comment-business', data: { id: new URL(url).searchParams.get('topid'), cmd: new URL(url).searchParams.get('cmd'), code: payload?.code, subcode: payload?.subcode, message: sanitizeQQResponseBody(String(payload?.message || payload?.msg || '').slice(0, 160)) }, ts: Date.now() }) }).catch(() => {})
+    // #endregion
     return { status: response.ok ? 200 : Number(response.status) || 502, body: payload && typeof payload === 'object' ? payload : {} }
   } finally {
     clearTimeout(timer)
@@ -1513,8 +1535,19 @@ async function fetchQQSingerInfo({ singermid, name, singerid }) {
           pagesize,
           sortType,
         }))
+        // #region debug-point A:upstream-count
+        if (process.env.QQ_COMMENT_DEBUG === '1') fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'A', location: 'qqMusicApi:upstream', msg: '[DEBUG] upstream count', data: { id: commentId, pagesize, page, status, code: body.code, total: body.total, commenttotal: body.comment?.commenttotal, listLength: body.comment?.commentlist?.length }, ts: Date.now() }) }).catch(() => {})
+        // #endregion
+        const businessFailed = ['code', 'subcode'].some(key => body[key] != null && Number(body[key]) !== 0)
+        if (status === 200 && businessFailed) {
+          writeJson(ctx, 502, { error: 'QQ Music comments unavailable' })
+          return
+        }
         writeJson(ctx, status, sanitizeQQResponseBody(body))
-      } catch (_) {
+      } catch (error) {
+        // #region debug-point A:comment-request-error
+        if (process.env.QQ_COMMENT_DEBUG === '1') fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'investigation', hypothesisId: 'A', location: 'qqMusicApi:comment-error', data: { id: commentId, page, pagesize, name: error instanceof SyntaxError ? 'SyntaxError' : error?.name === 'AbortError' ? 'AbortError' : 'Error', hasClientSession: Boolean(ctx.headers?.['x-qq-music-cookie'] || ctx.headers?.['x-qq-music-session']) }, ts: Date.now() }) }).catch(() => {})
+        // #endregion
         writeJson(ctx, 502, { error: 'QQ Music comments unavailable' })
       }
       return

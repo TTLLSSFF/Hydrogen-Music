@@ -156,8 +156,8 @@ test('QQ comments read both the newest and hot lists from the legacy payload', (
   assert.equal(result.hotComments[0].likedCount, 49)
   assert.equal(result.hotComments[0].liked, true)
   assert.equal(result.comments[0].liked, false)
-  // commenttotal 为 0 时退回实际条数，避免前端显示「0 条评论」
-  assert.equal(result.total, 2)
+  // 明确的总数不能被当前页的最新和热门条数替换。
+  assert.equal(result.total, 0)
   // 热门列表有硬上限（实测最多 15 条），热门总数只能取 hot_comment.commenttotal，
   // 否则面板会把页大小显示成真实热门数。
   assert.equal(result.hotTotal, 37)
@@ -182,15 +182,13 @@ test('QQ comments keep the commentId contract used by the panel', () => {
   assert.deepEqual(result.comments[0].replies, [])
 })
 
-test('QQ comments tolerate missing lists and empty payloads', () => {
-  const empty = normalizeQQCommentList({})
+test('QQ comments distinguish malformed payloads from valid empty lists', () => {
+  assert.throws(() => normalizeQQCommentList({}))
+  assert.throws(() => normalizeQQCommentList(null))
+  const empty = normalizeQQCommentList({ comment: { commentlist: null, commenttotal: 0 }, morecomment: 0 })
   assert.deepEqual(empty.comments, [])
   assert.deepEqual(empty.hotComments, [])
   assert.equal(empty.hasMore, false)
-
-  const nulled = normalizeQQCommentList(null)
-  assert.deepEqual(nulled.comments, [])
-  assert.deepEqual(nulled.hotComments, [])
 })
 
 test('QQ personalized recommendations flatten the RecommendFeed shelves into playlist cards', () => {

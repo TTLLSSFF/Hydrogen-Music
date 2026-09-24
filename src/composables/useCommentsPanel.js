@@ -84,6 +84,7 @@ export function useCommentsPanel({ emit } = {}) {
     const comments = ref([])
     const hotComments = ref([])
     const loading = ref(false)
+    const loadError = ref('')
     const total = ref(0)
     // 热门区单独计数：上游热门列表有硬上限（实测最多 15 条），拿数组长度当数量
     // 会把「HOT COMMENTS [15]」这类页大小显示成真实热门总数。
@@ -270,6 +271,9 @@ export function useCommentsPanel({ emit } = {}) {
         try {
             const payload = await getQQComments({ id, type: 1, page, pagesize: size })
             const normalized = normalizeQQCommentList(payload) || {}
+            // #region debug-point B:panel-normalized
+            if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location?.hostname)) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'B', location: 'useCommentsPanel:normalized', msg: '[DEBUG] panel normalized', data: { id, size, page, isHotRequest, total: normalized.total, count: normalized.comments?.length, target: commentTargetKey.value }, ts: Date.now() }) }).catch(() => {})
+            // #endregion
             const list = isHotRequest ? normalized.hotComments : normalized.comments
             return {
                 code: 200,
@@ -404,14 +408,21 @@ export function useCommentsPanel({ emit } = {}) {
         await loadFloorReplies(comment, { forceFirstPage: state.items.length === 0 })
     }
 
+    let commentRequestSerial = 0
+    let disposed = false
+
     // 获取评论数据
     const fetchComments = async (reset = false) => {
-        if (loading.value || (!hasMore.value && !reset)) return
+        if (disposed || (!reset && (loading.value || !hasMore.value))) return
 
         const requestTargetKey = commentTargetKey.value
         if (!requestTargetKey) return
+        const requestSerial = ++commentRequestSerial
+        const isCurrentRequest = () => !disposed && requestSerial === commentRequestSerial
+            && requestTargetKey === commentTargetKey.value
 
         loading.value = true
+        loadError.value = ''
         let fetchSucceeded = false
 
         try {
@@ -430,6 +441,7 @@ export function useCommentsPanel({ emit } = {}) {
                     }),
                 ])
 
+                if (!isCurrentRequest()) return
                 const latestResponse = latestResult.status === 'fulfilled' ? latestResult.value : null
                 const hotResponse = hotResult.status === 'fulfilled' ? hotResult.value : null
 
@@ -450,8 +462,8 @@ export function useCommentsPanel({ emit } = {}) {
 
                 if (hotResponse && hotResponse.code === 200) {
                     hotComments.value = hotResponse.comments || []
-                    hotTotal.value = toPositiveInt(hotResponse.hotTotal) || hotComments.value.length
-                    fetchSucceeded = true
+                    hotTotal.value = hotResponse.hotTotal == null
+                        ? hotComments.value.length : toPositiveInt(hotResponse.hotTotal)
                 } else {
                     hotComments.value = []
                     hotTotal.value = 0
@@ -464,6 +476,7 @@ export function useCommentsPanel({ emit } = {}) {
                     ...(nextCursor.value ? { cursor: nextCursor.value } : {}),
                 })
 
+                if (!isCurrentRequest()) return
                 if (latestResponse && latestResponse.code === 200) {
                     const incoming = latestResponse.comments || []
                     comments.value.push(...incoming)
@@ -485,17 +498,21 @@ export function useCommentsPanel({ emit } = {}) {
                     })
                 }
             } else {
+                loadError.value = '评论加载失败，请重试'
                 noticeOpen('获取评论失败', 2)
             }
         } catch (error) {
+            if (!isCurrentRequest()) return
+            loadError.value = '评论加载失败，请重试'
             console.error('获取评论失败:', error)
             noticeOpen('获取评论失败', 2)
         } finally {
-            loading.value = false
+            if (isCurrentRequest()) loading.value = false
         }
 
         if (fetchSucceeded) {
             await nextTick()
+            if (!isCurrentRequest()) return
             restoreCommentsScrollIfNeeded()
             tryAutoLoadMore()
         }
@@ -637,6 +654,8 @@ export function useCommentsPanel({ emit } = {}) {
     watch(
         commentTargetKey,
         (target, previousTarget) => {
+            commentRequestSerial += 1
+            loading.value = false
             if (!target) {
                 comments.value = []
                 hotComments.value = []
@@ -680,6 +699,8 @@ export function useCommentsPanel({ emit } = {}) {
     })
 
     onUnmounted(() => {
+        disposed = true
+        commentRequestSerial += 1
         cacheCurrentScrollPosition()
         setLastCommentTargetKey(commentTargetKey.value)
         clearScrollCheckRaf()
@@ -690,6 +711,8 @@ export function useCommentsPanel({ emit } = {}) {
         comments,
         hotComments,
         loading,
+        loadError,
+        retryComments: () => fetchComments(true),
         total,
         hotTotal,
         hasMore,
