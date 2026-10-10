@@ -1,4 +1,6 @@
 <script setup>
+import ListenTogetherButton from './ListenTogetherButton.vue'
+import ListenTogether from './ListenTogether.vue'
 import { computed, defineAsyncComponent, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { songTime2 } from '../utils/time';
@@ -433,7 +435,7 @@ const toggleDjSub = async isSubscribe => {
                 </div>
 
                 <div class="control">
-                    <svg @click="playLast()" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="200" viewBox="0 0 200 200" fill="none">
+                    <svg @click="playLast()" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="200" viewBox="17 12 170 170" fill="none">
                         <defs><rect id="path_0" x="0" y="0" width="200" height="200" /></defs>
                         <g opacity="1" transform="translate(0 0)  rotate(0 100 100)">
                             <mask id="bg-mask-0" fill="white"><use xlink:href="#path_0" /></mask>
@@ -455,7 +457,7 @@ const toggleDjSub = async isSubscribe => {
                         xmlns:xlink="http://www.w3.org/1999/xlink"
                         width="200"
                         height="200"
-                        viewBox="0 0 200 200"
+                        viewBox="4 4 192 192"
                         fill="none"
                     >
                         <defs><rect id="path_0" x="0" y="0" width="200" height="200" /></defs>
@@ -486,7 +488,7 @@ const toggleDjSub = async isSubscribe => {
                         xmlns:xlink="http://www.w3.org/1999/xlink"
                         width="200"
                         height="200"
-                        viewBox="0 0 200 200"
+                        viewBox="14 4 193 193"
                         fill="none"
                     >
                         <defs><rect id="path_0" x="0" y="0" width="200" height="200" /></defs>
@@ -503,7 +505,7 @@ const toggleDjSub = async isSubscribe => {
                             </g>
                         </g>
                     </svg>
-                    <svg @click="playNext()" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="200" viewBox="0 0 200 200" fill="none">
+                    <svg @click="playNext()" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="200" viewBox="17 12 170 170" fill="none">
                         <defs><rect id="path_0" x="0" y="0" width="200" height="200" /></defs>
                         <g opacity="1" transform="translate(0 0)  rotate(0 100 100)">
                             <mask id="bg-mask-0" fill="white"><use xlink:href="#path_0" /></mask>
@@ -532,12 +534,13 @@ const toggleDjSub = async isSubscribe => {
             </div>
 
             <div class="song-control" :class="{ 'is-intelligence-mode': isIntelligenceMode }">
+                <ListenTogetherButton />
                 <svg
                     t="1673355036226"
                     v-if="musicVideo"
                     @click="toAddMusicVideo()"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-25 0 1072 1072"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="16255"
@@ -557,7 +560,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="hasRomaLyric && lyricType.indexOf('roma') != -1 && lyricType.indexOf('noRoma') == -1"
                     @click="toggleRomaLyric"
                     class="icon lyric-toggle active"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-103 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="47744"
@@ -575,7 +578,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="(hasRomaLyric || isQQRomanizationUnavailable) && lyricType.indexOf('roma') == -1 && lyricType.indexOf('noRoma') == -1"
                     @click="toggleRomaLyric"
                     class="icon lyric-toggle inactive"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-103 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="47744"
@@ -595,7 +598,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="hasTransLyric && lyricType.indexOf('trans') != -1 && lyricType.indexOf('noTrans') == -1"
                     @click="toggleTransLyric"
                     class="icon lyric-toggle active"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-102 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="49286"
@@ -613,7 +616,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="(hasTransLyric || isQQTranslationUnavailable) && lyricType.indexOf('trans') == -1 && lyricType.indexOf('noTrans') == -1"
                     @click="toggleTransLyric"
                     class="icon lyric-toggle inactive"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-102 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="49286"
@@ -632,7 +635,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="hasOriginalLyric && lyricType.indexOf('original') != -1 && lyricType.indexOf('noOriginal') == -1"
                     @click="lyricType.splice(lyricType.indexOf('original'), 1)"
                     class="icon lyric-toggle active"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-102 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="11459"
@@ -660,7 +663,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="hasOriginalLyric && lyricType.indexOf('original') == -1 && lyricType.indexOf('noOriginal') == -1"
                     @click="lyricType.push('original')"
                     class="icon lyric-toggle inactive"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-102 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="11459"
@@ -692,7 +695,7 @@ const toggleDjSub = async isSubscribe => {
                         @click="likeSong(true)"
                         v-show="!checkIsLike(songId)"
                         class="icon like-icon"
-                        viewBox="0 0 1024 1024"
+                        viewBox="-100 -102 1226 1226"
                         version="1.1"
                         xmlns="http://www.w3.org/2000/svg"
                         p-id="1417"
@@ -710,7 +713,7 @@ const toggleDjSub = async isSubscribe => {
                         @click="likeSong(false)"
                         v-show="checkIsLike(songId)"
                         class="icon like-icon liked"
-                        viewBox="0 0 1025 1024"
+                        viewBox="-101 -102 1227 1227"
                         version="1.1"
                         xmlns="http://www.w3.org/2000/svg"
                         p-id="9975"
@@ -732,7 +735,7 @@ const toggleDjSub = async isSubscribe => {
                         @click="toggleDjSub(true)"
                         v-show="!djSubed"
                         class="icon like-icon"
-                        viewBox="0 0 1024 1024"
+                        viewBox="-100 -102 1226 1226"
                         version="1.1"
                         xmlns="http://www.w3.org/2000/svg"
                         p-id="1417"
@@ -750,7 +753,7 @@ const toggleDjSub = async isSubscribe => {
                         @click="toggleDjSub(false)"
                         v-show="djSubed"
                         class="icon like-icon liked"
-                        viewBox="0 0 1025 1024"
+                        viewBox="-101 -102 1227 1227"
                         version="1.1"
                         xmlns="http://www.w3.org/2000/svg"
                         p-id="9975"
@@ -770,7 +773,7 @@ const toggleDjSub = async isSubscribe => {
                     t="1669445939818"
                     @click="download()"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-64 -64 1152 1152"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="5311"
@@ -801,7 +804,7 @@ const toggleDjSub = async isSubscribe => {
                     t="1668785761323"
                     @click="toAlbum()"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-79 -92 1189 1189"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="1173"
@@ -830,7 +833,7 @@ const toggleDjSub = async isSubscribe => {
                     @pointerenter="prefetchIntelligenceMode()"
                     v-show="playMode == 0"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-102 -102 1229 1229"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="3089"
@@ -850,7 +853,7 @@ const toggleDjSub = async isSubscribe => {
                     @pointerenter="prefetchIntelligenceMode()"
                     v-show="playMode == 1"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-26 -26 1075 1075"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="2180"
@@ -869,7 +872,7 @@ const toggleDjSub = async isSubscribe => {
                     @pointerenter="prefetchIntelligenceMode()"
                     v-show="playMode == 2"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-26 -26 1075 1075"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="2500"
@@ -889,7 +892,7 @@ const toggleDjSub = async isSubscribe => {
                     @pointerenter="prefetchIntelligenceMode()"
                     v-show="playMode == 3"
                     class="icon"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-29 -26 1079 1079"
                     version="1.1"
                     xmlns="http://www.w3.org/2000/svg"
                     p-id="2661"
@@ -906,7 +909,7 @@ const toggleDjSub = async isSubscribe => {
                     v-show="isIntelligenceMode || heartModeArmed"
                     @click="changePlayMode()"
                     class="icon intelligence-mode-icon"
-                    viewBox="0 0 32 32"
+                    viewBox="-0.11 -0.66 31.32 31.32"
                     xmlns="http://www.w3.org/2000/svg"
                     aria-label="心动模式"
                 >
@@ -941,7 +944,7 @@ const toggleDjSub = async isSubscribe => {
                     @click="handleToggleDesktopLyric"
                     :class="{ active: isDesktopLyricOpen }"
                     class="icon desktop-lyric-btn"
-                    viewBox="0 0 1024 1024"
+                    viewBox="-102 -102 1229 1229"
                     xmlns="http://www.w3.org/2000/svg"
                     width="200"
                     height="200"
@@ -972,6 +975,7 @@ const toggleDjSub = async isSubscribe => {
             </div>
         </div>
 
+        <ListenTogether :active="!widgetState" />
         <PlayList v-if="playlistWidgetLoaded && isActivePlaylistSurface" class="playlist-widget-player" :class="{ 'playlist-widget-open': playlistWidgetShow }"></PlayList>
 
         <span class="border border1"></span>
@@ -1332,6 +1336,7 @@ const toggleDjSub = async isSubscribe => {
             }
         }
         .song-control {
+            --player-action-icon-size: 24px;
             width: 50px;
             display: flex;
             flex-direction: column;
@@ -1343,8 +1348,8 @@ const toggleDjSub = async isSubscribe => {
             opacity: 0;
             svg {
                 margin-top: 0;
-                width: 2.5vh;
-                height: 2.5vh;
+                width: var(--player-action-icon-size);
+                height: var(--player-action-icon-size);
                 display: block;
             }
             &.is-intelligence-mode svg[t="1670376314067"] {
@@ -1402,9 +1407,8 @@ const toggleDjSub = async isSubscribe => {
         transition: all 0.3s ease;
         color: rgba(0, 0, 0, 0.6);
         overflow: visible;
-        width: 3.16vh !important;
-        height: 3.16vh !important;
-        margin-bottom: -0.5vh;
+        width: var(--player-action-icon-size) !important;
+        height: var(--player-action-icon-size) !important;
 
         .comment-bubble,
         .comment-line {

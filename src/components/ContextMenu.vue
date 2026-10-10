@@ -1,5 +1,5 @@
 <script setup>
-  import { computed, ref, watch } from 'vue'
+  import { computed, ref, watch, watchPostEffect } from 'vue'
   import { useRouter } from 'vue-router'
   import { createPlaylist, updatePlaylist, deletePlaylist } from '../api/playlist'
   import { addToNext, addToNextLocal } from '../utils/player/lazy'
@@ -28,6 +28,7 @@ import {
   removeSongsFromPlaylist,
 } from '../utils/playlistMutation.mjs'
 import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
+import { copyToClipboard } from '../utils/clipboard'
 import { storeToRefs } from 'pinia';
 const router = useRouter()
 const libraryStore = useLibraryStore()
@@ -80,6 +81,15 @@ const getPlaylistCover = item => withCoverParam(
   150,
 )
 const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
+const menu = ref(null)
+
+watchPostEffect(() => {
+  if (!otherStore.contextMenuShow || !menu.value) return
+  const { x, y } = otherStore.contextMenuPosition
+  const menuList = menu.value
+  menuList.style.left = Math.max(0, Math.min(x, document.body.clientWidth - menuList.offsetWidth)) + 'px'
+  menuList.style.top = Math.max(0, Math.min(y, document.body.clientHeight - menuList.offsetHeight)) + 'px'
+})
 
   const isPrivacy = ref(false)
   const createActive = ref(false)
@@ -418,6 +428,13 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
     })
   }
 
+  const copySongLink = async () => {
+    const link = `https://music.163.com/#/song?id=${otherStore.selectedItem.id}`
+    otherStore.contextMenuShow = false
+    const copied = await copyToClipboard(link)
+    noticeOpen(copied ? '歌曲链接已复制' : '复制失败', 2)
+  }
+
   const menuOpt = (id) => {
     if(id == 1) { addToNext(otherStore.selectedItem, true); return; }
     if(id == 2) { addToNext(otherStore.selectedItem, false); return; }
@@ -481,6 +498,7 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
       otherStore.downloadQualityShow = true
       return
     }
+    if(id == 12) { return copySongLink(); }
     if(id == 11) {
       const song = otherStore.selectedItem
       if (!canUseSongAction(song, 'album')) {
@@ -595,7 +613,7 @@ const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
 </script>
 
 <template>
-  <div id="menu" class="context-menu">
+  <div ref="menu" id="menu" class="context-menu">
     <Transition name="context-menu-pop">
       <div class="menu-container" v-if="otherStore.contextMenuShow">
         <div class="menu-item">

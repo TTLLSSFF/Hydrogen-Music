@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { search } from '../api/other';
 import { searchQQAll } from '../api/qqMusic'
+import { getSongDetail } from '../api/song'
+import { getSongIdFromLink } from '../utils/songLink'
 import { mapSongsPlayableStatus } from '../utils/songStatus';
 import { noticeOpen } from '../utils/dialog';
 import { getSearchSource } from '../utils/providerPolicy.mjs';
@@ -10,6 +12,7 @@ export const useOtherStore = defineStore('otherStore', {
         return {
           screenWidth: 1056,
           contextMenuShow: false,
+          contextMenuPosition: { x: 0, y: 0 },
           menuTree: null,
           tree1: [
             {
@@ -27,6 +30,10 @@ export const useOtherStore = defineStore('otherStore', {
             {
                 id: 11,
                 name: '显示专辑'
+            },
+            {
+                id: 12,
+                name: '复制歌曲链接'
             },
             {
                 id: 4,
@@ -53,6 +60,10 @@ export const useOtherStore = defineStore('otherStore', {
             {
                 id: 11,
                 name: '显示专辑'
+            },
+            {
+                id: 12,
+                name: '复制歌曲链接'
             },
             {
                 id: 4,
@@ -159,6 +170,31 @@ export const useOtherStore = defineStore('otherStore', {
                 return
             }
 
+            const nextSearchResult = {
+                searchSongs: [],
+                searchAlbums: [],
+                searchArtists: [],
+                searchPlaylists: [],
+                searchMvs: [],
+            }
+            const songId = getSongIdFromLink(keywords)
+            if (songId) {
+                this.searchResult = nextSearchResult
+                try {
+                    const result = await getSongDetail(songId)
+                    if (this.searchRequestToken !== requestToken) return
+
+                    const songs = mapSongsPlayableStatus(result.songs || [], result.privileges || [])
+                    this.searchResult = { ...nextSearchResult, searchSongs: songs }
+                    if (songs.length === 0) noticeOpen('未找到该歌曲', 2)
+                } catch (error) {
+                    if (this.searchRequestToken !== requestToken) return
+                    console.error('获取歌曲详情失败:', error)
+                    noticeOpen('获取歌曲失败，请稍后重试', 2)
+                }
+                return
+            }
+
             const requestConfigs = [
                 { type: 1, key: 'searchSongs' },
                 { type: 10, key: 'searchAlbums' },
@@ -177,14 +213,6 @@ export const useOtherStore = defineStore('otherStore', {
             }))
 
             if (this.searchRequestToken !== requestToken) return
-
-            const nextSearchResult = {
-                searchSongs: [],
-                searchAlbums: [],
-                searchArtists: [],
-                searchPlaylists: [],
-                searchMvs: [],
-            }
 
             results.forEach((result, index) => {
                 if (result.status !== 'fulfilled') return

@@ -19,6 +19,8 @@ certs/
 node_modules/*
 release/*
 dist/*
+.cache/
+resources/ffmpeg/*/
 .vscode/*
 !.vscode/extensions.json
 .idea

@@ -251,6 +251,12 @@ function triggerAutoLogout(reason) {
   noticeOpen(message, 3);
 }
 
+// 匿名请求或旧账号的迟到响应不能清除当前账号。
+function shouldTriggerAutoLogout(config) {
+  const requestCookie = parseCookieString(config?.params?.cookie).get('MUSIC_U')
+  return Boolean(requestCookie && requestCookie === getCookie('MUSIC_U'))
+}
+
 // 请求拦截器
 request.interceptors.request.use(async function (config) {
   await ensureNcmApiReady()
@@ -279,18 +285,22 @@ request.interceptors.request.use(async function (config) {
   return Promise.reject(error);
 });
 
+function isAuthApi(url) {
+  return url.startsWith('/login') || url.startsWith('/captcha/') || url === '/logout'
+}
+
 // 响应拦截器
 request.interceptors.response.use(function (response) {
   const url = response?.config?.url || ''
   const data = response?.data
 
   // 跳过登录/登出相关接口的自动判断
-  const isAuthApi = url.startsWith('/login') || url === '/logout'
-  if (!isAuthApi && data && typeof data === 'object') {
+  if (!isAuthApi(url) && data && typeof data === 'object') {
     const code = data.code
     const text = data.msg || data.message || ''
     // NCM 未登录常见返回：code=301 或者 message/msgs 提示需要登录
-    if (code === 301 || /需要登录|请先登录|not\s*login|invalid\s*session/i.test(text || '')) {
+    if ((code === 301 || /需要登录|请先登录|not\s*login|invalid\s*session/i.test(text || ''))
+      && shouldTriggerAutoLogout(response?.config)) {
       triggerAutoLogout('登录状态已失效，已自动退出');
     }
   }
@@ -303,12 +313,13 @@ request.interceptors.response.use(function (response) {
   const code = responseData?.code
 
   // 若后端以HTTP身份错误返回，直接触发自动登出
-  if (status === 401 || status === 403) {
+  if (!isAuthApi(url) && (status === 401 || status === 403) && shouldTriggerAutoLogout(error?.config)) {
     triggerAutoLogout('登录已过期，请重新登录');
-  } else {
+  } else if (!isAuthApi(url)) {
     // 后端也可能以200以外的状态携带业务code
     const text = responseData?.msg || responseData?.message || ''
-    if (code === 301 || /需要登录|请先登录|not\s*login|invalid\s*session/i.test(text || '')) {
+    if ((code === 301 || /需要登录|请先登录|not\s*login|invalid\s*session/i.test(text || ''))
+      && shouldTriggerAutoLogout(error?.config)) {
       triggerAutoLogout('登录状态已失效，已自动退出');
     }
   }

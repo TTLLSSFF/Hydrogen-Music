@@ -6,6 +6,7 @@ import { usePlayerStore } from '../store/playerStore'
 import { useOtherStore } from '../store/otherStore'
 import { searchHotDetail, searchSuggest, searchSuggestPc } from '../api/other'
 import { getSearchSource } from '../utils/providerPolicy.mjs'
+import { getSongIdFromLink } from '../utils/songLink'
 
 const DEFAULT_ASSIST_LIMIT = 8
 const MIN_ASSIST_LIMIT = 1
@@ -41,6 +42,7 @@ function normalizeAssistLimit(value) {
 }
 
 const assistLimit = computed(() => normalizeAssistLimit(playerStore.searchAssistLimit))
+const songLinkId = computed(() => getSongIdFromLink(searchKeyword.value))
 const isSuggestMode = computed(() => JTrim(searchKeyword.value) !== '')
 const currentList = computed(() => {
     const list = isSuggestMode.value ? suggestList.value : hotList.value
@@ -247,7 +249,7 @@ function handleArrowUp() {
 function handleAssistEnter(event) {
     if (isComposing.value) return
 
-    if (assistVisible.value && activeAssistIndex.value >= 0) {
+    if (!songLinkId.value && assistVisible.value && activeAssistIndex.value >= 0) {
         const item = currentList.value[activeAssistIndex.value]
         if (item) {
             event.preventDefault()
@@ -384,11 +386,11 @@ function handleSearchInput() {
     resetMouseHoverSuppression()
     const keyword = JTrim(searchKeyword.value)
 
-    if (!keyword) {
+    if (!keyword || songLinkId.value) {
         requestSeq.value += 1
         loadingSuggest.value = false
         suggestList.value = []
-        if (assistVisible.value) fetchHotList()
+        if (!keyword && assistVisible.value) fetchHotList()
         return
     }
 
@@ -503,7 +505,7 @@ onUnmounted(() => {
             <div class="search-border-2 search-border8"></div>
 
             <Transition name="assist-fade">
-                <div class="search-assist" v-if="assistVisible">
+                <div class="search-assist" v-if="assistVisible && !songLinkId">
                     <div class="assist-corner assist-corner1"></div>
                     <div class="assist-corner assist-corner2"></div>
                     <div class="assist-corner assist-corner3"></div>

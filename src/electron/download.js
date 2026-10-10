@@ -16,10 +16,9 @@ const {
 
 let NodeID3 = null
 let Metaflac = null
-let ffmpegPath = null
+const ffmpegPath = require('./ffmpeg')
 try { NodeID3 = require('node-id3') } catch (_) { NodeID3 = null }
 try { Metaflac = require('metaflac-js') } catch (_) { Metaflac = null }
-try { ffmpegPath = require('ffmpeg-static') } catch (_) { ffmpegPath = null }
 
 // 桌面端远程下载：把远程音频地址流式写入「设置里的下载目录」。
 // 仍然没有队列：渲染层逐首调用 download-to-folder，主进程只负责单次落盘、进度上报、
@@ -208,8 +207,6 @@ function inferCoverImageMime(buffer, contentType = '', sourceUrl = '') {
 }
 
 function convertCoverWithFfmpeg(buffer) {
-  if (!ffmpegPath) return Promise.resolve(null)
-
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegPath, [
       '-hide_banner',

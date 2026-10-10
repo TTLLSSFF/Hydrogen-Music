@@ -18,7 +18,7 @@ import { checkForUpdates as runAppUpdateCheck } from '@/utils/appUpdate'
 import { clearQQNeteaseLyricBridgeCache } from '@/utils/player/qqLyricBridge.mjs'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout, initializeCurrentAccountSession } from '@/utils/accountSession'
-import { getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from '@/utils/settingsSnapshot'
+import { getCachedSettingsSnapshot, getSettingsSnapshot, setCachedSettingsSnapshot, setSettingsSnapshot } from '@/utils/settingsSnapshot'
 import { markHifiOutputModeConfigured, resolveInitialHifiOutputMode } from '@/utils/hifiOutputModeMigration'
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
@@ -43,6 +43,7 @@ const lyricInterlude = ref(13)
 const searchAssistLimit = ref(8)
 const globalShortcuts = ref(false)
 const rememberWindowSize = ref(false)
+const rememberWindowSizeSaving = ref(false)
 const quitApp = ref('minimize')
 const quitAppOptions = ref([
     {
@@ -326,6 +327,26 @@ const setAppSettings = () => {
 
 const saveSettings = () => {
     initSettings({ settings: setAppSettings(), hydrateLocalMusic: true })
+}
+
+const toggleRememberWindowSize = async () => {
+    if (rememberWindowSizeSaving.value) return
+    const previousValue = rememberWindowSize.value
+    rememberWindowSize.value = !previousValue
+    rememberWindowSizeSaving.value = true
+    try {
+        const settings = await windowApi.setRememberWindowSize(rememberWindowSize.value)
+        rememberWindowSize.value = settings.other.rememberWindowSize
+        const snapshot = getCachedSettingsSnapshot() || settings
+        snapshot.other.rememberWindowSize = rememberWindowSize.value
+        setCachedSettingsSnapshot(snapshot)
+    } catch (error) {
+        rememberWindowSize.value = previousValue
+        console.error('保存窗口记忆设置失败:', error)
+        noticeOpen('保存设置失败，请重试', 2)
+    } finally {
+        rememberWindowSizeSaving.value = false
+    }
 }
 
 const setCustomFont = (font, option = null) => {
@@ -705,7 +726,7 @@ const toggleLocalOnlyMode = async () => {
 <template>
     <div class="settings-page" @click="selectedShortcut = null">
         <div class="view-control">
-            <svg t="1669039513804" @click="routerChange()" class="router-last" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200">
+            <svg t="1669039513804" @click="routerChange()" class="router-last" viewBox="-107 -86 1195 1195" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1053" width="200" height="200">
                 <path d="M716.608 1010.112L218.88 512.384 717.376 13.888l45.248 45.248-453.248 453.248 452.48 452.48z" p-id="1054"></path>
             </svg>
             <span class="setting-title">
@@ -1109,7 +1130,7 @@ const toggleLocalOnlyMode = async () => {
                         <div class="option" v-if="isDesktop">
                             <div class="option-name">记住窗口大小</div>
                             <div class="option-operation">
-                                <div class="toggle" @click="rememberWindowSize = !rememberWindowSize">
+                                <div class="toggle" :aria-disabled="rememberWindowSizeSaving" @click="toggleRememberWindowSize">
                                     <div class="toggle-off" :class="{ 'toggle-on-in': rememberWindowSize }">{{ rememberWindowSize ? '已开启' : '已关闭' }}</div>
                                     <Transition name="toggle">
                                         <div class="toggle-on" v-show="rememberWindowSize"></div>
@@ -1163,7 +1184,7 @@ const toggleLocalOnlyMode = async () => {
         flex-direction: row;
         align-items: center;
         svg {
-            padding: 8px;
+            padding: 4px;
             width: 32px;
             height: 32px;
             float: left;

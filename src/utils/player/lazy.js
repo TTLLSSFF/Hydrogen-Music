@@ -54,6 +54,7 @@ export const playNext = lazyPlayerExport('playNext');
 export const changeProgress = lazyPlayerExport('changeProgress');
 export const changeProgressByDragStart = lazyPlayerExport('changeProgressByDragStart');
 export const changeProgressByDragEnd = lazyPlayerExport('changeProgressByDragEnd');
+export const applyPlayMode = lazyPlayerExport('applyPlayMode');
 export const changePlayMode = lazyPlayerExport('changePlayMode');
 export const prefetchIntelligenceMode = lazyPlayerExport('prefetchIntelligenceMode');
 export const checkAndLoadVideoForCurrentSong = lazyPlayerExport('checkAndLoadVideoForCurrentSong');

@@ -173,11 +173,11 @@ Hydrogen Music 是一个第三方网易云 / QQ 音乐播放器。当前仓库�
 
 前往 [Releases](https://github.com/TTLLSSFF/Hydrogen-Music/releases) 下载对应平台的安装包。
 
-当前构建配置支持：
+桌面端提供以下安装方式：
 
-- Windows：NSIS 安装包、Portable、Zip。
-- macOS：DMG。
-- Linux：AppImage、Deb、RPM（当前仅提供 x64）。
+- Windows：推荐安装版（NSIS）；另提供便携版（Portable）与 Zip。
+- macOS：DMG，适用于 M 系列芯片。
+- Linux：推荐 AppImage；另提供 Deb、RPM（当前仅提供 x64）。
 
 Arch Linux 用户可通过 AUR 安装（本仓库 fork 的包名，与上游 `hydrogen-music-bin` 相互独立）：
 
@@ -292,6 +292,19 @@ GITHUB_TOKEN=你的token npm run serve
 
 Token 只需要公开仓库的只读权限（classic PAT 可不勾选任何 scope，fine-grained PAT 勾选 public repositories 的 Contents 只读即可）。Token 只在服务端使用，不会下发到浏览器；也可以改用 `GITHUB_API_TOKEN` 变量名。
 
+### Android 开发与发行
+
+Android 源码位于 [`apps/android/`](apps/android/README.md)，使用 Vue 3 + Capacitor，内嵌网易云 API，可独立运行。两端共用字体、图片和 API 补丁，Android 界面与原生代码在子目录维护。
+
+```shell
+npm run android:install  # 安装 Android 依赖
+npm run android:api      # 启动浏览器开发所需的 API
+npm run android:dev      # 另一终端启动手机界面预览
+npm run android:build    # 构建 debug APK（需 JDK 21 和 Android SDK）
+```
+
+正式发行使用 `npm run android:release`（APK）或 `npm run android:bundle`（AAB）。签名配置、SDK 要求和 `android-v*` 独立发行工作流见 [Android 文档](apps/android/README.md)。原有 Windows/macOS/Linux 构建命令继续使用。
+
 ### 本地 HiFi 输出与 MPV 后端
 
 本地音乐的 HiFi 输出使用 MPV 作为后端。普通在线播放和默认本地播放不依赖 MPV；只有在「设置 - 本地 - 本地音乐 HiFi 输出」开启后，才会走这个后端。
@@ -358,13 +371,17 @@ npm run build
 
 ### 打包当前平台客户端
 
+首次开发或打包桌面端前，需要构建专用 FFmpeg。编译工具和 Windows MSYS2 步骤见
+[FFmpeg 构建说明](resources/ffmpeg/README.md)。发布工作流会自动执行这些步骤。
+
 ```shell
+npm run ffmpeg:build
 npm run dist
 ```
 
 打包产物会输出到 `release/<version>/`。版本号需要是三段 semver（例如 `26.9.23`），构建脚本会在打包前校验，不满足会直接退出。
 
-如需指定平台，可将参数透传给构建脚本：
+如需指定平台，可将参数透传给构建脚本；需先准备目标平台与架构的 FFmpeg 运行时：
 
 ```shell
 npm run dist -- --win
@@ -389,7 +406,8 @@ npm run preview
 - 视频播放：Plyr。
 - UI 组件：`vue-slider-component`、`vue-virtual-scroller`。
 - API 与网络：Axios、网易云音乐 API Enhanced、QQ 音乐 API、本地 Node 代理服务、同源下载代理。
-- 本地元数据与标签：`music-metadata`、`node-id3`、`metaflac-js`、`ffmpeg-static`。
+- 本地元数据与标签：`music-metadata`、`node-id3`、`metaflac-js`。
+- 封面与视频转码：专用精简 FFmpeg（`ffmpeg-static`）。
 - 桌面集成：`electron-store`、`electron-updater`、`mpris-service`。
 - 文本与工具：OpenCC、QRCode、nanoid。
 - 本地 HiFi 输出：MPV 运行时（`resources/mpv`）。
@@ -436,5 +454,7 @@ Hydrogen-Music
 本项目仅供个人学习与研究使用，禁止用于商业用途或任何非法用途。项目涉及的音乐、歌词、评论、图片、视频等内容版权归其权利方所有。
 
 本仓库在 [ldx123000/Hydrogen-Music](https://github.com/ldx123000/Hydrogen-Music) 的基础上继续维护，并延续原 [Hydrogen-Music](https://github.com/Kaidesuyo/Hydrogen-Music) 的创意与方向。感谢原作者与上游维护者的设计与实现。若原作者或相关权利方认为本仓库存在不妥，请联系维护者处理。
+
+感谢 [1CYcat1（CY · 羟醛缩合可以增长碳链）](https://github.com/1CYcat1) 提供 Android 移植、原生媒体控制与移动端适配。相关贡献通过 [PR #64](https://github.com/ldx123000/Hydrogen-Music/pull/64) 整合至 [`apps/android/`](apps/android/README.md)。
 
 代码基于 [MIT License](LICENSE) 开源。

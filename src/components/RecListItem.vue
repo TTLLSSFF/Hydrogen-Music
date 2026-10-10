@@ -222,7 +222,7 @@
     <div class="item-list" v-else>
         <div class="item" v-for="(item,index) in recommendationList">
             <div class="item-img" :class="(recType == 1 && !isQQSource) ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id, item)">
-                <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl) + '?param=450y450'" alt="">
+                <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl) ? ((item.coverImgUrl || item.img1v1Url || item.picUrl) + '?param=450y450') : undefined" alt="">
             </div>
             <div class="item-name" :class="{'item-name-center': recType == 1 && !isQQSource}">{{item.name}}</div>
             <div class="item-sub" @click="checkArtist(item.artist)" v-if="item.artist">{{ item.artist.name }}</div>

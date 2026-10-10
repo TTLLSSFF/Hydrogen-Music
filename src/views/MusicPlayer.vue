@@ -268,7 +268,7 @@ watch(currentTrack, (song) => {
             <MusicVideo class="music-video" v-if="playerStore.addMusicVideo"></MusicVideo>
         </Transition>
         <Transition name="fade2">
-            <PlayerVideo class="back-video" v-show="playerStore.videoIsPlaying" v-if="playerStore.currentMusicVideo && playerStore.musicVideo"></PlayerVideo>
+            <PlayerVideo :key="`${playerStore.currentMusicVideo.id}:${playerStore.currentMusicVideo.path}`" class="back-video" v-show="playerStore.videoIsPlaying" v-if="playerStore.currentMusicVideo && playerStore.musicVideo"></PlayerVideo>
         </Transition>
     </div>
 </template>
@@ -348,6 +348,7 @@ watch(currentTrack, (song) => {
         opacity: 0;
         animation: player-in 0.7s 0.2s cubic-bezier(0.4, 0, 0.12, 1) forwards;
         position: relative;
+        // 播放器侧边面板需要覆盖右侧歌词，避免歌词层拦截点击。
         z-index: 2;
         @keyframes player-in {
             0% {
