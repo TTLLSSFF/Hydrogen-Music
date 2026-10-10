@@ -1,6 +1,23 @@
 const http = require('node:http')
 
-function createApiBridge(ncmPort) {
+const QQ_PREFIX = '/qq'
+
+/**
+ * 带 CORS 的转发层，按前缀分流：
+ *   /qq/*  → QQ 音乐 API（QQ_API_PORT，默认 36532），转发前剥掉 /qq 前缀
+ *   其余    → 网易云 API（NCM_PORT，默认 36530）
+ *
+ * 只做一次前缀判断，不动原有的头处理与 set-cookie 清洗逻辑。
+ */
+function createApiBridge(ncmPort, qqPort = 0) {
+  const resolveTarget = url => {
+    const raw = String(url || '/')
+    if (qqPort > 0 && (raw === QQ_PREFIX || raw.startsWith(`${QQ_PREFIX}/`) || raw.startsWith(`${QQ_PREFIX}?`))) {
+      return { port: qqPort, path: raw.slice(QQ_PREFIX.length) || '/' }
+    }
+    return { port: ncmPort, path: raw }
+  }
+
   return http.createServer((req, res) => {
     const origin = req.headers.origin || '*'
     res.setHeader('Access-Control-Allow-Origin', origin)
@@ -17,9 +34,10 @@ function createApiBridge(ncmPort) {
       return
     }
 
-    const headers = { ...req.headers, host: `127.0.0.1:${ncmPort}` }
+    const target = resolveTarget(req.url)
+    const headers = { ...req.headers, host: `127.0.0.1:${target.port}` }
     const proxyReq = http.request(
-      { hostname: '127.0.0.1', port: ncmPort, path: req.url, method: req.method, headers },
+      { hostname: '127.0.0.1', port: target.port, path: target.path, method: req.method, headers },
       proxyRes => {
         const responseHeaders = { ...proxyRes.headers }
         if (responseHeaders['set-cookie']) {

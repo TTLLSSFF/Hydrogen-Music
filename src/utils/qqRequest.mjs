@@ -106,8 +106,18 @@ async function sendDesktopQQRequest(config, headers) {
   })
 }
 
+// 传输接缝：默认走「桌面 IPC / 同源 fetch」两条路；原生 App 无法用同源 /api/qq，
+// 由 apps/android/src/utils/qqTransport.mjs 在启动时替换成打到内嵌转发层的实现。
+// 惰性替换保证桌面/网页行为完全不变（测试 test/qq-request-boundary.test.mjs 守住这一点）。
+let transportOverride = null
+
+export function setQQRequestTransport(transport) {
+  transportOverride = typeof transport === 'function' ? transport : null
+}
+
 export function createQQRequest(transport) {
   const send = transport || (async (config) => {
+    if (transportOverride) return transportOverride(config)
     const search = new URLSearchParams()
     for (const [key, value] of Object.entries(config.params || {})) {
       if (value === undefined || value === null) continue

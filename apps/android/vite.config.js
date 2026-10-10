@@ -25,6 +25,12 @@ export default defineConfig({
   server: {
     fs: { allow: [resolve(__dirname, '../..')] },
     proxy: {
+      // 必须排在 /api 之前：vite 按对象键顺序做前缀匹配
+      '/api/qq': {
+        target: 'http://127.0.0.1:36532',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/api\/qq/, ''),
+      },
       '/api': {
         target: 'http://127.0.0.1:36531',
         changeOrigin: true,

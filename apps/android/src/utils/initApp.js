@@ -11,6 +11,7 @@ import { initPlayerExternalBridge, loadLastSong } from './player/lazy'
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from './setFont'
 import { resolveSystemFontOptionAsync, resolveSystemFontValueAsync } from './fontResolver'
 import { resolveInitialHifiOutputMode } from './hifiOutputModeMigration'
+import { qqAccountStore } from '../store/qqAccountStore'
 import settingsSchema from '../shared/settingsSchema.js'
 
 const { normalizeSettings } = settingsSchema
@@ -260,6 +261,11 @@ async function runDeferredAppInit() {
             console.error('用户信息加载失败:', error)
         }
     }
+
+    // QQ 会话：与网易云会话彼此独立，可同时登录（cookie 由内嵌 QQ API 持有）
+    try {
+        await qqAccountStore.restoreSession()
+    } catch (_) {}
 
     await restoreLastSongOnce()
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('listenTogether:startup-ready'))

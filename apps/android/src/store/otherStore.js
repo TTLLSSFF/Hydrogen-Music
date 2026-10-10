@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
 import { getMVDetail, getMVUrl } from '../api/mv'
 import { search } from '../api/other';
+import { searchQQAll } from '../api/qqMusic'
 import { getSongDetail } from '../api/song'
 import { getSongIdFromLink } from '../utils/songLink'
 import { mapSongsPlayableStatus } from '../utils/songStatus';
 import { noticeOpen } from '../utils/dialog';
+import { getSearchSource } from '../utils/providerPolicy.mjs';
 
 export const useOtherStore = defineStore('otherStore', {
     state: () => {
@@ -136,6 +138,7 @@ export const useOtherStore = defineStore('otherStore', {
           videoIsFull: false,
           searchResult: {},
           searchRequestToken: 0,
+          searchSource: 'netease',
           toUpdate: false,
           newVersion: null,
         }
@@ -232,6 +235,11 @@ export const useOtherStore = defineStore('otherStore', {
             const requestToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
             this.searchRequestToken = requestToken
 
+            if (this.searchSource === 'qq') {
+                await this.getQQSearchInfo(keywords, requestToken)
+                return
+            }
+
             const nextSearchResult = {
                 searchSongs: [],
                 searchAlbums: [],
@@ -308,6 +316,38 @@ export const useOtherStore = defineStore('otherStore', {
             })
 
             this.searchResult = nextSearchResult
-        }
+        },
+        // 首页 / 搜索页 / 设置页共用的平台来源，写入前统一归一化
+        setSearchSource(source) {
+            this.searchSource = getSearchSource(source)
+        },
+        // QQ 分类搜索：并行请求歌曲/专辑/歌手/MV/歌单（歌单走 musicu 的歌单分类）。
+        // 任一分类失败只清空该分类，不阻断其他分类。
+        async getQQSearchInfo(keywords, requestToken) {
+            try {
+                const result = await searchQQAll(keywords, { limit: 10 })
+                if (this.searchRequestToken !== requestToken) return
+                this.searchResult = {
+                    searchSongs: Array.isArray(result.searchSongs) ? result.searchSongs : [],
+                    searchAlbums: Array.isArray(result.searchAlbums) ? result.searchAlbums : [],
+                    searchArtists: Array.isArray(result.searchArtists) ? result.searchArtists : [],
+                    searchPlaylists: Array.isArray(result.searchPlaylists) ? result.searchPlaylists : [],
+                    searchMvs: Array.isArray(result.searchMvs) ? result.searchMvs : [],
+                }
+            } catch (_) {
+                if (this.searchRequestToken !== requestToken) return
+                this.searchResult = {
+                    searchSongs: [],
+                    searchAlbums: [],
+                    searchArtists: [],
+                    searchPlaylists: [],
+                    searchMvs: [],
+                }
+            }
+        },
+    },
+    persist: {
+        storage: localStorage,
+        pick: ['searchSource'],
     },
 })

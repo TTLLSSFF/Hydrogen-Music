@@ -6,6 +6,7 @@
   import LibrarySongList from '../components/LibrarySongList.vue';
   import LibraryAlbumList from '../components/LibraryAlbumList.vue';
   import SearchResultList from '../components/SearchResultList.vue';
+  import { resolvePlatformSource } from '../utils/providerPolicy.mjs'
   
   const otherStore = useOtherStore()
   const { getSearchInfo } = otherStore
@@ -22,6 +23,8 @@
     searchScroll.value.scrollTop = scrollTop.value
   })
   onBeforeRouteUpdate((to, from, next) => {
+      // 站内再次搜索/前进后退时来源也要跟随路由
+      otherStore.setSearchSource(resolvePlatformSource(to.query.source, otherStore.searchSource))
       getSearchInfo(to.query.keywords)
       next()
   })

@@ -8,6 +8,7 @@ import { useLibraryStore } from '../store/libraryStore'
 import { useLocalStore } from '../store/localStore'
 import { storeToRefs } from 'pinia'
 import { useOtherStore } from '../store/otherStore'
+import { resolvePlatformSource } from '../utils/providerPolicy.mjs'
 
 function createRouteLoader(loader) {
     let promise = null
@@ -242,6 +243,8 @@ const routes = [
         name: 'search',
         component: SearchResult,
         beforeEnter: (to, from, next) => {
+            // 搜索来源跟随路由：显式 ?source= 优先，否则沿用当前平台来源
+            otherStore.setSearchSource(resolvePlatformSource(to.query.source, otherStore.searchSource))
             otherStore.getSearchInfo(to.query.keywords)
             next()
         }

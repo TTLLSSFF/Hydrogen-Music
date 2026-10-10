@@ -1,0 +1,1605 @@
+// qqRequest 保持在主 src 里单一真源：安卓端只替换传输层（见 utils/qqTransport.mjs）
+import qqRequest from '../../../../src/utils/qqRequest.mjs'
+
+export const QQ_PUBLIC_API_DISABLED_CODE = 'QQ_PUBLIC_API_DISABLED'
+
+function createQQPublicApiDisabledError(capability) {
+  const error = new Error(`QQ Music ${capability} is disabled; use authenticated My Music instead`)
+  error.code = QQ_PUBLIC_API_DISABLED_CODE
+  return error
+}
+
+// QQ 公共搜索由服务端 `/getSearchByKey` 支撑；分类以 t 参数选择：
+// 0=歌曲 8=专辑 9=歌手 12=MV。歌单没有对应分类（client_search_cp 不提供），
+// 单独走 `/getSearchPlaylists`，上游是 musicu 的 SearchCgiService search_type=3。
+const QQ_SEARCH_CATEGORY_PARAMS = Object.freeze({
+  songs: 0,
+  albums: 8,
+  artists: 9,
+  mvs: 12,
+})
+const QQ_SEARCH_DEFAULT_LIMIT = 10
+const QQ_SEARCH_MAX_LIMIT = 50
+
+export function searchQQCategory(keywords, category, options = {}) {
+  const t = QQ_SEARCH_CATEGORY_PARAMS[category]
+  if (t === undefined) throw new TypeError('unsupported QQ search category')
+  const requestedLimit = Number(options.limit)
+  const limit = Math.min(
+    Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_SEARCH_DEFAULT_LIMIT, 1),
+    QQ_SEARCH_MAX_LIMIT,
+  )
+  return qqRequest({ url: '/getSearchByKey', method: 'get', params: { key: keywords, t, n: limit } })
+}
+
+/** 歌单搜索：服务端 `/getSearchPlaylists` 走 musicu 的歌单分类（匿名即可用）。 */
+export function searchQQPlaylists(keywords, options = {}) {
+  const requestedLimit = Number(options.limit)
+  const limit = Math.min(
+    Math.max(Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.trunc(requestedLimit) : QQ_SEARCH_DEFAULT_LIMIT, 1),
+    QQ_SEARCH_MAX_LIMIT,
+  )
+  const requestedPage = Number(options.page)
+  const page = Math.max(Number.isFinite(requestedPage) && requestedPage > 0 ? Math.trunc(requestedPage) : 1, 1)
+  return qqRequest({ url: '/getSearchPlaylists', method: 'get', params: { key: keywords, n: limit, p: page } })
+}
+
+export function unwrapQQResponse(payload) {
+  let current = payload
+  for (let i = 0; i < 4; i++) {
+    if (!current || typeof current !== 'object') return current || {}
+    if (current.response && typeof current.response === 'object') {
+      current = current.response
+      continue
+    }
+    if (current.body && typeof current.body === 'object') {
+      current = current.body
+      continue
+    }
+    return current
+  }
+  return current || {}
+}
+
+const isPresentQQValue = value => value !== undefined && value !== null && value !== ''
+const firstQQValue = (...values) => values.find(isPresentQQValue)
+const firstPositiveQQValue = (...values) => values.find(value => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0
+})
+const normalizeQQId = value => isPresentQQValue(value) ? String(value) : ''
+const normalizeQQBooleanFlag = value => {
+  if (value === true) return true
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0
+  if (typeof value === 'string') {
+    const normalized = value.trim()
+    if (/^(?:true|yes)$/i.test(normalized)) return true
+    const numeric = Number(normalized)
+    return Number.isFinite(numeric) && numeric > 0
+  }
+  return false
+}
+
+/**
+ * 在（已解包的）响应体内按候选字段名广度优先查找目标数组。
+ * QQ 各模块字段命名不统一（tags/playlists/v_playlist/albumList…），
+ * 公共分类、新碟、评论等适配层都靠它兜住不同包络。
+ */
+function findQQArrayList(root, keys, maxDepth = 8) {
+  if (!root || typeof root !== 'object') return []
+  const queue = [{ value: root, depth: 0 }]
+  const seen = new Set()
+  while (queue.length > 0) {
+    const { value, depth } = queue.shift()
+    if (!value || typeof value !== 'object' || seen.has(value) || depth > maxDepth) continue
+    seen.add(value)
+    if (Array.isArray(value)) continue
+    for (const key of keys) {
+      if (Array.isArray(value[key])) return value[key]
+    }
+    for (const nested of Object.values(value)) {
+      if (nested && typeof nested === 'object') queue.push({ value: nested, depth: depth + 1 })
+    }
+  }
+  return []
+}
+
+const QQ_PLAYBACK_QUALITY_MAP = Object.freeze({
+  standard: '128',
+  higher: '320',
+  exhigh: '320',
+  lossless: 'flac',
+  hires: 'flac',
+  jyeffect: 'flac',
+  sky: 'flac',
+  dolby: 'flac',
+  jymaster: 'flac',
+})
+
+export function normalizeQQPlaybackQuality(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (QQ_PLAYBACK_QUALITY_MAP[normalized]) return QQ_PLAYBACK_QUALITY_MAP[normalized]
+  if (['m4a', '128', '320', 'ape', 'flac'].includes(normalized)) return normalized
+  return '128'
+}
+
+function getQQPlaybackQualityCandidates(value) {
+  const preferred = normalizeQQPlaybackQuality(value)
+  if (preferred === 'flac' || preferred === 'ape') return [preferred, '320', '128']
+  if (preferred === '320') return ['320', '128']
+  return [preferred]
+}
+
+function readQQVipOnly(value) {
+  if (!value || typeof value !== 'object') return false
+  if (normalizeQQBooleanFlag(value.vipOnly) || normalizeQQBooleanFlag(value.vip)) return true
+  if (normalizeQQBooleanFlag(value.pay_play) || normalizeQQBooleanFlag(value.payPlay)) return true
+  if (value.vip && typeof value.vip === 'object' && (
+    normalizeQQBooleanFlag(value.vip.isVip)
+    || normalizeQQBooleanFlag(value.vip.is_vip)
+    || normalizeQQBooleanFlag(value.vip.level)
+  )) return true
+  const pay = [
+    value.pay,
+    value.payInfo,
+    value.payinfo,
+    value.payment,
+    value.songInfo?.pay,
+    value.song_info?.pay,
+  ]
+    .find(item => item && typeof item === 'object')
+  if (!pay) return false
+  // QQ song payloads use pay_play/payPlay to indicate that a member
+  // entitlement is required for full playback.
+  return [
+    pay.pay_play,
+    pay.payPlay,
+    pay.play,
+  ].some(normalizeQQBooleanFlag)
+}
+
+function readQQMediaId(value) {
+  const file = value?.file && typeof value.file === 'object' ? value.file : {}
+  const nestedFile = value?.songInfo?.file || value?.song_info?.file
+  const fallbackFile = nestedFile && typeof nestedFile === 'object' ? nestedFile : {}
+  return firstQQValue(
+    value?.mediaId,
+    value?.media_id,
+    value?.mediaMid,
+    value?.media_mid,
+    value?.strMediaMid,
+    value?.str_media_mid,
+    file.mediaId,
+    file.media_id,
+    file.mediaMid,
+    file.media_mid,
+    file.strMediaMid,
+    file.str_media_mid,
+    fallbackFile.mediaId,
+    fallbackFile.media_id,
+    fallbackFile.mediaMid,
+    fallbackFile.media_mid,
+    fallbackFile.strMediaMid,
+    fallbackFile.str_media_mid,
+  )
+}
+const parseQQTrackCount = value => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const match = value.match(/\d+/)
+    if (match) return Number(match[0])
+  }
+  return 0
+}
+
+/**
+ * Normalize the playlist summary shapes returned by QQ's profile and
+ * collection endpoints. Those endpoints intentionally use different field
+ * names (`title`/`picurl` vs `dissname`/`logo`).
+ */
+export function normalizeQQPlaylist(item = {}, options = {}) {
+  const value = item && typeof item === 'object' ? item : {}
+  const id = firstQQValue(value.disstid, value.dissid, value.tid, value.id, value.dirid, options.id)
+  const name = firstQQValue(value.dissname, value.title, value.name, value.songlistName, options.name, 'QQ 歌单')
+  const coverImgUrl = firstQQValue(
+    value.logo,
+    value.picurl,
+    value.picUrl,
+    value.coverImgUrl,
+    value.cover,
+    value.coverUrl,
+    value.pic,
+    // 旧版分类歌单接口用 imgurl 承载封面
+    value.imgurl,
+    options.coverImgUrl,
+    '',
+  )
+  const trackCount = parseQQTrackCount(firstPositiveQQValue(
+    value.songnum,
+    value.songCount,
+    value.trackCount,
+    value.size,
+    value.num0,
+    value.subtitle,
+    // musicu 歌单搜索用 song_count 承载曲目数
+    value.song_count,
+  ) ?? firstQQValue(value.songnum, value.songCount, value.trackCount, value.size, value.num0, value.subtitle, value.song_count))
+  // 写歌单用的是 dirId（数字），与展示用的 disstid 不是同一个标识。
+  // 上游字段大小写不稳定，且不能退化成 disstid，否则「加入歌单」会打到错误目标。
+  const dirId = String(firstQQValue(
+    value.dirid,
+    value.dirId,
+    value.dirID,
+    value.dir_id,
+    /^\d+$/.test(String(value.id ?? '').trim()) ? value.id : '',
+    /^\d+$/.test(String(id ?? '').trim()) ? id : '',
+  ) ?? '').replace(/[^0-9]/g, '')
+  return {
+    ...value,
+    id: normalizeQQId(id),
+    source: 'qq',
+    name: String(name),
+    coverImgUrl: String(coverImgUrl || ''),
+    // LibraryList accepts both fields; retaining picUrl also helps consumers
+    // that use the common album/playlist image contract.
+    picUrl: String(firstQQValue(value.picUrl, coverImgUrl, '') || ''),
+    trackCount,
+    ...(dirId ? { dirId } : {}),
+  }
+}
+
+/** Find playlist summaries in all known QQ profile/collection envelopes. */
+export function extractQQPlaylists(value, depth = 0, seen = new Set()) {
+  if (depth > 8 || value == null) return []
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'object' || seen.has(value)) return []
+  seen.add(value)
+
+  const keys = [
+    'cdlist', 'playlists', 'playlist', 'disslist', 'dissList', 'diss',
+    'createdDissList', 'createdList', 'mydiss', 'mymusic', 'list', 'data',
+    'result', 'body',
+  ]
+  for (const key of keys) {
+    const candidate = value[key]
+    if (Array.isArray(candidate)) {
+      seen.delete(value)
+      return candidate
+    }
+    const nested = extractQQPlaylists(candidate, depth + 1, seen)
+    if (nested.length) {
+      seen.delete(value)
+      return nested
+    }
+  }
+  seen.delete(value)
+  return []
+}
+
+/**
+ * The liked-playlist endpoint returns metadata in `data.info`, while its
+ * cover and title live in the first `data.songs` entry. Merge both records so
+ * the library item keeps a usable ID, name, cover and count.
+ */
+export function normalizeQQLikedPlaylist(payload) {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const info = data?.info && typeof data.info === 'object' ? data.info : {}
+  const summary = Array.isArray(data?.songs) ? (data.songs[0] || {}) : {}
+  const detailIds = []
+  ;[
+    info.id,
+    info.dissid,
+    info.disstid,
+    summary.dissid,
+    summary.disstid,
+    info.dirid,
+    summary.dirid,
+    info.songlistId,
+    summary.songlistId,
+  ].forEach(value => {
+    if (!isPresentQQValue(value)) return
+    const normalized = String(value)
+    if (!detailIds.includes(normalized)) detailIds.push(normalized)
+  })
+  const id = detailIds[0] || ''
+  if (!isPresentQQValue(id)) return null
+  const isQQSongLike = value => value && typeof value === 'object' && (
+    isPresentQQValue(value.songmid)
+    || isPresentQQValue(value.mid)
+    || isPresentQQValue(value.songname)
+    || isPresentQQValue(value.songName)
+    || isPresentQQValue(value.songid)
+  )
+  const embeddedSongLists = [
+    data?.songlist,
+    data?.songList,
+    data?.tracks,
+    data?.tracklist,
+    info?.songlist,
+    summary?.songlist,
+    data?.songs,
+  ]
+  const embeddedSongs = embeddedSongLists.find(list => Array.isArray(list) && list.some(isQQSongLike)) || []
+  const playlist = normalizeQQPlaylist({
+    ...summary,
+    ...info,
+    id,
+    dissid: firstQQValue(summary.dissid, info.dissid),
+    title: firstQQValue(info.title, summary.title, '我喜欢'),
+    picurl: firstQQValue(summary.picurl, info.picurl, summary.logo, info.logo),
+    songnum: firstPositiveQQValue(info.songCount, summary.songCount, summary.num0)
+      ?? firstQQValue(info.songCount, summary.songCount, summary.num0),
+  }, { name: '我喜欢' })
+  return {
+    ...playlist,
+    detailIds,
+    songs: embeddedSongs.map(normalizeQQSong),
+  }
+}
+
+function findQQPlaylistDetail(value, depth = 0, seen = new Set()) {
+  if (depth > 8 || value == null || typeof value !== 'object' || seen.has(value)) return null
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findQQPlaylistDetail(item, depth + 1, seen)
+      if (found) return found
+    }
+    return null
+  }
+  seen.add(value)
+  if (Array.isArray(value.songlist) || Array.isArray(value.song) || Array.isArray(value.songList)) {
+    seen.delete(value)
+    return value
+  }
+  for (const key of ['cdlist', 'diss', 'playlist', 'playlists', 'data', 'result', 'body']) {
+    const found = findQQPlaylistDetail(value[key], depth + 1, seen)
+    if (found) {
+      seen.delete(value)
+      return found
+    }
+  }
+  seen.delete(value)
+  return null
+}
+
+/** Normalize a QQ song-list detail response into stable playlist/song data. */
+export function normalizeQQPlaylistDetail(payload, fallbackId = '') {
+  const playlist = findQQPlaylistDetail(unwrapQQResponse(payload))
+  const rawSongs = playlist?.songlist || playlist?.song || playlist?.songList || []
+  const normalizedPlaylist = normalizeQQPlaylist(playlist || {}, { id: fallbackId })
+  if (!normalizedPlaylist.id && fallbackId) normalizedPlaylist.id = String(fallbackId)
+  // Some detail responses omit songnum (or return a stale zero) even though
+  // the page already contains its complete songlist. Keep the overview count
+  // useful without replacing a positive upstream count.
+  if (normalizedPlaylist.trackCount <= 0 && Array.isArray(rawSongs) && rawSongs.length > 0) {
+    normalizedPlaylist.trackCount = rawSongs.length
+    normalizedPlaylist.size = rawSongs.length
+  }
+  return {
+    playlist: normalizedPlaylist,
+    songs: Array.isArray(rawSongs) ? rawSongs.map(normalizeQQSong) : [],
+  }
+}
+
+export async function getQQMusicPlay(songmid, params = {}) {
+  const qualityCandidates = getQQPlaybackQualityCandidates(params.quality)
+  let lastResponse = null
+
+  for (const candidate of qualityCandidates) {
+    lastResponse = await qqRequest({
+      url: '/getMusicPlay',
+      method: 'get',
+      params: {
+        songmid,
+        ...params,
+        quality: candidate,
+      },
+    })
+    if (normalizeQQPlaybackPayload(lastResponse, songmid)?.url) return lastResponse
+  }
+
+  return lastResponse
+}
+
+export function getQQLyric(songmid, params = {}) {
+  return qqRequest({ url: '/getLyric', method: 'get', params: { songmid, ...params } })
+}
+
+export function normalizeQQPlaybackPayload(payload, songmid = '') {
+  const targetId = String(songmid || '')
+  const queue = [payload]
+  const seen = new Set()
+  let firstTrackInfo = null
+  let firstDuration = 0
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || typeof current !== 'object' || seen.has(current)) continue
+    seen.add(current)
+
+    if (!firstTrackInfo && current.trackInfo && typeof current.trackInfo === 'object') firstTrackInfo = current.trackInfo
+    if (!firstTrackInfo && current.track_info && typeof current.track_info === 'object') firstTrackInfo = current.track_info
+    const duration = Number(current.duration ?? current.interval ?? current.dt)
+    if (!firstDuration && Number.isFinite(duration) && duration > 0) firstDuration = duration < 1000 ? duration * 1000 : duration
+
+    const playMap = current.playUrl || current.playurl
+    if (playMap && typeof playMap === 'object') {
+      const entry = playMap[targetId] || playMap[songmid] || (targetId ? null : Object.values(playMap)[0])
+      if (entry && typeof entry === 'object') {
+        const url = entry.url || entry.purl || entry.playUrl
+        if (url) return { url: String(url), trackInfo: firstTrackInfo, duration: firstDuration }
+      } else if (typeof entry === 'string' && entry) {
+        return { url: entry, trackInfo: firstTrackInfo, duration: firstDuration }
+      }
+    }
+
+    const directUrl = current.url || current.purl || current.playUrl
+    if (typeof directUrl === 'string' && directUrl) return { url: directUrl, trackInfo: firstTrackInfo, duration: firstDuration }
+
+    for (const key of ['data', 'body', 'response', 'result', 'req_0']) {
+      if (current[key] && typeof current[key] === 'object') queue.push(current[key])
+    }
+  }
+  return null
+}
+
+/**
+ * Convert the QQ lyric response into the shape consumed by the shared lyric
+ * runtime. QQ wraps the payload in `response` and exposes the original lyric
+ * text as `lyric` (with optional translation/romanisation fields), whereas
+ * NetEase uses `{ lrc: { lyric } }`.
+ */
+export function normalizeQQLyricPayload(payload) {
+  const body = unwrapQQResponse(payload)
+  const source = body?.data && typeof body.data === 'object' ? body.data : body
+  // The QQ endpoints have used a few different names for the translated and
+  // romanised tracks over time.  The public package currently forwards the
+  // upstream object as-is, so keep the adapter tolerant of both the legacy
+  // `trans`/`roma` fields and newer aliases such as `transLyric`/`translrc`.
+  // Values may also be wrapped as `{ lyric: ... }` (or nested under `data`).
+  const readQQLyricField = (root, aliases) => {
+    const roots = Array.isArray(root) ? root : [root]
+    const queue = roots.map(value => ({ value, depth: 0 }))
+    const seen = new Set()
+    while (queue.length > 0) {
+      const { value, depth } = queue.shift()
+      if (!value || typeof value !== 'object' || seen.has(value) || depth > 6) continue
+      seen.add(value)
+
+      for (const alias of aliases) {
+        const candidate = value[alias]
+        if (typeof candidate === 'string' && candidate) return candidate
+        if (candidate && typeof candidate === 'object') {
+          for (const key of ['lyric', 'text', 'content', 'value']) {
+            const text = candidate[key]
+            if (typeof text === 'string' && text) return text
+          }
+        }
+      }
+
+      // Restrict traversal to response containers.  This still handles
+      // `{ response: { data: ... } }` while avoiding accidental matches in
+      // unrelated song metadata objects.
+      for (const key of ['data', 'body', 'response', 'result', 'payload', 'req_0']) {
+        const nested = value[key]
+        if (nested && typeof nested === 'object') queue.push({ value: nested, depth: depth + 1 })
+      }
+    }
+    return ''
+  }
+
+  const decode = value => {
+    if (typeof value !== 'string' || !value) return value || ''
+    const compact = value.replace(/\s+/g, '')
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length < 16) return value
+    try {
+      if (typeof atob === 'function') {
+        const bytes = Uint8Array.from(atob(compact), char => char.charCodeAt(0))
+        const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+        if (decoded && (decoded.includes('[') || decoded.includes('\n'))) return decoded
+      }
+    } catch (_) {}
+    return value
+  }
+  // Prefer the normalized `data` object but retain the outer body as a
+  // fallback: older package versions occasionally put translation beside
+  // `data` while leaving the original lyric at the response root.
+  const lyricRoots = source === body ? source : [source, body]
+  const original = decode(readQQLyricField(lyricRoots, [
+    'lyric', 'lrc', 'qrc', 'originalLyric', 'original', 'lyricText', 'lrcText',
+  ]))
+  const translated = decode(readQQLyricField(lyricRoots, [
+    'trans', 'tlyric', 'trans_tlyric', 'transLyric', 'translrc', 'translation',
+    'translatedLyric', 'translateLyric', 'transLyricText', 'translationLyric',
+    'translrcText',
+  ]))
+  const romanized = decode(readQQLyricField(lyricRoots, [
+    'roma', 'romalrc', 'romaLyric', 'romanizedLyric', 'romanLyric', 'romaLyricText',
+  ]))
+  const normalized = {
+    ...source,
+    lrc: { lyric: typeof original === 'string' ? original : '' },
+    hmLyricSource: 'qq',
+  }
+  if (translated) {
+    normalized.tlyric = { lyric: typeof translated === 'string' ? translated : '' }
+    // Preserve a canonical `translrc` alias for callers that consume QQ's
+    // native field name, while the shared lyric runtime continues to read
+    // `tlyric`.
+    normalized.translrc = { lyric: normalized.tlyric.lyric }
+  }
+  if (romanized) {
+    normalized.romalrc = { lyric: typeof romanized === 'string' ? romanized : '' }
+    normalized.roma = normalized.romalrc.lyric
+  }
+  return normalized
+}
+
+export function getQQSongListDetail(id, params = {}) {
+  return qqRequest({ url: '/getSongListDetail', method: 'get', params: { disstid: id, ...params } })
+}
+
+export function getQQAlbumInfo(albummid, params = {}) {
+  if (!albummid) throw new TypeError('QQ album mid is required')
+  return qqRequest({ url: '/getAlbumInfo', method: 'get', params: { albummid, ...params } })
+}
+
+// 专辑封面使用 QQ 固定图床模板，与搜索专辑 pic/歌曲专辑曲绘一致。
+const buildQQAlbumCoverUrl = (mid, size = 'T002R500x500M000') => (
+  mid ? `https://y.gtimg.cn/music/photo_new/${size}${mid}.jpg` : ''
+)
+
+/**
+ * 归一化 QQ 专辑详情（实测 getAlbumInfo 返回 `response.data`）：
+ * 元数据字段 mid/name/singername/singermid/aDate/company/desc/genre/lan/cur_song_num，
+ * 并自带完整歌曲列表 `list`（复用 normalizeQQSong）。
+ */
+export function normalizeQQAlbumDetail(payload, fallbackMid = '') {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const mid = String(firstQQValue(data?.mid, data?.albummid, data?.albumMid, fallbackMid) || '')
+  const name = firstQQValue(data?.name, data?.albumname, data?.albumName) || ''
+  const singerName = firstQQValue(data?.singername, data?.singerName) || ''
+  const singerMid = firstQQValue(data?.singermid, data?.singerMid, data?.singerMID)
+  const trackCount = parseQQTrackCount(firstQQValue(
+    data?.cur_song_num,
+    data?.total_song_num,
+    data?.total,
+    data?.song_num,
+  ))
+  const coverUrl = String(firstQQValue(data?.pic, data?.picUrl, buildQQAlbumCoverUrl(mid)) || '')
+  const artists = (singerName || singerMid)
+    ? [{ name: String(singerName), ...(singerMid ? { mid: String(singerMid) } : {}) }]
+    : []
+  const album = {
+    ...data,
+    id: String(firstQQValue(data?.id, mid) || ''),
+    mid: String(mid),
+    source: 'qq',
+    name: String(name),
+    artists,
+    singers: artists,
+    // LibraryDetail 的封面读取 coverImgUrl/blurPicUrl/img1v1Url 三选一
+    coverImgUrl: coverUrl,
+    blurPicUrl: coverUrl,
+    img1v1Url: coverUrl,
+    picUrl: coverUrl,
+    company: firstQQValue(data?.company, ''),
+    description: firstQQValue(data?.desc, data?.description, ''),
+    briefDesc: firstQQValue(data?.desc, data?.description, ''),
+    publishTime: firstQQValue(data?.aDate, data?.publishTime, ''),
+    genre: firstQQValue(data?.genre, ''),
+    lan: firstQQValue(data?.lan, ''),
+    trackCount,
+    size: trackCount,
+    followed: false,
+  }
+  const rawSongs = Array.isArray(data?.list) ? data.list : []
+  return {
+    album,
+    songs: rawSongs.map(normalizeQQSong),
+  }
+}
+
+export function getQQMv() {
+  return Promise.reject(createQQPublicApiDisabledError('MV details'))
+}
+
+// —— 公共首页数据（2026-09 实测形状）——
+
+export function getQQRecommendBanner() {
+  return qqRequest({ url: '/getRecommendBanner', method: 'get' })
+}
+
+export function getQQNewSongs() {
+  return qqRequest({ url: '/getNewSongs', method: 'get' })
+}
+
+export function getQQTopLists() {
+  return qqRequest({ url: '/getTopLists', method: 'get' })
+}
+
+export function getQQTopListDetail(topId, params = {}) {
+  if (!topId) throw new TypeError('QQ top list id is required')
+  return qqRequest({ url: '/getTopListDetail', method: 'get', params: { topId, ...params } })
+}
+
+/**
+ * 归一化 QQ 榜单详情。服务端 `/getTopListDetail` 走旧版 c.y.qq.com 模板，信封为
+ * `{ response: { topinfo, songlist: [{ data: 完整歌曲对象 }], total_song_num, update_time } }`；
+ * 歌曲对象（songmid/singer/albummid/interval）直接交给 normalizeQQSong。
+ * 同时兼容 musicToplist.GetDetail 的旧包络（`req_1.data.data.song[]`），
+ * 该形状只有数字 songId、没有 songmid，仅作兜底避免历史缓存解析失败。
+ */
+export function normalizeQQTopListDetail(payload, fallbackId = '') {
+  const body = unwrapQQResponse(payload)
+  const topinfo = body?.topinfo && typeof body.topinfo === 'object' ? body.topinfo : null
+  const rawList = Array.isArray(body?.songlist) ? body.songlist : []
+
+  if (topinfo || rawList.length > 0) {
+    // 旧版模板每项外面还包一层计数信息，歌曲字段在内层 data 上
+    const songs = rawList
+      .map(item => (item?.data && typeof item.data === 'object' ? item.data : item))
+      .filter(item => item && typeof item === 'object')
+      .map(item => normalizeQQSong(item))
+    const totalRaw = Number(body?.total_song_num)
+    const trackCount = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : songs.length
+    return {
+      playlist: {
+        id: String(firstQQValue(topinfo?.topID, fallbackId) || ''),
+        source: 'qq',
+        name: String(firstQQValue(topinfo?.ListName, topinfo?.name, '') || ''),
+        coverImgUrl: String(firstQQValue(topinfo?.pic_v12, topinfo?.pic, topinfo?.picDetail, '') || ''),
+        picUrl: String(firstQQValue(topinfo?.pic_v12, topinfo?.pic, '') || ''),
+        blurPicUrl: String(firstQQValue(topinfo?.pic_v12, topinfo?.pic, '') || ''),
+        description: String(firstQQValue(topinfo?.info, '') || ''),
+        updateTime: String(firstQQValue(body?.update_time, topinfo?.update_time, '') || ''),
+        trackCount,
+        size: trackCount,
+        followed: false,
+      },
+      songs,
+    }
+  }
+
+  // 兜底：musicToplist.GetDetail 包络
+  const songData = body?.req_1?.data && typeof body.req_1.data === 'object' ? body.req_1.data : {}
+  const inner = songData?.data && typeof songData.data === 'object' ? songData.data : {}
+  const songKeys = ['songInfoList', 'song_info_list', 'songList', 'song_list', 'list', 'song']
+  const foundArray = songKeys
+    .map(key => inner?.[key])
+    .concat(songKeys.map(key => songData?.[key]))
+    .find(list => Array.isArray(list))
+  const rawSongs = Array.isArray(foundArray) ? foundArray : []
+
+  const name = firstQQValue(songData?.title, inner?.title, songData?.subTitle) || ''
+  const cover = firstQQValue(
+    inner?.headPicUrl,
+    inner?.frontPicUrl,
+    songData?.banner,
+    songData?.cover,
+  ) || ''
+  const trackCount = firstPositiveQQValue(
+    inner?.totalNum,
+    songData?.songNum,
+    songData?.total,
+  ) ?? 0
+
+  const songs = rawSongs.map(item => {
+    const songInfo = item?.songInfo && typeof item.songInfo === 'object' ? item.songInfo : null
+    return normalizeQQSong(songInfo ? { ...item, ...songInfo } : item)
+  })
+  const playlist = {
+    id: String(firstQQValue(inner?.topId, songData?.topId, fallbackId) || ''),
+    source: 'qq',
+    name: String(name),
+    coverImgUrl: String(cover),
+    picUrl: String(cover),
+    blurPicUrl: String(cover),
+    trackCount,
+    size: trackCount,
+    followed: false,
+  }
+  if (playlist.trackCount <= 0 && songs.length > 0) {
+    playlist.trackCount = songs.length
+    playlist.size = songs.length
+  }
+  return { playlist, songs }
+}
+
+function readQQField(payload, key) {
+  const body = unwrapQQResponse(payload)
+  return body?.[key] || null
+}
+
+/** 焦点图：focus.data.content[] → Banner 使用的 { pic, title, subTitle, jump } 形状。 */
+export function normalizeQQRecommendBanner(payload) {
+  const focus = readQQField(payload, 'focus')
+  const data = focus?.data && typeof focus.data === 'object' ? focus.data : focus
+  const items = Array.isArray(data?.content) ? data.content : []
+  return items.map(item => ({
+    ...item,
+    pic: String((item?.pic_info && item.pic_info.url) || item?.pic || item?.cover || ''),
+    title: String(item?.title || ''),
+    subTitle: String(item?.sub_title || ''),
+    jumpUrl: String((item?.jump_info && item.jump_info.url) || ''),
+    jumpType: Number(item?.type || 0),
+  }))
+}
+
+/** 新歌：new_song.data.songlist[] → normalizeQQSong。 */
+export function normalizeQQNewSongs(payload) {
+  const newSong = readQQField(payload, 'new_song')
+  const data = newSong?.data && typeof newSong.data === 'object' ? newSong.data : newSong
+  return Array.isArray(data?.songlist) ? data.songlist.map(normalizeQQSong) : []
+}
+
+/** 榜单：data.topList[] → { id, name, picUrl, listenCount, tracks[] }。 */
+export function normalizeQQTopLists(payload) {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const topList = Array.isArray(data?.topList) ? data.topList : []
+  return topList.map(list => ({
+    id: String(list?.id ?? ''),
+    source: 'qq',
+    name: String(list?.topTitle || ''),
+    picUrl: String(list?.picUrl || ''),
+    coverImgUrl: String(list?.picUrl || ''),
+    listenCount: Number(list?.listenCount ?? 0),
+    tracks: Array.isArray(list?.songList) ? list.songList : [],
+  }))
+}
+
+// —— 公共分类歌单 / 新碟 / 评论 / 个性化推荐（2026-09）——
+
+export function getQQPlaylistTags() {
+  return qqRequest({ url: '/getPlaylistTags', method: 'get' })
+}
+
+export function getQQPlaylistsByTag({ tagId, page = 0, limit = 20 } = {}) {
+  if (!tagId) throw new TypeError('QQ playlist tag id is required')
+  return qqRequest({ url: '/getPlaylistsByTag', method: 'get', params: { tagId, page, limit } })
+}
+
+export function getQQDigitalAlbumLists() {
+  return qqRequest({ url: '/getDigitalAlbums', method: 'get' })
+}
+
+export function getQQPersonalRecommend() {
+  return qqRequest({ url: '/getPersonalRecommend', method: 'get' })
+}
+
+export async function getQQComments({ id, type = 1, page = 0, pagesize = 20 }) {
+  // #region debug-point A:request-result
+  const result = await qqRequest({ url: '/getComments', method: 'get', params: { id, type, page, pagesize } })
+  if (import.meta.env?.DEV) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'A', location: 'qqMusic:getQQComments', msg: '[DEBUG] request result', data: { id, page, pagesize, code: result?.code, total: result?.total, commenttotal: result?.comment?.commenttotal, listLength: result?.comment?.commentlist?.length, hasData: !!result?.data, hasResponse: !!result?.response }, ts: Date.now() }) }).catch(() => {})
+  return result
+  // #endregion
+}
+
+/** 歌单分类标签：旧版 c.y.qq.com 分类接口 → [{ id, name, hot }]。 */
+export function normalizeQQTagList(payload) {
+  const body = unwrapQQResponse(payload)
+  // 服务端走的是与真实歌单分类页一致的旧版接口，结构为
+  // data.categories[].items[] 两级，先拍平再归一化。
+  const categories = Array.isArray(body?.data?.categories)
+    ? body.data.categories
+    : (Array.isArray(body?.categories) ? body.categories : [])
+  if (categories.length > 0) {
+    return categories
+      .flatMap(group => (Array.isArray(group?.items) ? group.items : []))
+      .filter(tag => tag && typeof tag === 'object')
+      .map(tag => ({
+        id: normalizeQQId(firstQQValue(tag.categoryId, tag.category_id, tag.id)),
+        name: String(firstQQValue(tag.categoryName, tag.category_name, tag.name, tag.title) || ''),
+        hot: normalizeQQBooleanFlag(firstQQValue(tag.hot, tag.isHot, tag.is_hot)),
+      }))
+      .filter(tag => tag.id)
+  }
+
+  const tags = findQQArrayList(body, ['tags', 'tagList', 'taglist', 'tag_list', 'v_tag', 'tag'])
+  return tags
+    .filter(tag => tag && typeof tag === 'object')
+    .map(tag => ({
+      id: normalizeQQId(firstQQValue(tag.id, tag.tagId, tag.tag_id, tag.tagid)),
+      name: String(firstQQValue(tag.name, tag.tagName, tag.tag_name, tag.title) || ''),
+      hot: normalizeQQBooleanFlag(firstQQValue(tag.hot, tag.isHot, tag.is_hot)),
+    }))
+    // 没有 id 的分类无法发起请求，直接丢弃而不是渲染出点不动的标签
+    .filter(tag => tag.id)
+}
+
+/**
+ * 歌单卡片：分类歌单与个性化推荐共用同一份契约（与 normalizeQQTopLists 同款字段），
+ * 供首页推荐区块与分类页网格复用。
+ */
+export function normalizeQQPlaylistCard(payload) {
+  const body = unwrapQQResponse(payload)
+  const raw = findQQArrayList(body, [
+    'playlists', 'playlistList', 'playlist_list', 'disslist', 'dissList',
+    'v_playlist', 'vPlaylist', 'list',
+  ])
+  return raw
+    .filter(item => item && typeof item === 'object')
+    .map(item => {
+      const playlist = normalizeQQPlaylist(item)
+      const trackCount = Number(playlist.trackCount) > 0 ? Number(playlist.trackCount) : 0
+      return {
+        ...playlist,
+        source: 'qq',
+        blurPicUrl: playlist.coverImgUrl,
+        trackCount,
+        size: trackCount,
+        followed: false,
+      }
+    })
+}
+
+/**
+ * 个性化推荐（猜你喜欢）：上游 RecommendFeed 返回的是「歌单卡片」货架
+ * v_shelf[].v_niche[].v_card[]，type=500 且 id 即 dissid，可直接复用
+ * 歌单详情链路。返回结构与 normalizeQQPlaylistCard 一致。
+ */
+export function normalizeQQRecommendCards(payload) {
+  const body = unwrapQQResponse(payload)
+  const feed = body?.recommend?.data || body?.data || body
+  const shelves = Array.isArray(feed?.v_shelf) ? feed.v_shelf : []
+  const cards = []
+  shelves.forEach(shelf => {
+    const niches = Array.isArray(shelf?.v_niche) ? shelf.v_niche : []
+    niches.forEach(niche => {
+      const items = Array.isArray(niche?.v_card) ? niche.v_card : []
+      items.forEach(card => {
+        if (card && typeof card === 'object') cards.push(card)
+      })
+    })
+  })
+
+  return cards
+    // 只保留能跳到歌单详情的歌单卡片，避免渲染出点不动的项
+    .filter(card => String(card.type) === '500' && firstQQValue(card.id))
+    .map(card => {
+      const playlist = normalizeQQPlaylist({
+        dissid: card.id,
+        dissname: card.title,
+        imgurl: card.cover,
+        songnum: card?.miscellany?.cnt_content,
+      })
+      const trackCount = Number(playlist.trackCount) > 0 ? Number(playlist.trackCount) : 0
+      return {
+        ...playlist,
+        source: 'qq',
+        blurPicUrl: playlist.coverImgUrl,
+        trackCount,
+        size: trackCount,
+        followed: false,
+        recommendReason: String(card?.miscellany?.rcmd_reason || ''),
+      }
+    })
+}
+
+/** 新碟/数字专辑卡片：musicmall.fcg → [{ id, source, name, coverImgUrl, picUrl, artists/ar, publishTime, price }]。 */
+export function normalizeQQDigitalAlbumCard(payload) {
+  const body = unwrapQQResponse(payload)
+  // 上游 musicmall.fcg 的真实结构是 data.content[].albumlist[] 分组
+  // （type 为 newupload / weeksalewell / zhuanti），需先拍平；
+  // 顶部的 data.banner[] 只有 album_id 没有 album_mid，无法跳专辑详情，故不纳入。
+  const groups = Array.isArray(body?.data?.content) ? body.data.content : []
+  const grouped = groups.flatMap(group => (Array.isArray(group?.albumlist) ? group.albumlist : []))
+  const raw = grouped.length > 0
+    ? grouped
+    : findQQArrayList(body, [
+      'albumList', 'album_list', 'albumlist', 'albums', 'v_album', 'vAlbum', 'list',
+    ])
+  return raw
+    .filter(item => item && typeof item === 'object')
+    .map(item => {
+      const mid = String(firstQQValue(item.albumMid, item.album_mid, item.albumMID, item.albummid, item.mid) || '')
+      const cover = String(firstQQValue(
+        item.albumPic,
+        item.album_pic,
+        item.pic,
+        item.picUrl,
+        item.cover,
+        item.coverUrl,
+        buildQQAlbumCoverUrl(mid),
+      ) || '')
+      const rawArtists = firstQQValue(item.singer_list, item.singerList, item.singers, item.singer, item.ar)
+      const artistList = Array.isArray(rawArtists)
+        ? rawArtists
+        : (rawArtists && typeof rawArtists === 'object' ? [rawArtists] : [])
+      const artists = artistList.map(artist => {
+        const value = artist && typeof artist === 'object' ? artist : { name: artist }
+        const artistMid = firstQQValue(value.mid, value.singer_mid, value.singerMid)
+        const name = firstQQValue(
+          value.name,
+          value.singer_name,
+          value.singerName,
+          item.singer_name,
+          item.singerName,
+        )
+        return {
+          ...value,
+          ...(artistMid ? { id: String(artistMid), mid: String(artistMid) } : {}),
+          name: String(name || ''),
+        }
+      })
+      const price = Number(firstQQValue(item.price, item.albumPrice, item.album_price, item.salePrice, item.sale_price))
+      return {
+        ...item,
+        // 专辑详情按 mid 请求，故优先用 mid 作为 id
+        id: String(firstQQValue(mid, item.albumID, item.albumId, item.album_id, item.id) || ''),
+        mid,
+        source: 'qq',
+        name: String(firstQQValue(item.albumName, item.album_name, item.albumname, item.name, item.title) || ''),
+        coverImgUrl: cover,
+        picUrl: cover,
+        blurPicUrl: cover,
+        artists,
+        ar: artists,
+        publishTime: firstQQValue(item.publishTime, item.publish_time, item.publicTime, item.publictime, item.pub_time, '') || '',
+        price: Number.isFinite(price) ? price : 0,
+      }
+    })
+}
+
+const QQ_COMMENT_CONTENT_KEYS = ['content', 'text', 'comment', 'commentContent', 'comment_content']
+
+function isQQCommentLike(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+  if (QQ_COMMENT_CONTENT_KEYS.some(key => typeof item[key] === 'string' && item[key])) return true
+  return isPresentQQValue(firstQQValue(item.commentId, item.commentid, item.comment_id, item.cmtid, item.id))
+}
+
+// QQ 评论时间戳为秒级，统一换算成 commentFormat 需要的毫秒。
+function parseQQCommentTime(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0
+  return numeric < 1e12 ? numeric * 1000 : numeric
+}
+
+function normalizeQQCommentItem(raw) {
+  const value = raw && typeof raw === 'object' ? raw : {}
+  const nestedUser = value.user && typeof value.user === 'object' ? value.user : {}
+  const id = firstQQValue(value.commentId, value.commentid, value.comment_id, value.cmtid, value.id)
+  const likedCount = Number(firstQQValue(
+    value.praiseNum, value.praise_num, value.praisnum, value.praisenum,
+    value.likedCount, value.likeCount, value.liked_count,
+  ))
+  const replyCount = Number(firstQQValue(
+    value.replyNum, value.reply_num, value.replynum, value.replyCount, value.reply_count,
+  ))
+  const rawReplies = firstQQValue(value.replyList, value.reply_list, value.replies, value.subComments)
+  const replies = Array.isArray(rawReplies) ? rawReplies.filter(isQQCommentLike).map(normalizeQQCommentItem) : []
+  const nickname = firstQQValue(
+    value.nick, value.nickname, value.userName, value.user_name,
+    nestedUser.nick, nestedUser.nickname, nestedUser.name,
+  )
+  const avatarUrl = firstQQValue(
+    value.avatarUrl, value.avatarurl, value.avatar, value.headUrl, value.head_url, value.logo,
+    nestedUser.avatarUrl, nestedUser.avatarurl, nestedUser.avatar, nestedUser.headUrl,
+  )
+  return {
+    ...value,
+    // Comments.vue 以 commentId 作为 key/交互标识，id 为对外契约，两者同时提供
+    id: normalizeQQId(id),
+    commentId: normalizeQQId(id),
+    content: String(firstQQValue(
+      // 旧版 c.y.qq.com 评论接口把正文放在 rootcommentcontent
+      value.rootcommentcontent,
+      value.rootCommentContent,
+      value.content,
+      value.text,
+      value.comment,
+      '',
+    ) || ''),
+    likedCount: Number.isFinite(likedCount) && likedCount > 0 ? likedCount : 0,
+    liked: normalizeQQBooleanFlag(firstQQValue(value.ispraise, value.isPraise, value.isLiked, value.is_liked, value.liked)),
+    time: parseQQCommentTime(firstQQValue(
+      value.pubTime, value.pubtime, value.pub_time,
+      value.createTime, value.create_time, value.commentTime, value.time,
+    )),
+    user: { nickname: String(nickname || ''), avatarUrl: String(avatarUrl || '') },
+    replyCount: Number.isFinite(replyCount) && replyCount > 0 ? replyCount : replies.length,
+    replies,
+  }
+}
+
+/**
+ * 评论列表：一次请求同时返回最新与热门（上游 needhot=1），
+ * 归一化为 { comments, hotComments, total, hotTotal, hasMore, nextPage }。
+ * total 是评论总数，hotTotal 是热门总数（热门列表本身有硬上限，两者不能互推）。
+ */
+export function normalizeQQCommentList(payload) {
+  let body = payload
+  for (let depth = 0; depth < 8; depth++) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new Error('Invalid QQ comments response')
+    }
+    if (['code', 'subcode'].some(key => body[key] != null && Number(body[key]) !== 0)) {
+      throw new Error('QQ comments request failed')
+    }
+    const wrapped = body.response ?? body.body
+    if (wrapped && typeof wrapped === 'object') {
+      body = wrapped
+    } else if (body.data && typeof body.data === 'object' && !body.comment) {
+      body = body.data
+    } else {
+      break
+    }
+  }
+  if (!['comment', 'hot_comment', 'comments', 'commentList', 'comment_list', 'commentlist',
+    'hotComments', 'hotCommentList', 'hot_comment_list', 'hotcommentlist', 'hot_comments', 'hotList']
+    .some(key => Object.prototype.hasOwnProperty.call(body, key))) {
+    throw new Error('Invalid QQ comments response')
+  }
+  // #region debug-point B:normalize-input
+  if (import.meta.env?.DEV) fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'qq-count-zero', runId: 'pre-fix', hypothesisId: 'B', location: 'qqMusic:normalize-input', msg: '[DEBUG] normalization input after unwrap', data: { wrapped: body !== payload, alreadyNormalized: Array.isArray(body?.comments), total: body?.total, totalCount: body?.totalCount, commenttotal: body?.comment?.commenttotal, hotTotal: body?.hotTotal, listLength: body?.comment?.commentlist?.length ?? body?.comments?.length }, ts: Date.now() }) }).catch(() => {})
+  // #endregion
+  // 旧版评论接口（服务端实际使用的那个）结构为
+  // { comment: { commentlist, commenttotal }, hot_comment: { commentlist }, morecomment }，
+  // 热门评论在独立的 hot_comment 节点下，不能靠 BFS 猜测。
+  const legacyComments = body?.comment?.commentlist
+  const legacyHot = body?.hot_comment?.commentlist
+  if (body?.comment && 'commentlist' in body.comment || body?.hot_comment && 'commentlist' in body.hot_comment) {
+    const comments = (Array.isArray(legacyComments) ? legacyComments : [])
+      .filter(isQQCommentLike)
+      .map(normalizeQQCommentItem)
+    const hotComments = (Array.isArray(legacyHot) ? legacyHot : [])
+      .filter(isQQCommentLike)
+      .map(normalizeQQCommentItem)
+    const legacyTotal = Number(body?.comment?.commenttotal)
+    const total = Number.isFinite(legacyTotal) && legacyTotal >= 0
+      ? legacyTotal
+      : 0
+    // 热门区上限由上游决定（实测最多 15 条），hot_comment.commenttotal 才是真实热门总数，
+    // 拿数组长度当数量会让面板显示成页大小。
+    const legacyHotTotal = Number(body?.hot_comment?.commenttotal)
+    const hotTotal = Number.isFinite(legacyHotTotal) && legacyHotTotal >= 0
+      ? legacyHotTotal
+      : hotComments.length
+    return {
+      comments,
+      hotComments,
+      total,
+      hotTotal,
+      // morecomment 为 1 表示还有下一页
+      hasMore: normalizeQQBooleanFlag(body?.morecomment),
+      nextPage: 1,
+    }
+  }
+
+  const data = (body?.comment?.data && typeof body.comment.data === 'object')
+    ? body.comment.data
+    : (body?.data && typeof body.data === 'object' ? body.data : body)
+  const comments = findQQArrayList(body, ['comments', 'commentList', 'comment_list', 'commentlist'])
+    .filter(isQQCommentLike)
+    .map(normalizeQQCommentItem)
+  const hotComments = findQQArrayList(body, [
+    'hotComments', 'hotCommentList', 'hot_comment_list', 'hotcommentlist', 'hot_comments', 'hotList',
+  ])
+    .filter(isQQCommentLike)
+    .map(normalizeQQCommentItem)
+  const totalValue = Number(firstQQValue(
+    data?.total, data?.totalCount, data?.total_count, data?.commentCount, data?.comment_count,
+  ))
+  const total = Number.isFinite(totalValue) && totalValue > 0 ? totalValue : 0
+  const pageValue = Number(firstQQValue(data?.page, data?.pageNo, data?.page_no, data?.currentPage))
+  const page = Number.isFinite(pageValue) && pageValue >= 0 ? pageValue : 0
+  const nextPageValue = Number(firstQQValue(data?.nextPage, data?.next_page))
+  const hasMoreFlag = firstQQValue(data?.hasMore, data?.has_more, data?.hasnext, data?.hasNext)
+  return {
+    comments,
+    hotComments,
+    total,
+    hotTotal: hotComments.length,
+    hasMore: hasMoreFlag !== undefined && hasMoreFlag !== null && hasMoreFlag !== ''
+      ? normalizeQQBooleanFlag(hasMoreFlag)
+      : (total > 0 ? comments.length < total : comments.length > 0),
+    nextPage: Number.isFinite(nextPageValue) && nextPageValue >= 0 ? nextPageValue : page + 1,
+  }
+}
+
+export function getQQMvPlay() {
+  return Promise.reject(createQQPublicApiDisabledError('MV playback'))
+}
+
+// —— 歌手详情（2026-09 实测：歌曲列表/总量走 musicu 歌手详情模块，描述/关注走 fcg 接口，MV 走 fcg_singer_mv）——
+
+// zhida hotsong.f 为管道分隔：0歌id|1歌名|2歌手id|3歌手名|4专辑id|5专辑名|6?|7时长秒|...|20 songmid|21 singermid|22 albummid
+function parseQQHotSongF(f, fallback = {}) {
+  if (typeof f !== 'string' || !f) return {
+    ...fallback,
+    songmid: fallback.songMID || fallback.songmid || '',
+    songname: fallback.songName || fallback.songname || '',
+  }
+  const parts = f.split('|')
+  const durationSec = Number(parts[7])
+  return {
+    id: parts[20] || fallback.songMID || '',
+    songmid: parts[20] || fallback.songMID || '',
+    name: parts[1] || fallback.songName || '',
+    singer: parts[3]
+      ? [{ name: parts[3], mid: parts[21] || '' }]
+      : fallback.singer && Array.isArray(fallback.singer) ? fallback.singer : [],
+    albummid: parts[22] || '',
+    albumname: parts[5] || '',
+    ...(Number.isFinite(durationSec) && durationSec > 0 ? { interval: String(durationSec) } : {}),
+  }
+}
+
+/**
+ * 归并 QQ 歌手详情聚合响应：{ desc, starNum, hotSongs, totalSong, totalAlbum, totalMv, mvs }。
+ * hotSongs 为 musicu 歌手详情模块的完整歌曲列表；上游降级为 zhida 热歌时条目带 f
+ * 管道字段，parseQQHotSongF 会解析它，缺失时原样透传条目字段。
+ */
+export function normalizeQQSingerDetail(payload, options = {}) {
+  const body = unwrapQQResponse(payload)
+  const hotSongsRaw = Array.isArray(body?.hotSongs) ? body.hotSongs : []
+  const hotSongs = hotSongsRaw.map(entry => normalizeQQSong(parseQQHotSongF(entry?.f, entry)))
+  const mvsRaw = Array.isArray(body?.mvs) ? body.mvs : []
+  const mvs = mvsRaw.map(mv => ({
+    id: String(mv?.vid || mv?.id || ''),
+    source: 'qq',
+    name: String(mv?.title || ''),
+    picUrl: String(mv?.pic || ''),
+    cover: String(mv?.pic || ''),
+    briefDesc: String(mv?.desc || ''),
+    playCount: Number(mv?.listenCount ?? 0),
+    artist: { id: mv?.singer_id, name: String(mv?.singer_name || ''), mid: mv?.singer_mid },
+  }))
+  const singerPic = options.pic || (options.mid
+    ? `https://y.gtimg.cn/music/photo_new/T001R300x300M000${options.mid}.jpg`
+    : '')
+  const totalSong = Number(body?.totalSong ?? 0)
+  const totalAlbum = Number(body?.totalAlbum ?? 0)
+  const totalMv = Number(body?.totalMv ?? 0)
+  const singer = {
+    id: String(options.mid || ''),
+    source: 'qq',
+    name: String(options.name || ''),
+    picUrl: singerPic,
+    coverImgUrl: singerPic,
+    img1v1Url: singerPic,
+    description: String(body?.desc || ''),
+    briefDesc: String(body?.desc || ''),
+    // 页头展示真实总量（musicu 返回 total_song 等），缺失时退回已加载条数。
+    musicSize: totalSong > 0 ? totalSong : hotSongs.length,
+    albumSize: totalAlbum > 0 ? totalAlbum : 0,
+    mvSize: totalMv > 0 ? totalMv : mvs.length,
+    followed: false,
+    starNum: Number(body?.starNum ?? 0),
+  }
+  return { singer, hotSongs, mvs }
+}
+
+/**
+ * 归一化歌手歌曲分页响应：{ songs, totalSong }。
+ * songs 为 musicu 歌手详情模块的原始歌曲结构，交给 normalizeQQSong 映射。
+ */
+export function normalizeQQSingerSongs(payload) {
+  const body = unwrapQQResponse(payload)
+  const songs = Array.isArray(body?.songs) ? body.songs.map(normalizeQQSong) : []
+  return { songs, totalSong: Number(body?.totalSong ?? 0) }
+}
+
+/**
+ * 归一化单条歌手专辑（musicu GetAlbumList 的 albumList 条目）。
+ * 上游只给 albumMid/albumName/publishDate/albumType，曲目数 totalNum 恒为 0，
+ * 故 size/trackCount 为 0，列表页据此隐藏曲目数而不是显示「0首」。
+ */
+function normalizeQQSingerAlbum(entry) {
+  const data = entry && typeof entry === 'object' ? entry : {}
+  const mid = String(firstQQValue(data.albumMid, data.albummid, data.mid) || '')
+  const coverUrl = buildQQAlbumCoverUrl(mid)
+  const singerName = String(firstQQValue(data.singerName, data.singername) || '')
+  const artists = singerName ? [{ name: singerName }] : []
+  const trackCount = parseQQTrackCount(data.totalNum)
+  return {
+    ...data,
+    id: mid,
+    mid,
+    source: 'qq',
+    name: String(firstQQValue(data.albumName, data.albumTranName, data.name) || ''),
+    artists,
+    singers: artists,
+    // LibraryAlbumList 的封面读取 blurPicUrl
+    coverImgUrl: coverUrl,
+    blurPicUrl: coverUrl,
+    img1v1Url: coverUrl,
+    picUrl: coverUrl,
+    publishTime: String(firstQQValue(data.publishDate, data.publishTime) || ''),
+    type: String(firstQQValue(data.albumType, data.type) || ''),
+    trackCount,
+    size: trackCount,
+  }
+}
+
+/**
+ * 归一化歌手专辑分页响应：{ albums, totalAlbum }。
+ * albums 为 musicu GetAlbumList 的原始专辑结构，交给 normalizeQQSingerAlbum 映射。
+ */
+export function normalizeQQSingerAlbums(payload) {
+  const body = unwrapQQResponse(payload)
+  const albums = Array.isArray(body?.albums) ? body.albums.map(normalizeQQSingerAlbum) : []
+  return { albums, totalAlbum: Number(body?.totalAlbum ?? 0) }
+}
+
+function parseQQDurationMilliseconds(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue
+    if (typeof value === 'string') {
+      const text = value.trim()
+      if (!text) continue
+      const clock = text.match(/^(\d+):([0-5]?\d)(?::([0-5]?\d))?$/)
+      if (clock) {
+        const hours = Number(clock[3] === undefined ? 0 : clock[1])
+        const minutes = Number(clock[3] === undefined ? clock[1] : clock[2])
+        const seconds = Number(clock[3] === undefined ? clock[2] : clock[3])
+        const totalSeconds = hours * 3600 + minutes * 60 + seconds
+        if (totalSeconds > 0) return totalSeconds * 1000
+        continue
+      }
+    }
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && numeric > 0) return numeric < 1000 ? numeric * 1000 : numeric
+  }
+  return 0
+}
+
+export function normalizeQQSong(song = {}) {
+  const value = song && typeof song === 'object' ? song : {}
+  const mid = firstQQValue(
+    value.songmid,
+    value.song_mid,
+    value.songMid,
+    value.mid,
+    value.sourceId,
+    value.songId,
+    value.song_id,
+    value.id,
+  )
+  const rawAlbum = value.album || value.al || {}
+  const album = rawAlbum && typeof rawAlbum === 'object' ? rawAlbum : {}
+  const albumMid = firstQQValue(
+    album.mid,
+    album.albummid,
+    album.album_mid,
+    album.albumMid,
+    album.albumMID,
+    album.pmid,
+    value.albummid,
+    value.album_mid,
+    value.albumMid,
+    value.albumMID,
+    value.pmid,
+  ) || ''
+  const albumName = firstQQValue(
+    album.name,
+    album.albumname,
+    album.album_name,
+    album.albumName,
+    album.title,
+    value.albumname,
+    value.album_name,
+    value.albumName,
+    value.albumTitle,
+  )
+  const albumCover = firstQQValue(
+    album.picUrl,
+    album.coverUrl,
+    album.picurl,
+    album.pic,
+    album.album_pic,
+    album.albumPic,
+    album.cover,
+    album.cover_url,
+    value.album_pic,
+    value.albumPic,
+    value.albumpic,
+    value.picurl,
+    value.picUrl,
+    value.coverUrl,
+    value.cover_url,
+    value.cover,
+    value.album_cover,
+    value.albumCover,
+  ) || (albumMid
+    ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`
+    : '')
+  const albumData = {
+    ...album,
+    ...(albumMid ? { mid: albumMid, albummid: albumMid } : {}),
+    ...(albumName ? { name: String(albumName) } : {}),
+    ...(albumCover ? { picUrl: String(albumCover), blurPicUrl: String(albumCover) } : {}),
+  }
+  const duration = parseQQDurationMilliseconds(
+    value.interval,
+    value.duration,
+    value.dt,
+    value.songtime,
+    value.songTime,
+    value.intervalMs,
+    value.durationMs,
+    value.duration_ms,
+  )
+  const rawArtists = firstQQValue(value.singer, value.singers, value.ar, value.artists)
+  const artistList = Array.isArray(rawArtists)
+    ? rawArtists
+    : (typeof rawArtists === 'string' && rawArtists.trim()
+      ? [rawArtists]
+      : (rawArtists && typeof rawArtists === 'object' ? [rawArtists] : []))
+  const artists = artistList.map(artist => {
+    const item = artist && typeof artist === 'object' ? artist : { name: artist }
+    const artistMid = firstQQValue(item.mid, item.singer_mid, item.singerMid, item.singerMID)
+    const artistId = firstQQValue(item.id, item.singer_id, item.singerId, item.singerID)
+    const artistName = firstQQValue(item.name, item.singer_name, item.singerName, item.title)
+    const mid = artistMid != null && String(artistMid).trim() ? String(artistMid) : ''
+    const numericId = artistId != null ? String(artistId).replace(/[^0-9]/g, '') : ''
+    const routeId = mid || (typeof artistId === 'string' && /[A-Za-z]/.test(String(artistId)) ? String(artistId) : '')
+    return {
+      ...item,
+      ...(routeId ? { id: routeId } : (numericId ? { id: numericId } : {})),
+      ...(mid ? { mid } : {}),
+      ...(numericId ? { singerid: numericId } : {}),
+      name: String(artistName || ''),
+    }
+  }).filter(artist => artist.name || artist.mid || artist.id !== undefined)
+  if (!artists.length) {
+    const singerName = firstQQValue(value.singerName, value.singer_name)
+    const singerMid = firstQQValue(value.singerMid, value.singer_mid, value.singermid)
+    const singerId = firstQQValue(value.singerid, value.singer_id, value.singerId, value.singerID)
+    const numericId = singerId != null ? String(singerId).replace(/[^0-9]/g, '') : ''
+    if (singerName || singerMid) artists.push({
+      ...(singerMid ? { id: String(singerMid), mid: String(singerMid) } : {}),
+      ...(numericId ? { singerid: numericId } : {}),
+      name: String(singerName || ''),
+    })
+  }
+  const coverUrl = firstQQValue(
+    value.coverUrl,
+    value.cover_url,
+    value.cover,
+    value.picUrl,
+    value.picurl,
+    value.album_pic,
+    value.albumPic,
+    value.albumpic,
+    value.album_cover,
+    value.albumCover,
+    albumCover,
+  ) || ''
+  const songName = firstQQValue(value.songname, value.songName, value.song_name, value.name, value.title) || ''
+  const songId = firstQQValue(value.id, value.songId, value.song_id, mid)
+  const mediaId = readQQMediaId(value)
+  // QQ 上游的数字歌曲 id 字段名是全小写 songid（搜索结果/榜单都带），历史实现遗漏了它，
+  // 导致 song.id 退化为 songmid 而评论接口（只接受数字 topid）拿不到可用 id。
+  // 这里显式归一，不再依赖展开残留；song.id 本身保持原样以免影响队列身份。
+  const numericSongId = [value.numericId, value.songid, value.song_id, value.songId, value.musicId, value.id]
+    .map(candidate => String(candidate ?? '').trim())
+    .find(candidate => /^\d{1,20}$/.test(candidate)) || ''
+  const vipOnly = readQQVipOnly(value)
+  return {
+    ...value,
+    id: songId,
+    source: 'qq',
+    sourceId: String(mid || ''),
+    sourceKey: mid ? `qq:${mid}` : '',
+    name: String(songName),
+    songmid: firstQQValue(value.songmid, value.song_mid, value.songMid, value.mid, mid),
+    ar: artists,
+    al: albumData,
+    album: albumData,
+    albumId: firstQQValue(album.id, album.albumid, album.album_id, value.albumid, value.albumId, value.album_id, ''),
+    albumMid,
+    coverUrl: String(coverUrl),
+    vipOnly,
+    ...(numericSongId ? { numericId: numericSongId } : {}),
+    ...(mediaId ? { mediaId: String(mediaId) } : {}),
+    ...(duration > 0 ? { dt: duration, duration } : {}),
+  }
+}
+
+function readQQSearchResult(payload) {
+  const body = unwrapQQResponse(payload)
+  return body?.data?.result || body?.result || body?.data || body
+}
+
+function normalizeQQSearchAlbum(album = {}) {
+  const id = album.album_mid || album.albumMid || album.mid || album.id
+  const cover = album.album_pic || album.albumPic || album.picUrl || album.cover || ''
+  const artists = album.singer || album.artists || []
+  return {
+    ...album,
+    id: id == null ? '' : String(id),
+    source: 'qq',
+    name: album.album_name || album.albumName || album.name || '',
+    picUrl: cover,
+    blurPicUrl: cover,
+    artists,
+    size: album.songnum || album.size || album.songCount || 0,
+  }
+}
+
+function normalizeQQSearchPlaylist(playlist = {}) {
+  const id = playlist.dissid || playlist.tid || playlist.id
+  return {
+    ...playlist,
+    id: id == null ? '' : String(id),
+    source: 'qq',
+    name: playlist.dissname || playlist.name || playlist.title || '',
+    coverImgUrl: playlist.logo || playlist.picurl || playlist.cover || playlist.coverImgUrl || '',
+    trackCount: playlist.songnum || playlist.songCount || playlist.trackCount || 0,
+  }
+}
+
+export function normalizeQQSearchPayload(payload) {
+  const result = readQQSearchResult(payload)
+  const songs = result?.song?.list || result?.songList || result?.list || []
+  const zhidaSinger = result?.zhida?.zhida_singer || result?.zhidaSinger || {}
+  const singers = result?.singer?.list || result?.singerList || (
+    zhidaSinger.singerMID || zhidaSinger.singerID || zhidaSinger.singerName
+      ? [{
+          singer_mid: zhidaSinger.singerMID,
+          singer_id: zhidaSinger.singerID,
+          singer_name: zhidaSinger.singerName,
+          name: zhidaSinger.singerName,
+          pic: zhidaSinger.singerPic,
+        }]
+      : []
+  )
+  const albums = result?.album?.list || result?.albumList || (
+    Array.isArray(zhidaSinger.hotalbum)
+      ? zhidaSinger.hotalbum.map(album => ({
+          album_mid: album.albumMID || album.albummid,
+          album_id: album.albumID || album.albumid,
+          album_name: album.albumName || album.albumname,
+          singer: zhidaSinger.singerName ? [{ name: zhidaSinger.singerName, mid: zhidaSinger.singerMID }] : [],
+        }))
+      : []
+  )
+  const playlists = result?.playlist?.list || result?.playlistList || result?.dissList || result?.diss?.list || []
+  return {
+    searchSongs: Array.isArray(songs) ? songs.map(normalizeQQSong) : [],
+    searchAlbums: Array.isArray(albums) ? albums.map(normalizeQQSearchAlbum) : [],
+    searchArtists: Array.isArray(singers) ? singers.map(item => ({ ...item, id: item.singer_mid || item.mid || item.id, name: item.singer_name || item.name || '' })) : [],
+    searchPlaylists: Array.isArray(playlists) ? playlists.map(normalizeQQSearchPlaylist) : [],
+    searchMvs: [],
+  }
+}
+
+// —— 真实 client_search_cp 分类响应的归一化（2026-09 实测形状）——
+
+function readQQSearchCategoryList(payload, categoryKey) {
+  const body = unwrapQQResponse(payload)
+  const data = body?.data && typeof body.data === 'object' ? body.data : body
+  const category = data?.[categoryKey]
+  return Array.isArray(category?.list) ? category.list : []
+}
+
+/** 歌手分类：singerID/singerMID/singerName/singerPic。 */
+export function normalizeQQSearchArtists(payload) {
+  return readQQSearchCategoryList(payload, 'singer').map(singer => {
+    const mid = firstQQValue(singer.singerMID, singer.singer_mid, singer.mid)
+    const name = firstQQValue(singer.singerName, singer.singer_name, singer.name) || ''
+    const pic = firstQQValue(singer.singerPic, singer.singer_pic, singer.picUrl, singer.pic) || ''
+    const singerid = String(firstQQValue(singer.singerID, singer.singer_id, singer.singerId, singer.id) || '').replace(/[^0-9]/g, '')
+    return {
+      ...singer,
+      id: String(firstQQValue(mid, singer.singerID, singer.id) || ''),
+      mid: String(mid || ''),
+      ...(singerid ? { singerid, singerID: singerid } : {}),
+      source: 'qq',
+      name: String(name),
+      picUrl: String(pic),
+      coverImgUrl: String(pic),
+      img1v1Url: String(pic),
+    }
+  })
+}
+
+/** 专辑分类：albumID/albumMID/albumName/albumPic/singer_list/song_count/publicTime。 */
+export function normalizeQQSearchAlbums(payload) {
+  return readQQSearchCategoryList(payload, 'album').map(album => {
+    const mid = firstQQValue(album.albumMID, album.album_mid, album.mid)
+    const name = firstQQValue(album.albumName, album.album_name, album.albumname, album.name) || ''
+    const pic = firstQQValue(album.albumPic, album.album_pic, album.picUrl, album.pic) || ''
+    const rawArtists = firstQQValue(album.singer_list, album.singerList, album.singers)
+    const artists = Array.isArray(rawArtists)
+      ? rawArtists.map(artist => ({
+          ...(artist && typeof artist === 'object' ? artist : {}),
+          ...(artist?.name ? {} : { name: String(firstQQValue(album.singerName, album.singer_name) || '') }),
+        }))
+      : (album.singerName || album.singer_name
+        ? [{ name: String(album.singerName || album.singer_name), mid: String(firstQQValue(album.singerMID, album.singer_mid) || ''), id: album.singerID }]
+        : [])
+    return {
+      ...album,
+      id: String(firstQQValue(mid, album.albumID, album.id) || ''),
+      mid: String(mid || ''),
+      source: 'qq',
+      name: String(name),
+      picUrl: String(pic),
+      blurPicUrl: String(pic),
+      artists,
+      size: parseQQTrackCount(firstQQValue(album.song_count, album.songCount, album.songnum, album.size)),
+      publishTime: album.publicTime ?? album.publishTime ?? '',
+    }
+  })
+}
+
+/** MV 分类：v_id/mv_id/mv_name/mv_pic_url/duration/play_count/singer_list。 */
+export function normalizeQQSearchMvs(payload) {
+  return readQQSearchCategoryList(payload, 'mv').map(mv => {
+    const id = firstQQValue(mv.v_id, mv.vid, mv.mv_id, mv.mvId, mv.id)
+    const name = firstQQValue(mv.mv_name, mv.mvname, mv.name, mv.title) || ''
+    const pic = firstQQValue(mv.mv_pic_url, mv.mvPicUrl, mv.pic, mv.picUrl, mv.cover) || ''
+    const rawArtists = firstQQValue(mv.singer_list, mv.singerList, mv.singers)
+    const artists = Array.isArray(rawArtists)
+      ? rawArtists.map(artist => ({
+          ...(artist && typeof artist === 'object' ? artist : { name: artist }),
+          name: String((artist && typeof artist === 'object' ? artist.name : artist) || firstQQValue(mv.singer_name, mv.singerName) || ''),
+        }))
+      : (mv.singer_name || mv.singerName
+        ? [{ name: String(mv.singer_name || mv.singerName) }]
+        : [])
+    return {
+      ...mv,
+      id: String(id || ''),
+      source: 'qq',
+      name: String(name),
+      picUrl: String(pic),
+      coverImgUrl: String(pic),
+      artists,
+      duration: parseQQDurationMilliseconds(mv.duration),
+      playCount: parseQQTrackCount(firstQQValue(mv.play_count, mv.playCount, mv.play_cnt)),
+    }
+  })
+}
+
+/** 歌曲分类复用 song.list + normalizeQQSong。 */
+export function normalizeQQSearchSongs(payload) {
+  return readQQSearchCategoryList(payload, 'song').map(normalizeQQSong)
+}
+
+/**
+ * 歌单搜索响应归一化：musicu 的信封是 `{ req_1: { data: { body: { songlist: { list } } } } }`，
+ * 条目字段（dissid/dissname/imgurl/song_count）由 normalizeQQPlaylist 统一成
+ * 应用内歌单卡片形状，与首页推荐歌单共用同一套卡片契约。
+ */
+export function normalizeQQSearchPlaylists(payload) {
+  const body = unwrapQQResponse(payload)
+  const songlist = body?.req_1?.data?.body?.songlist
+    || body?.data?.body?.songlist
+    || body?.songlist
+    || {}
+  const list = Array.isArray(songlist.list)
+    ? songlist.list
+    : (Array.isArray(songlist.songlist) ? songlist.songlist : [])
+  return list
+    .filter(item => item && typeof item === 'object')
+    .map(item => normalizeQQPlaylist(item))
+    .filter(playlist => playlist.id)
+}
+
+/**
+ * 聚合搜索：并行请求歌曲/专辑/歌手/MV/歌单五个分类，返回搜索页统一使用的
+ * `searchResult` 形状。歌单走 musicu 的歌单分类（client_search_cp 不提供）。
+ */
+export async function searchQQAll(keywords, options = {}) {
+  const [songs, albums, artists, mvs, playlists] = await Promise.allSettled([
+    searchQQCategory(keywords, 'songs', options),
+    searchQQCategory(keywords, 'albums', options),
+    searchQQCategory(keywords, 'artists', options),
+    searchQQCategory(keywords, 'mvs', options),
+    searchQQPlaylists(keywords, options),
+  ])
+  const read = (settled, fallback = {}) => settled.status === 'fulfilled' ? settled.value : fallback
+  return {
+    searchSongs: normalizeQQSearchSongs(read(songs)),
+    searchAlbums: normalizeQQSearchAlbums(read(albums)),
+    searchArtists: normalizeQQSearchArtists(read(artists)),
+    searchPlaylists: normalizeQQSearchPlaylists(read(playlists)),
+    searchMvs: normalizeQQSearchMvs(read(mvs)),
+  }
+}

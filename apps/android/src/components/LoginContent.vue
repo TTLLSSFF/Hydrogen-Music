@@ -1,27 +1,31 @@
 <script setup>
-  import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from 'vue'
+  import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import LoginByQRCode from './LoginByQRCode.vue'
   import LoginByAccount from './LoginByAccount.vue'
+  import LoginByQQQRCode from './LoginByQQQRCode.vue'
 
   const route = useRoute()
   const router = useRouter()
 
   const loginByQR = ref(null)
+  const qqLoginByQR = ref(null)
   const loginByAC = ref(null)
   const jumpPage = ref(false)
   const jumpTimer = ref(null)
 
-  // 0: 二维码 1: 手机验证码登录
+  // 0: 二维码 1: 手机验证码登录；mode=2 走 QQ 扫码（与主应用一致）
   const loginMode = ref(1)
 
   const isQrMode = computed(() => loginMode.value === 0)
+  const isQQMode = computed(() => Number(route.query.mode) === 2)
 
   const syncModeFromRoute = () => {
     loginMode.value = route.query.mode === '0' ? 0 : 1
   }
 
   const enterQrMode = () => {
+    if (isQQMode.value) return
     loginMode.value = 0
   }
 
@@ -49,7 +53,7 @@
     }
     jumpPage.value = true
     jumpTimer.value = setTimeout(() => {
-      router.push('/mymusic')
+      router.push(route.query.from === 'settings' ? '/settings' : '/mymusic')
       jumpPage.value = false
       jumpTimer.value = null
     }, 3000)
@@ -57,10 +61,19 @@
 
   watch(() => route.query.mode, () => {
     syncModeFromRoute()
+    if (isQQMode.value) {
+      qqLoginByQR.value?.load()
+    }
   }, { immediate: true })
+
+  onMounted(() => {
+    // immediate 的 watch 跑在挂载前，ref 还没拿到，这里补一次 QQ 扫码加载
+    if (isQQMode.value) qqLoginByQR.value?.load()
+  })
 
   onActivated(() => {
     syncModeFromRoute()
+    if (isQQMode.value) qqLoginByQR.value?.load()
   })
 
   const clearJumpTimer = () => {
@@ -71,11 +84,13 @@
 
   onDeactivated(() => {
     loginByQR.value?.clearTimer()
+    qqLoginByQR.value?.clearTimer()
     clearJumpTimer()
   })
 
   onUnmounted(() => {
     loginByQR.value?.clearTimer()
+    qqLoginByQR.value?.clearTimer()
     clearJumpTimer()
   })
 </script>
@@ -83,14 +98,22 @@
 <template>
   <div class="login-content" :class="{ jumpPage: jumpPage }">
     <div class="login-container">
-      <div class="login-header">
+      <div class="login-header" v-if="!isQQMode">
         <div class="login-icon">
           <img src="@shared-assets/img/netease-music.png" alt="">
         </div>
         <span class="login-title">登录网易云账号</span>
       </div>
 
+      <div class="login-header" v-if="isQQMode">
+        <div class="login-icon qq-icon">QQ</div>
+        <span class="login-title">登录 QQ 音乐账号</span>
+      </div>
+
+      <LoginByQQQRCode v-if="isQQMode" ref="qqLoginByQR" class="qrcode-container" @jumpTo="jumpTo" />
+
       <LoginByQRCode
+        v-if="!isQQMode"
         ref="loginByQR"
         class="qrcode-container"
         :active="isQrMode"
@@ -99,6 +122,7 @@
       />
 
       <LoginByAccount
+        v-if="!isQQMode"
         ref="loginByAC"
         :active="!isQrMode"
         class="account-container"
@@ -106,7 +130,7 @@
         @jumpTo="jumpTo"
       />
 
-      <div class="login-other">
+      <div class="login-other" v-if="!isQQMode">
         <span class="qrcode-tip" v-show="isQrMode">打开网易云 APP 扫码登录</span>
 
         <div class="login-method" v-show="isQrMode">

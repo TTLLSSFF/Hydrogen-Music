@@ -8,8 +8,10 @@ import { getVipInfo } from '@/api/user'
 import { isLogin } from '@/utils/authority'
 import { useUserStore } from '@/store/userStore'
 import { usePlayerStore } from '@/store/playerStore'
+import { qqAccountStore } from '@/store/qqAccountStore'
 import Selector from '../components/Selector.vue'
 import FontSelector from '../components/FontSelector.vue'
+import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue'
 import UpdateDialog from '../components/UpdateDialog.vue'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout, initializeCurrentAccountSession } from '@/utils/accountSession'
@@ -253,6 +255,7 @@ onActivated(() => {
     }
 
     void loadVipInfo()
+    void qqAccountStore.restoreSession()
 
     // 设置更新事件监听器
     setupUpdateListeners()
@@ -659,6 +662,27 @@ const clearHifiMpvPath = async () => {
 const confirmLogout = () => {
     confirmAccountLogout(router)
 }
+
+// QQ 音乐账号：与网易云账号彼此独立，可同时登录
+const qqLoading = ref(false)
+const qqAvatarFailed = ref(false)
+const qqAvatarUrl = computed(() => {
+    const value = qqAccountStore.user?.avatarUrl || qqAccountStore.user?.avatar
+    return typeof value === 'string' ? value.trim() : ''
+})
+const handleQQAvatarError = () => {
+    qqAvatarFailed.value = true
+}
+const loginQQAccount = () => router.push({ path: '/login/account', query: { mode: 2, from: 'settings' } })
+const logoutQQAccount = async () => {
+    qqLoading.value = true
+    try {
+        await qqAccountStore.logout()
+        noticeOpen('QQ 音乐账号已退出', 2)
+    } finally {
+        qqLoading.value = false
+    }
+}
 const save = () => {
     selectedShortcut.value = null
     setCustomFont()
@@ -759,11 +783,32 @@ const toggleLocalOnlyMode = async () => {
                     <span>退出</span>
                 </div>
             </div>
+            <div class="settings-user-info" v-if="!userStore.localOnlyMode">
+                <div class="user" v-if="qqAccountStore.loggedIn">
+                    <div class="user-head qq-account-avatar">
+                        <img v-if="qqAvatarUrl && !qqAvatarFailed" :src="qqAvatarUrl" alt="" @error="handleQQAvatarError" />
+                        <span v-else>QQ</span>
+                    </div>
+                    <div class="user-info">
+                        <div class="user-name">QQ 音乐：{{ qqAccountStore.user?.nickname || qqAccountStore.user?.nick || '已登录' }}</div>
+                    </div>
+                </div>
+                <div class="user-provider-empty" v-else>QQ 音乐：未登录</div>
+                <div class="logout" @click="qqAccountStore.loggedIn ? logoutQQAccount() : loginQQAccount()">
+                    <span>{{ qqAccountStore.loggedIn ? '退出' : '登录' }}</span>
+                </div>
+            </div>
             <div class="settings">
                 <div class="settings-item">
                     <h2 class="item-title">音乐</h2>
                     <div class="line"></div>
                     <div class="item-options">
+                        <div class="option" v-if="!userStore.localOnlyMode">
+                            <div class="option-name">平台来源</div>
+                            <div class="option-operation">
+                                <PlatformSourceSwitch variant="toggle"></PlatformSourceSwitch>
+                            </div>
+                        </div>
                         <div class="option" v-if="!userStore.localOnlyMode">
                             <div class="option-name">音质选择</div>
                             <div class="option-operation">
@@ -1229,6 +1274,18 @@ const toggleLocalOnlyMode = async () => {
                     img {
                         width: 100%;
                         height: 100%;
+                    }
+                }
+                // QQ 头像缺省时显示「QQ」占位
+                .qq-account-avatar {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background-color: rgba(0, 0, 0, 0.08);
+                    font: 18px SourceHanSansCN-Bold;
+                    color: black;
+                    img {
+                        object-fit: cover;
                     }
                 }
                 .user-info {

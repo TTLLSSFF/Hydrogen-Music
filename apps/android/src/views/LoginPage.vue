@@ -22,6 +22,14 @@
         </div>
       </div>
 
+      <div class="mode-type mode-qq" @click="modeSelect(2)">
+        <div class="type-img qq-icon">QQ</div>
+        <div class="type-info">
+          <span class="type-title">QQ 音乐</span>
+          <span class="type-subtitle">使用 QQ 音乐扫码登录</span>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
@@ -38,6 +46,8 @@
       flex-direction: column;
       justify-content: center;
       align-items: center;
+      /* 两张登录卡之间留出间距，避免移动端误触 */
+      gap: 14px;
       .mode-type{
         width: 250px;
         height: 100px;

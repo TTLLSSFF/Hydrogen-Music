@@ -28,6 +28,8 @@ if (mode === 'release' || mode === 'bundle') {
 const runtime = path.join(root, 'mobile-runtime')
 const apiPackage = path.join(runtime, 'node_modules/@neteasecloudmusicapienhanced/api/package.json')
 if (!fs.existsSync(apiPackage)) throw new Error('Run npm run android:install from the repository root first')
+const qqApiPackage = path.join(runtime, 'node_modules/@sansenjian/qq-music-api/dist/index.cjs')
+if (!fs.existsSync(qqApiPackage)) throw new Error('Run npm run android:install from the repository root first (QQ music API missing)')
 run(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'build'])
 run(process.execPath, [path.join(root, 'node_modules/@capacitor/cli/bin/capacitor'), 'sync', 'android'])
 
@@ -37,10 +39,16 @@ fs.mkdirSync(runtimeDest, { recursive: true })
 for (const name of ['index.js', 'api-bridge.cjs', 'package.json', 'node_modules']) {
   fs.cpSync(path.join(runtime, name), path.join(runtimeDest, name), { recursive: true, dereference: true })
 }
+// QQ 音乐 API 服务端保持单一真源：直接拷仓库根 server/qqMusicApi.cjs，不在 mobile-runtime 里放副本
+fs.copyFileSync(path.join(root, '../../server/qqMusicApi.cjs'), path.join(runtimeDest, 'qqMusicApi.cjs'))
 run(process.execPath, [path.join(root, '../../scripts/patch-ncm-api.cjs'), path.join(runtimeDest, 'node_modules')])
 run(process.execPath, [path.join(__dirname, 'patch-path-to-regexp.cjs'), path.join(runtimeDest, 'node_modules')])
 const index = path.join(publicDir, 'index.html')
-fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replace('<head>', '<head><script>window.__HM_APP__ = true;</script>'))
+// __HM_QQ_API_BASE__：前端 qqTransport 用它把 QQ 请求打到转发层的 /qq 前缀上
+fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replace(
+  '<head>',
+  `<head><script>window.__HM_APP__ = true;window.__HM_QQ_API_BASE__ = 'http://127.0.0.1:36531/qq';</script>`
+))
 if (mode === 'sync') process.exit(0)
 
 const androidDir = path.join(root, 'android')
