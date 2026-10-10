@@ -16,6 +16,7 @@ import { useUserStore } from '../store/userStore';
    isQQSong,
  } from '../utils/providerPolicy.mjs'
 import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
+import { getSirenSourceId } from '../utils/siren'
 import { normalizeMusicSource } from '../utils/musicSource.mjs'
 import { withCoverParam } from '../utils/coverBackdrop'
 import { getLikelist, getUserPlaylistCount, getUserPlaylist } from '../api/user'
@@ -428,9 +429,27 @@ watchPostEffect(() => {
     })
   }
 
+  // 分享链接按来源生成：网易云歌曲用网页版歌曲页，网易云电台节目用节目页，
+  // QQ 歌曲用官方曲目页，塞壬唱片用官网曲目页；都不匹配时提示不支持。
   const copySongLink = async () => {
-    const link = `https://music.163.com/#/song?id=${otherStore.selectedItem.id}`
+    const song = otherStore.selectedItem
+    let link = ''
+    if (isQQSong(song)) {
+      const songMid = song?.sourceId || song?.songmid || song?.mid
+      if (songMid) link = `https://y.qq.com/n/ryqq/songDetail/${songMid}`
+    } else if (song?.source === 'siren') {
+      const cid = getSirenSourceId(song)
+      if (cid) link = `https://monster-siren.hypergryph.com/music/${cid}`
+    } else if (song?.type === 'dj' && song?.programId) {
+      link = `https://music.163.com/#/program?id=${song.programId}`
+    } else if (song?.id) {
+      link = `https://music.163.com/#/song?id=${song.id}`
+    }
     otherStore.contextMenuShow = false
+    if (!link) {
+      noticeOpen('该歌曲暂不支持复制链接', 2)
+      return
+    }
     const copied = await copyToClipboard(link)
     noticeOpen(copied ? '歌曲链接已复制' : '复制失败', 2)
   }
