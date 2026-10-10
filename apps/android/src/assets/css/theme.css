@@ -1727,3 +1727,29 @@ body {
 .dark .library-song-list .list-item-download-selected .playing-eq .bar {
   background-color: #111213 !important;
 }
+
+/* QQ 分类歌单页：深色模式下标题/标签/卡片改用主题变量 */
+.dark .category-page .view-control svg path {
+  fill: var(--text) !important;
+}
+.dark .category-page .view-control .category-title,
+.dark .category-page .playlist-panel .playlist-card .card-name {
+  color: var(--text) !important;
+}
+.dark .category-page .tag-sidebar {
+  border-right-color: var(--border) !important;
+  border-bottom-color: var(--border) !important;
+}
+.dark .category-page .tag-sidebar .tag-item {
+  color: var(--muted-text) !important;
+}
+.dark .category-page .tag-sidebar .tag-item:hover,
+.dark .category-page .tag-sidebar .tag-item-active {
+  color: var(--text) !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+.dark .category-page .playlist-panel .playlist-card .card-sub,
+.dark .category-page .playlist-panel .list-empty,
+.dark .category-page .playlist-panel .library-load-more {
+  color: var(--muted-text) !important;
+}

@@ -4,18 +4,26 @@ import { getAlbumDetail, albumDynamic } from '../api/album'
 import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
 import { getArtistMV } from '../api/mv'
 import { getSongDetail } from '../api/song'
+import { getQQSongListDetail, getQQTopListDetail, normalizeQQTopListDetail } from '../api/qqMusic'
+import { loadQQPlaylistDetail, mergeQQPlaylistSummary } from '../utils/qqLibrary.mjs'
 import { mapSongsPlayableStatus } from "../utils/songStatus";
 import { buildAlbumSearchText, buildCloudSongSearchText, buildMVSearchText } from "../utils/songFilter";
+import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs'
 
 const PLAYLIST_PAGE_SIZE = 100
 const PLAYLIST_HYDRATION_CONCURRENCY = 4
 const PLAYLIST_OVERVIEW_COUNT_FIELDS = ['trackCount', 'size']
+// QQ 歌手页歌曲分页步长，与 server 端 QQ_SINGER_SONGS_MAX_LIMIT（上游单次上限）一致。
+const QQ_SINGER_SONGS_PAGE_SIZE = 60
+// QQ 歌手页专辑分页步长，与 server 端 QQ_SINGER_ALBUMS_PAGE_SIZE 一致。
+const QQ_SINGER_ALBUMS_PAGE_SIZE = 30
 
-const createPlaylistHydrationState = ({ id = null, total = 0, loaded = 0, status = 'idle' } = {}) => ({
+const createPlaylistHydrationState = ({ id = null, total = 0, loaded = 0, status = 'idle', source = 'netease' } = {}) => ({
     id,
     total,
     loaded,
     status,
+    source: normalizeMusicSource(source),
 })
 const createSearchIndexState = () => ({
     songs: {},
@@ -28,14 +36,15 @@ const cloneSearchIndexState = index => ({
     mvs: { ...(index?.mvs || {}) },
 })
 
-const getSearchEntryKey = (entry, fallbackKey = '0') => String(entry?.id ?? fallbackKey)
+const getSearchEntryKey = (entry, fallbackKey = '0') => String(getSongIdentity(entry) || entry?.id || fallbackKey)
 const isBlankValue = value => value == null || value === ''
 const normalizeOptionalId = id => isBlankValue(id) ? '' : String(id)
-const getLibraryDetailCacheKey = (id, routerName) => {
+const getLibraryDetailCacheKey = (id, routerName, source = 'netease', type = '') => {
     const normalizedName = String(routerName || '')
     const normalizedId = normalizeOptionalId(id)
+    const normalizedType = String(type || '').trim().toLowerCase()
     if (!normalizedName || !normalizedId) return ''
-    return `${normalizedName}:${normalizedId}`
+    return `${normalizedName}:${normalizeMusicSource(source)}:${normalizedType}:${normalizedId}`
 }
 const trimRecordMap = (records, limit, fallbackLimit) => {
     if (!records || typeof records != 'object') return {}
@@ -89,6 +98,12 @@ export const useLibraryStore = defineStore('libraryStore', {
             searchIndexById: createSearchIndexState(),
             needTimestamp: [],
             libraryChangeAnimation: false,
+            qqSingerSongsNextPage: 1,
+            qqSingerSongsLoading: false,
+            qqSingerSongsHasMore: false,
+            qqSingerAlbumsNextPage: 1,
+            qqSingerAlbumsLoading: false,
+            qqSingerAlbumsHasMore: false,
         }
     },
     actions: {
@@ -190,6 +205,63 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.resetPlaylistHydration()
             this.resetSearchIndex()
         },
+        clearQQScopedState() {
+            const isQQ = item => normalizeMusicSource(item?.source) === 'qq'
+            const filterQQ = list => Array.isArray(list) ? list.filter(item => !isQQ(item)) : list
+            const previousCreated = this.playlistUserCreated
+            const previousSubscribed = this.playlistUserSub
+            const previousLibraryList = this.libraryList
+            const qqWasInLibraryList = Array.isArray(previousLibraryList) && previousLibraryList.some(isQQ)
+
+            this.playlistUserCreated = filterQQ(this.playlistUserCreated)
+            this.playlistUserSub = filterQQ(this.playlistUserSub)
+            if (previousLibraryList === previousCreated) this.libraryList = this.playlistUserCreated
+            else if (previousLibraryList === previousSubscribed) this.libraryList = this.playlistUserSub
+            else this.libraryList = filterQQ(previousLibraryList)
+            this.playlistCount = this.playlistCount
+                ? {
+                    ...this.playlistCount,
+                    createdPlaylistCount: Array.isArray(this.playlistUserCreated) ? this.playlistUserCreated.length : 0,
+                    subPlaylistCount: Array.isArray(this.playlistUserSub) ? this.playlistUserSub.length : 0,
+                }
+                : this.playlistCount
+
+            const qqDetailActive = normalizeMusicSource(this.libraryInfo?.source) === 'qq'
+            const qqSongsRemoved = Array.isArray(this.librarySongs) && this.librarySongs.some(isQQ)
+            if (qqDetailActive) {
+                this.libraryInfo = null
+                this.librarySongs = null
+                this.libraryAlbum = null
+                this.libraryMV = null
+            } else if (Array.isArray(this.librarySongs)) {
+                this.librarySongs = this.librarySongs.filter(song => !isQQ(song))
+            }
+
+            if (this.playlistHydration?.source === 'qq') this.resetPlaylistHydration()
+
+            if (this.detailCache && typeof this.detailCache === 'object') {
+                const nextCache = {}
+                Object.entries(this.detailCache).forEach(([key, value]) => {
+                    if (!String(key).includes(':qq:')) nextCache[key] = value
+                })
+                this.detailCache = nextCache
+            }
+            if (this.detailScrollMemory && typeof this.detailScrollMemory === 'object') {
+                const nextScrollMemory = {}
+                Object.entries(this.detailScrollMemory).forEach(([key, value]) => {
+                    if (!/[?&]source=qq(?:&|$)/i.test(String(key))) nextScrollMemory[key] = value
+                })
+                this.detailScrollMemory = nextScrollMemory
+            }
+
+            if (qqDetailActive || qqWasInLibraryList || qqSongsRemoved) {
+                this.resetSearchIndex()
+            }
+            if (this.lastLibraryRoute && /[?&]source=qq(?:&|$)/i.test(String(this.lastLibraryRoute.fullPath || ''))) {
+                this.lastLibraryRoute = null
+                this.restoreLibraryScrollOnActivate = false
+            }
+        },
         resetSearchIndex(section = null) {
             if (!section) {
                 this.searchIndexById = createSearchIndexState()
@@ -272,7 +344,7 @@ export const useLibraryStore = defineStore('libraryStore', {
         trimDetailCache() {
             this.detailCache = trimRecordMap(this.detailCache, this.detailCacheLimit, 20)
         },
-        invalidateLibraryDetailCache(id = null, routerName = null) {
+        invalidateLibraryDetailCache(id = null, routerName = null, source = null) {
             if (!this.detailCache || typeof this.detailCache != 'object') {
                 this.detailCache = {}
                 return
@@ -280,11 +352,20 @@ export const useLibraryStore = defineStore('libraryStore', {
 
             const normalizedName = String(routerName || '')
             const normalizedId = normalizeOptionalId(id)
+            const normalizedSource = source == null || source === '' ? '' : normalizeMusicSource(source)
 
             if (normalizedName && normalizedId) {
-                delete this.detailCache[getLibraryDetailCacheKey(normalizedId, normalizedName)]
+                if (normalizedSource) {
+                    delete this.detailCache[getLibraryDetailCacheKey(normalizedId, normalizedName, normalizedSource)]
+                } else {
+                    Object.keys(this.detailCache).forEach(key => {
+                        if (key.startsWith(`${normalizedName}:`) && key.endsWith(`:${normalizedId}`)) delete this.detailCache[key]
+                    })
+                }
             } else if (normalizedName) {
-                const keyPrefix = `${normalizedName}:`
+                const keyPrefix = normalizedSource
+                    ? `${normalizedName}:${normalizedSource}:`
+                    : `${normalizedName}:`
                 Object.keys(this.detailCache).forEach(key => {
                     if (key.startsWith(keyPrefix)) delete this.detailCache[key]
                 })
@@ -299,15 +380,17 @@ export const useLibraryStore = defineStore('libraryStore', {
 
             this.detailCache = { ...this.detailCache }
         },
-        invalidatePlaylistDetailCache(id = null) {
-            this.invalidateLibraryDetailCache(id, 'playlist')
+        invalidatePlaylistDetailCache(id = null, source = null) {
+            this.invalidateLibraryDetailCache(id, 'playlist', source)
 
             const normalizedId = normalizeOptionalId(id)
             const hydrationId = String(this.playlistHydration?.id || '')
             if (!normalizedId || hydrationId == normalizedId) this.resetPlaylistHydration()
         },
-        cacheCurrentLibraryDetail(id, routerName) {
-            const key = getLibraryDetailCacheKey(id, routerName)
+        cacheCurrentLibraryDetail(id, routerName, source = this.libraryInfo?.source || 'netease', type = this.libraryInfo?.type || '') {
+            const normalizedSource = normalizeMusicSource(source)
+            const normalizedType = String(type || '').trim().toLowerCase()
+            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource, normalizedType)
             if (!key || !this.libraryInfo) return
             if (!this.detailCache || typeof this.detailCache != 'object') this.detailCache = {}
 
@@ -318,15 +401,18 @@ export const useLibraryStore = defineStore('libraryStore', {
                 libraryMV: this.libraryMV,
                 artistPageType: this.artistPageType,
                 playlistHydration: { ...(this.playlistHydration || createPlaylistHydrationState()) },
+                source: normalizedSource,
                 searchIndexById: cloneSearchIndexState(this.searchIndexById),
                 updatedAt: Date.now(),
             }
             this.trimDetailCache()
         },
-        restoreLibraryDetailFromCache(id, routerName) {
-            const key = getLibraryDetailCacheKey(id, routerName)
+        restoreLibraryDetailFromCache(id, routerName, source = 'netease', type = '') {
+            const normalizedSource = normalizeMusicSource(source)
+            const normalizedType = String(type || '').trim().toLowerCase()
+            const key = getLibraryDetailCacheKey(id, routerName, normalizedSource, normalizedType)
             const cached = key ? this.detailCache?.[key] : null
-            if (!cached?.libraryInfo) return false
+            if (!cached?.libraryInfo || (cached.source && normalizeMusicSource(cached.source) !== normalizedSource)) return false
 
             cached.updatedAt = Date.now()
             this.libraryInfo = cached.libraryInfo
@@ -338,10 +424,18 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.libraryChangeAnimation = false
 
             if (routerName == 'playlist') {
-                this.playlistHydration = { ...(cached.playlistHydration || createPlaylistHydrationState()) }
-                this.resumePlaylistHydrationFromCache(id)
+                this.playlistHydration = {
+                    ...(cached.playlistHydration || createPlaylistHydrationState()),
+                    source: normalizedSource,
+                }
+                this.resumePlaylistHydrationFromCache(id, normalizedSource)
             } else {
                 this.resetPlaylistHydration()
+            }
+            // 缓存里保留了已加载的分页，回到歌手页时按已加载条数恢复「加载更多」游标
+            if (routerName == 'artist' && normalizedSource === 'qq') {
+                this.resetQQSingerSongsPaging()
+                this.resetQQSingerAlbumsPaging()
             }
 
             return true
@@ -400,6 +494,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: loadedCount,
                         status: 'loading',
+                        source: this.playlistHydration?.source || 'netease',
                     })
                 }
             }
@@ -422,7 +517,8 @@ export const useLibraryStore = defineStore('libraryStore', {
             }
             this.indexLibrarySongs(songs, { append: true })
         },
-        startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, options = {}) {
+        startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, source = this.playlistHydration?.source || 'netease', options = {}) {
+            const normalizedSource = normalizeMusicSource(source)
             const hydrationTask = this.hydratePlaylistRemaining(playlistId, totalTracks, token, loadedTracks, options)
                 .then(remainingSongs => {
                     if (this.playlistHydrationToken != token) return
@@ -434,8 +530,9 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: hydratedTrackCount,
                         loaded: hydratedTrackCount,
                         status: 'completed',
+                        source: normalizedSource,
                     })
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
                 })
                 .catch(() => {
                     if (this.playlistHydrationToken != token) return
@@ -445,8 +542,9 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: loadedNow,
                         status: 'failed',
+                        source: normalizedSource,
                     })
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
                 })
                 .finally(() => {
                     if (this.playlistHydrationToken == token) this.playlistHydrationPromise = null
@@ -455,8 +553,9 @@ export const useLibraryStore = defineStore('libraryStore', {
             this.playlistHydrationPromise = hydrationTask
             return hydrationTask
         },
-        resumePlaylistHydrationFromCache(id) {
+        resumePlaylistHydrationFromCache(id, source = this.playlistHydration?.source || 'netease') {
             const playlistId = String(id || '')
+            const normalizedSource = normalizeMusicSource(source)
             const totalTracks = Number(this.playlistHydration?.total || 0)
             const loadedTracks = Array.isArray(this.librarySongs) ? this.librarySongs.length : Number(this.playlistHydration?.loaded || 0)
             if (!playlistId || !Number.isFinite(totalTracks) || totalTracks <= 0 || loadedTracks >= totalTracks) {
@@ -465,12 +564,13 @@ export const useLibraryStore = defineStore('libraryStore', {
                     total: Math.max(totalTracks || 0, loadedTracks || 0),
                     loaded: Math.max(totalTracks || 0, loadedTracks || 0),
                     status: playlistId ? 'completed' : 'idle',
+                    source: normalizedSource,
                 })
                 this.playlistHydrationToken = null
                 this.playlistHydrationPromise = null
                 if (playlistId) {
                     this.setPlaylistOverviewTrackCount(playlistId, loadedTracks)
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
                 }
                 return
             }
@@ -482,29 +582,107 @@ export const useLibraryStore = defineStore('libraryStore', {
                 total: totalTracks,
                 loaded: loadedTracks,
                 status: 'loading',
+                source: normalizedSource,
             })
 
-            this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks)
-            this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+            this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, normalizedSource)
+            this.cacheCurrentLibraryDetail(playlistId, 'playlist', normalizedSource)
         },
         async updateLibraryDetail(id, routerName, options = {}) {
             const { force = false } = options
-            if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName)) return
+            const source = normalizeMusicSource(options.source)
+            if (!force && !this.shouldBypassLibraryDetailCache(routerName) && this.restoreLibraryDetailFromCache(id, routerName, source, options.type)) return
 
             this.changeAnimation()
             this.resetSearchIndex()
             if (routerName != 'playlist') this.resetPlaylistHydration()
-            if (routerName == 'playlist') await this.updatePlaylistDetail(id, options)
-            if (routerName == 'album') await this.updateAlbumDetail(id)
-            if (routerName == 'artist') await this.updateArtistDetail(id)
+            if (routerName == 'playlist') {
+                // 榜单（toplist）的 id 是 topId，不是歌单 disstid：走 /getTopListDetail，
+                // 否则上游会把 topId 当成歌单号返回空内容。
+                if (source === 'qq' && String(options.type || '').toLowerCase() === 'toplist') await this.updateQQTopListDetail(id)
+                else if (source === 'qq') await this.updateQQPlaylistDetail(id, { type: options.type })
+                else await this.updatePlaylistDetail(id, { ...options, source })
+            }
+            if (routerName == 'album') {
+                if (source === 'qq') await this.updateQQAlbumDetail(id)
+                else await this.updateAlbumDetail(id)
+            }
+            if (routerName == 'artist') {
+                if (source === 'qq') await this.updateQQSingerDetail(id, options)
+                else await this.updateArtistDetail(id)
+            }
             this.artistPageType = 0
             this.libraryAlbum = null
             this.libraryMV = null
-            this.cacheCurrentLibraryDetail(id, routerName)
+            this.cacheCurrentLibraryDetail(id, routerName, source, options.type)
+        },
+        async updateQQPlaylistDetail(id, options = {}) {
+            const playlistId = String(id || '')
+            const token = createPlaylistHydrationToken(playlistId)
+            this.playlistHydrationToken = token
+            this.playlistHydrationPromise = null
+            this.playlistHydration = createPlaylistHydrationState({ id: playlistId, status: 'loading', source: 'qq' })
+            const listSummary = [
+                ...(Array.isArray(this.playlistUserCreated) ? this.playlistUserCreated : []),
+                ...(Array.isArray(this.playlistUserSub) ? this.playlistUserSub : []),
+            ].find(item => normalizeMusicSource(item?.source) === 'qq' && String(item?.id ?? '') === playlistId)
+            const existingSummary = listSummary
+                || (normalizeMusicSource(this.libraryInfo?.source) === 'qq' && String(this.libraryInfo?.id ?? '') === playlistId ? this.libraryInfo : null)
+            // 私有的 QQ 请求在途或失败时，都不能残留上一个网易云（或另一个 QQ）的详情。
+            this.libraryInfo = existingSummary ? { ...existingSummary, source: 'qq', id: playlistId } : null
+            this.librarySongs = []
+            this.libraryAlbum = null
+            this.libraryMV = null
+            this.indexLibrarySongs([])
+            try {
+                const detailIds = [playlistId, ...(Array.isArray(existingSummary?.detailIds) ? existingSummary.detailIds : [])]
+                const normalized = await loadQQPlaylistDetail(
+                    detailId => getQQSongListDetail(detailId),
+                    detailIds,
+                    {
+                        isActive: () => this.playlistHydrationToken === token,
+                        fallbackSummary: existingSummary,
+                    },
+                )
+                if (normalized === false) return
+                if (this.playlistHydrationToken !== token) return
+                this.libraryInfo = normalized.playlist?.id
+                    ? normalized.playlist
+                    : { id: playlistId, source: 'qq', name: 'QQ 歌单', coverImgUrl: '' }
+                this.libraryInfo = mergeQQPlaylistSummary(existingSummary, this.libraryInfo)
+                this.libraryInfo.id = playlistId
+                this.librarySongs = normalized.songs.length > 0
+                    ? normalized.songs
+                    : (Array.isArray(existingSummary?.songs) ? existingSummary.songs : [])
+                this.indexLibrarySongs(this.librarySongs)
+                this.playlistHydration = createPlaylistHydrationState({ id: playlistId, total: this.librarySongs.length, loaded: this.librarySongs.length, status: 'completed', source: 'qq' })
+                this.libraryChangeAnimation = false
+                this.cacheCurrentLibraryDetail(id, 'playlist', 'qq', options.type)
+            } catch (error) {
+                if (this.playlistHydrationToken === token) {
+                    this.librarySongs = []
+                    this.libraryInfo = existingSummary
+                        ? { ...existingSummary, source: 'qq', id: playlistId }
+                        : { id: playlistId, source: 'qq', name: 'QQ 歌单', coverImgUrl: '' }
+                    this.indexLibrarySongs([])
+                    this.playlistHydration = createPlaylistHydrationState({
+                        id: playlistId,
+                        total: 0,
+                        loaded: 0,
+                        status: 'failed',
+                        source: 'qq',
+                    })
+                    this.playlistHydrationPromise = null
+                    this.playlistHydrationToken = null
+                    this.libraryChangeAnimation = false
+                }
+                throw error
+            }
         },
         async updatePlaylistDetail(id, options = {}) {
             const { deferRemaining = false, silent = false } = options
             const requestOptions = { silent }
+            const source = normalizeMusicSource(options.source)
             const playlistId = String(id || '')
             const token = createPlaylistHydrationToken(playlistId)
             this.playlistHydrationToken = token
@@ -514,6 +692,7 @@ export const useLibraryStore = defineStore('libraryStore', {
                 total: 0,
                 loaded: 0,
                 status: 'loading',
+                source,
             })
 
             const params = {
@@ -546,9 +725,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: totalTracks,
                         loaded: loadedTracks,
                         status: 'completed',
+                        source,
                     })
                     this.libraryChangeAnimation = false
-                    this.cacheCurrentLibraryDetail(playlistId, 'playlist')
+                    this.cacheCurrentLibraryDetail(playlistId, 'playlist', source)
                     return
                 }
 
@@ -557,9 +737,10 @@ export const useLibraryStore = defineStore('libraryStore', {
                     total: totalTracks,
                     loaded: loadedTracks,
                     status: 'loading',
+                    source,
                 })
 
-                const hydrationTask = this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, requestOptions)
+                const hydrationTask = this.startPlaylistHydrationTask(playlistId, totalTracks, token, loadedTracks, source, requestOptions)
                 this.libraryChangeAnimation = false
                 if (!deferRemaining) await hydrationTask
             } catch (error) {
@@ -569,12 +750,238 @@ export const useLibraryStore = defineStore('libraryStore', {
                         total: 0,
                         loaded: 0,
                         status: 'failed',
+                        source,
                     })
                     this.playlistHydrationPromise = null
                     this.libraryChangeAnimation = false
                 }
                 throw error
             }
+        },
+        async updateQQTopListDetail(id) {
+            const topId = String(id || '')
+            const token = createPlaylistHydrationToken(topId)
+            this.playlistHydrationToken = token
+            this.playlistHydrationPromise = null
+            this.playlistHydration = createPlaylistHydrationState({ id: topId, status: 'loading', source: 'qq' })
+            this.libraryInfo = null
+            this.librarySongs = []
+            this.libraryAlbum = null
+            this.libraryMV = null
+            this.indexLibrarySongs([])
+            try {
+                const normalized = normalizeQQTopListDetail(await getQQTopListDetail(topId), topId)
+                if (this.playlistHydrationToken !== token) return
+                const fallbackName = this.libraryInfo?.name || 'QQ 榜单'
+                this.libraryInfo = {
+                    ...normalized.playlist,
+                    id: topId,
+                    name: normalized.playlist.name || fallbackName,
+                }
+                this.librarySongs = normalized.songs
+                this.indexLibrarySongs(this.librarySongs)
+                this.playlistHydration = createPlaylistHydrationState({
+                    id: topId,
+                    total: this.librarySongs.length,
+                    loaded: this.librarySongs.length,
+                    status: 'completed',
+                    source: 'qq',
+                })
+                this.libraryChangeAnimation = false
+                this.cacheCurrentLibraryDetail(topId, 'playlist', 'qq', 'toplist')
+            } catch (error) {
+                if (this.playlistHydrationToken === token) {
+                    this.librarySongs = []
+                    this.libraryInfo = { id: topId, source: 'qq', name: 'QQ 榜单', coverImgUrl: '' }
+                    this.indexLibrarySongs([])
+                    this.playlistHydration = createPlaylistHydrationState({ id: topId, total: 0, loaded: 0, status: 'failed', source: 'qq' })
+                    this.playlistHydrationPromise = null
+                    this.playlistHydrationToken = null
+                    this.libraryChangeAnimation = false
+                }
+                throw error
+            }
+        },
+        async updateQQAlbumDetail(id) {
+            const { getQQAlbumInfo, normalizeQQAlbumDetail } = await import('../api/qqMusic')
+            const albummid = String(id || '')
+            const detail = normalizeQQAlbumDetail(await getQQAlbumInfo(albummid), albummid)
+            this.libraryInfo = detail.album
+
+            const albumCover = detail.album?.coverImgUrl || detail.album?.blurPicUrl || null
+            this.librarySongs = Array.isArray(detail.songs)
+                ? detail.songs.map((song = {}) => {
+                    // 确保播放器在专辑场景下总能拿到封面
+                    if (!song.al) song.al = {}
+                    if (!song.al.picUrl && albumCover) song.al.picUrl = albumCover
+                    return song
+                })
+                : []
+            this.indexLibrarySongs(this.librarySongs)
+            this.libraryChangeAnimation = false
+        },
+        async updateQQSingerDetail(id, options = {}) {
+            const singermid = String(id || '')
+            const { normalizeQQSingerDetail } = await import('../api/qqMusic')
+            const { getQQSingerInfo } = await import('../api/qq')
+            const payload = await getQQSingerInfo(singermid, {
+                name: String(options.name || '').slice(0, 80),
+                singerid: String(options.singerid || '').replace(/[^0-9]/g, ''),
+            })
+            const detail = normalizeQQSingerDetail(payload, { mid: singermid, name: options.name })
+            this._qqSingerPayload = detail
+            this.libraryInfo = detail.singer
+            this.librarySongs = Array.isArray(detail.hotSongs) ? detail.hotSongs : []
+            this.indexLibrarySongs(this.librarySongs)
+            this.libraryMV = Array.isArray(detail.mvs) ? detail.mvs : []
+            this.libraryAlbum = []
+            this.resetQQSingerSongsPaging()
+            this.libraryChangeAnimation = false
+        },
+        // QQ 歌手页歌曲分页游标：由已加载条数反推下一页（首屏 60 条 → 下一页为第 1 页）。
+        resetQQSingerSongsPaging() {
+            const loaded = Array.isArray(this.librarySongs) ? this.librarySongs.length : 0
+            const total = Number(this.libraryInfo?.musicSize || 0)
+            this.qqSingerSongsNextPage = Math.floor(loaded / QQ_SINGER_SONGS_PAGE_SIZE)
+            this.qqSingerSongsLoading = false
+            this.qqSingerSongsHasMore = loaded > 0 && loaded < total
+        },
+        async loadMoreQQSingerSongs() {
+            if (this.qqSingerSongsLoading || !this.qqSingerSongsHasMore) return false
+            const singermid = String(this.libraryInfo?.source === 'qq' ? this.libraryInfo?.id || '' : '')
+            if (!singermid) return false
+            const page = Number(this.qqSingerSongsNextPage || 1)
+            this.qqSingerSongsLoading = true
+            try {
+                const { getQQSingerSongs } = await import('../api/qq')
+                const { normalizeQQSingerSongs } = await import('../api/qqMusic')
+                const result = normalizeQQSingerSongs(await getQQSingerSongs(singermid, {
+                    page,
+                    limit: QQ_SINGER_SONGS_PAGE_SIZE,
+                }))
+                // 路由已切走时丢弃结果，避免污染其他详情页
+                if (String(this.libraryInfo?.id || '') !== singermid || this.libraryInfo?.source !== 'qq') return false
+                const existing = Array.isArray(this.librarySongs) ? this.librarySongs : []
+                const seen = new Set(existing.map(song => getSongIdentity(song)))
+                const appended = result.songs.filter(song => {
+                    const key = getSongIdentity(song)
+                    if (!key || seen.has(key)) return false
+                    seen.add(key)
+                    return true
+                })
+                if (appended.length) {
+                    this.librarySongs = [...existing, ...appended]
+                    this.indexLibrarySongs(appended, { append: true })
+                    // 同步缓存，切到专辑/MV 页签再切回时不会丢失已加载的分页
+                    if (this._qqSingerPayload) this._qqSingerPayload.hotSongs = this.librarySongs
+                }
+                this.qqSingerSongsNextPage = page + 1
+                const total = Number(this.libraryInfo?.musicSize || 0)
+                this.qqSingerSongsHasMore = appended.length > 0 && this.librarySongs.length < total
+                return appended.length > 0
+            } catch (_) {
+                // 失败即停止自动重试，避免滚动时反复请求上游
+                this.qqSingerSongsHasMore = false
+                return false
+            } finally {
+                this.qqSingerSongsLoading = false
+            }
+        },
+        // QQ 歌手页类型切换：歌曲=已加载热歌；专辑=分页拉取；MV=聚合中的列表
+        updateQQSingerTopSongs() {
+            const cached = this._qqSingerPayload
+            if (cached && Array.isArray(cached.hotSongs)) {
+                this.librarySongs = cached.hotSongs
+                this.indexLibrarySongs(this.librarySongs)
+            }
+        },
+        // QQ 歌手页专辑分页游标：由已加载条数反推下一页。
+        resetQQSingerAlbumsPaging() {
+            const loaded = Array.isArray(this.libraryAlbum) ? this.libraryAlbum.length : 0
+            const total = Number(this.libraryInfo?.albumSize || 0)
+            this.qqSingerAlbumsNextPage = Math.floor(loaded / QQ_SINGER_ALBUMS_PAGE_SIZE)
+            this.qqSingerAlbumsLoading = false
+            this.qqSingerAlbumsHasMore = loaded > 0 && loaded < total
+        },
+        // 首次进入专辑页签拉首屏；已有数据（含缓存恢复）时只还原游标，不重复请求。
+        async updateQQSingerAlbums() {
+            if (Array.isArray(this.libraryAlbum) && this.libraryAlbum.length) {
+                this.resetQQSingerAlbumsPaging()
+                return
+            }
+            if (this.qqSingerAlbumsLoading) return
+            const singermid = String(this.libraryInfo?.source === 'qq' ? this.libraryInfo?.id || '' : '')
+            if (!singermid) {
+                this.libraryAlbum = []
+                this.qqSingerAlbumsHasMore = false
+                return
+            }
+            this.qqSingerAlbumsLoading = true
+            try {
+                const { getQQSingerAlbums } = await import('../api/qq')
+                const { normalizeQQSingerAlbums } = await import('../api/qqMusic')
+                const result = normalizeQQSingerAlbums(await getQQSingerAlbums(singermid, {
+                    page: 0,
+                    limit: QQ_SINGER_ALBUMS_PAGE_SIZE,
+                }))
+                // 路由已切走时丢弃结果，避免污染其他详情页
+                if (String(this.libraryInfo?.id || '') !== singermid || this.libraryInfo?.source !== 'qq') return
+                this.libraryAlbum = result.albums
+                this.indexLibraryAlbums(this.libraryAlbum)
+                this.qqSingerAlbumsNextPage = 1
+                const total = result.totalAlbum || Number(this.libraryInfo?.albumSize || 0)
+                this.qqSingerAlbumsHasMore = result.albums.length > 0 && this.libraryAlbum.length < total
+            } catch (_) {
+                // 上游不可用时保持空列表，不阻塞页签展示
+                this.libraryAlbum = []
+                this.qqSingerAlbumsNextPage = 1
+                this.qqSingerAlbumsHasMore = false
+            } finally {
+                this.qqSingerAlbumsLoading = false
+            }
+        },
+        async loadMoreQQSingerAlbums() {
+            if (this.qqSingerAlbumsLoading || !this.qqSingerAlbumsHasMore) return false
+            const singermid = String(this.libraryInfo?.source === 'qq' ? this.libraryInfo?.id || '' : '')
+            if (!singermid) return false
+            const page = Number(this.qqSingerAlbumsNextPage || 1)
+            this.qqSingerAlbumsLoading = true
+            try {
+                const { getQQSingerAlbums } = await import('../api/qq')
+                const { normalizeQQSingerAlbums } = await import('../api/qqMusic')
+                const result = normalizeQQSingerAlbums(await getQQSingerAlbums(singermid, {
+                    page,
+                    limit: QQ_SINGER_ALBUMS_PAGE_SIZE,
+                }))
+                // 路由已切走时丢弃结果，避免污染其他详情页
+                if (String(this.libraryInfo?.id || '') !== singermid || this.libraryInfo?.source !== 'qq') return false
+                const existing = Array.isArray(this.libraryAlbum) ? this.libraryAlbum : []
+                const seen = new Set(existing.map(album => String(album?.id || album?.mid || '')))
+                const appended = result.albums.filter(album => {
+                    const key = String(album?.id || album?.mid || '')
+                    if (!key || seen.has(key)) return false
+                    seen.add(key)
+                    return true
+                })
+                if (appended.length) {
+                    this.libraryAlbum = [...existing, ...appended]
+                    this.indexLibraryAlbums(this.libraryAlbum)
+                }
+                this.qqSingerAlbumsNextPage = page + 1
+                const total = Number(this.libraryInfo?.albumSize || 0)
+                this.qqSingerAlbumsHasMore = appended.length > 0 && this.libraryAlbum.length < total
+                return appended.length > 0
+            } catch (_) {
+                // 失败即停止自动重试，避免滚动时反复请求上游
+                this.qqSingerAlbumsHasMore = false
+                return false
+            } finally {
+                this.qqSingerAlbumsLoading = false
+            }
+        },
+        updateQQSingerMvs() {
+            const cached = this._qqSingerPayload
+            this.libraryMV = cached && Array.isArray(cached.mvs) ? cached.mvs : []
         },
         async updateAlbumDetail(id) {
             let params = {

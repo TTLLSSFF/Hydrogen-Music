@@ -1,9 +1,12 @@
 <script setup>
-  import { ref, onActivated, onDeactivated, onBeforeUnmount } from 'vue'
+  import { ref, onActivated, onDeactivated, onBeforeUnmount, watch } from 'vue'
   import { getBanner } from '../api/other';
+  import { getQQRecommendBanner, normalizeQQRecommendBanner } from '../api/qqMusic';
+  import { useOtherStore } from '../store/otherStore';
   import { prefetchBreakingNewsDetails } from '../utils/breakingNewsDetail'
   const bannerSessionCache = new Map()
   const emit = defineEmits(['open-breaking-news'])
+  const otherStore = useOtherStore()
   const timer1 = ref(null)
   const timer2 = ref(null)
   const timer3 = ref(null)
@@ -14,20 +17,46 @@
   const bannerTimer1 = ref(false)
   const bannerTimer2 = ref(false)
   const bannerList = ref([{}])
+  const isQQSource = ref(false)
   let isActive = false
   //获取轮播图，0为pc端轮播图,此处选择的是ipad端
   async function loadData(type) {
-      if (bannerSessionCache.has(type)) {
-          bannerList.value = bannerSessionCache.get(type)
-          prefetchBreakingNewsDetails(bannerList.value, { immediateFirst: true })
+      const qqSource = otherStore.searchSource === 'qq'
+      // 缓存键按来源区分，避免切源后命中另一来源的焦点图
+      const cacheKey = qqSource ? `${type}:qq` : String(type)
+      if (bannerSessionCache.has(cacheKey)) {
+          isQQSource.value = qqSource
+          bannerList.value = bannerSessionCache.get(cacheKey)
+          if (!qqSource) prefetchBreakingNewsDetails(bannerList.value, { immediateFirst: true })
           return
       }
-      const bannerData = await getBanner(type)
-      const banners = Array.isArray(bannerData?.banners) ? bannerData.banners : [{}]
-      bannerSessionCache.set(type, banners)
-      bannerList.value = banners
-      prefetchBreakingNewsDetails(banners, { immediateFirst: true })
+      isQQSource.value = qqSource
+      if (qqSource) {
+          try {
+              bannerList.value = normalizeQQRecommendBanner(await getQQRecommendBanner())
+          } catch (_) {
+              bannerList.value = [{}]
+          }
+      } else {
+          const bannerData = await getBanner(type)
+          const banners = Array.isArray(bannerData?.banners) ? bannerData.banners : [{}]
+          bannerList.value = banners
+          prefetchBreakingNewsDetails(banners, { immediateFirst: true })
+      }
+      if (Array.isArray(bannerList.value) && bannerList.value.length > 0) {
+          bannerSessionCache.set(cacheKey, bannerList.value)
+      } else {
+          bannerList.value = [{}]
+      }
   }
+
+  // 切换平台来源后必须重新加载，否则会继续显示上一个来源的焦点图
+  watch(() => otherStore.searchSource, () => {
+      slideIndex.value = 0
+      currentIndex.value = 0
+      bannerList.value = [{}]
+      void loadData(3)
+  })
 
   onActivated(async () => {
       isActive = true
@@ -128,6 +157,8 @@
     //点击banner
     function bannerItem(item, index) {
         if (!item || (!item.pic && !item.imageUrl && !item.url && !item.targetId)) return
+        // QQ 焦点图没有网易云 breaking news 结构，暂不响应点击
+        if (isQQSource.value) return
 
         const targetType = Number(item.targetType)
         const targetId = Number(item.targetId)

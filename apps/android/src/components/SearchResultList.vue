@@ -2,15 +2,35 @@
   import { useRouter } from 'vue-router';
   import { usePlayerStore } from '../store/playerStore';
   import { useOtherStore } from '../store/otherStore';
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 
   const router = useRouter()
   const playerStore = usePlayerStore()
   const otherStore = useOtherStore()
   const props = defineProps(['listdata', 'type'])
-  const checkDetail = (id) => {
+  const checkDetail = (id, item) => {
     playerStore.forbidLastRouter = true
-    if(props.type == 'playlist') router.push('/mymusic/playlist/' + id)
-    if(props.type == 'artist') router.push('/mymusic/artist/' + id)
+    const source = normalizeMusicSource(item?.source)
+    if (props.type == 'artist') {
+      openArtistRoute(router, item, {
+        id,
+        playerStore,
+        source,
+        name: item?.name,
+        singerid: item?.singerid || item?.singerID,
+      })
+      return
+    }
+    if (props.type == 'playlist') {
+      // 搜索结果里的 QQ 歌单是公共资源，匿名也可打开详情（服务端 /getSongListDetail
+      // 无登录要求），用 type=search 让路由守卫按公共歌单放行。
+      router.push({
+        path: '/mymusic/playlist/' + id,
+        query: source === 'qq' ? { source, type: 'search' } : { source },
+      })
+      return
+    }
     if(props.type == 'mv') otherStore.getMvData(id)
   }
 </script>
@@ -19,7 +39,7 @@
   <div class="result-list">
     <div class="item-list">
         <div class="item" v-for="(item,index) in listdata">
-            <div class="item-img" :class="type == 'artist' ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id)">
+            <div class="item-img" :class="type == 'artist' ? 'item-img-circle' : 'item-img-sqaure'" @click="checkDetail(item.id, item)">
                 <img v-lazy :src="(item.coverImgUrl || item.img1v1Url || item.picUrl || item.cover) + '?param=300y300'" alt="">
             </div>
             <div class="item-name" :class="{'item-name-center': type == 'artist'}">{{item.name}}</div>

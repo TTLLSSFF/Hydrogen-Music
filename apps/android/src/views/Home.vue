@@ -5,6 +5,7 @@ import { confirmAccountLogout } from '../utils/accountSession'
 import { isLogin } from '../utils/authority'
 import { useUserStore } from '../store/userStore'
 import { usePlayerStore } from '../store/playerStore'
+import { qqAccountStore } from '../store/qqAccountStore'
 import { useIsMobile } from '../composables/useIsMobile'
 const router = useRouter()
 const userStore = useUserStore()
@@ -87,7 +88,7 @@ const handleAuthOptionClick = () => {
         return
     }
     userStore.appOptionShow = false
-    router.push('/login')
+    router.push(qqAccountStore.loggedIn ? '/settings' : '/login')
 }
 const onAfterEnter = () => (isActive.value = true)
 const onAfterLeave = () => (isActive.value = false)
@@ -364,7 +365,8 @@ watch(
                                     <!-- 只要有用户信息就显示真实头像。原先要求 isLogin() 为真，
                                          而 isLogin() 只看 MUSIC_U cookie——cookie 丢失时
                                          userStore.user 还在，头像却会退化成灰色小人图标。 -->
-                                    <img v-if="userStore.user?.avatarUrl" :src="userStore.user.avatarUrl + '?param=100y100'" alt="" />
+                                    <img v-if="isLogin() && userStore.user?.avatarUrl" :src="userStore.user.avatarUrl + '?param=100y100'" alt="" />
+                                    <img v-else-if="qqAccountStore.loggedIn && qqAccountStore.user?.avatarUrl" :src="qqAccountStore.user.avatarUrl" alt="" />
                                     <svg v-else t="1672136404205" class="icon" viewBox="-18 -28 1060 1060" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5403" width="200" height="200">
                                         <path
                                             d="M511.997 551.041c-218.044 0-399.92 168.61-441.722 392.645l883.45-0.439C911.607 719.432 729.83 551.041 511.997 551.041zM266.597 305.64c0 135.532 109.868 245.401 245.403 245.401 135.53 0 245.403-109.87 245.403-245.4C757.403 170.105 647.53 60.235 512 60.235c-135.535 0-245.403 109.87-245.403 245.406z"
@@ -379,7 +381,7 @@ watch(
                                 <transition name="app-option" @after-enter="onAfterEnter" @after-leave="onAfterLeave">
                                     <div class="app-option" :class="{ 'app-option-active': isActive, 'app-option-local-only': userStore.localOnlyMode }" v-show="userStore.appOptionShow">
                                         <div class="option" @click="toSettings()">设置</div>
-                                        <div class="option" v-if="!userStore.localOnlyMode" @click="handleAuthOptionClick()">{{ isLogin() ? '退出登录' : '账号登录' }}</div>
+                                        <div class="option" v-if="!userStore.localOnlyMode" @click="handleAuthOptionClick()">{{ isLogin() ? '退出登录' : (qqAccountStore.loggedIn ? '账号设置' : '账号登录') }}</div>
 
                                         <div class="option-style option-style1"></div>
                                         <div class="option-style option-style2"></div>

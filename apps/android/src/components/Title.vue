@@ -1,10 +1,11 @@
 <script setup>
-  import { computed, onBeforeUnmount, ref, watch } from 'vue'
+  import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import VueSlider from 'vue-slider-component'
   import { songTime2 } from '../utils/time';
   import { changeProgress } from '../utils/player/lazy';
   import { usePlayerStore } from '../store/playerStore';
+  import { useOtherStore } from '../store/otherStore';
   import { storeToRefs } from 'pinia';
   import { getSongDisplayName } from '../utils/songName';
   import { getIndexedSong } from '../utils/songList';
@@ -58,15 +59,78 @@
     if(router.currentRoute.value.name === 'sirenAlbum') router.push('/siren')
   })
 
+  // —— 左上角 LOGO 的平台来源菜单 ——
+  // 移动端长按会派发 contextmenu 事件，因此沿用与桌面端同一入口；
+  // 菜单样式与应用内的其它右键菜单共用 assets/css/contextMenu.scss（已全局引入）。
+  const otherStore = useOtherStore()
+  const sourceMenuVisible = ref(false)
+  const sourceMenuX = ref(0)
+  const sourceMenuY = ref(0)
+  const sourceMenuRef = ref(null)
+
+  const isQQSource = computed(() => otherStore.searchSource === 'qq')
+  const SOURCE_MENU_VIEWPORT_MARGIN = 8
+
+  const hideSourceMenu = () => {
+    sourceMenuVisible.value = false
+  }
+
+  const openSourceMenu = async event => {
+    // 先按触点坐标落点，写出 DOM 后再量真实尺寸，贴着视口右/下边缘时向内收敛
+    sourceMenuX.value = event.clientX
+    sourceMenuY.value = event.clientY
+    sourceMenuVisible.value = true
+    await nextTick()
+    const menu = sourceMenuRef.value
+    if (!menu) return
+    const maxX = Math.max(0, window.innerWidth - menu.offsetWidth - SOURCE_MENU_VIEWPORT_MARGIN)
+    const maxY = Math.max(0, window.innerHeight - menu.offsetHeight - SOURCE_MENU_VIEWPORT_MARGIN)
+    const minX = Math.min(SOURCE_MENU_VIEWPORT_MARGIN, maxX)
+    const minY = Math.min(SOURCE_MENU_VIEWPORT_MARGIN, maxY)
+    sourceMenuX.value = Math.min(Math.max(minX, sourceMenuX.value), maxX)
+    sourceMenuY.value = Math.min(Math.max(minY, sourceMenuY.value), maxY)
+  }
+
+  const selectSearchSource = source => {
+    otherStore.setSearchSource(source)
+    hideSourceMenu()
+  }
+
+  const handleSourceMenuKeydown = event => {
+    if (!sourceMenuVisible.value || event.key !== 'Escape') return
+    event.preventDefault()
+    event.stopPropagation()
+    hideSourceMenu()
+  }
+
+  const handleSourceMenuScroll = () => {
+    if (sourceMenuVisible.value) hideSourceMenu()
+  }
+
+  // 路由变化（含点击 LOGO 回首页）时菜单不该留在原地
+  watch(() => router.currentRoute.value.fullPath, hideSourceMenu)
+
+  onMounted(() => {
+    window.addEventListener('keydown', handleSourceMenuKeydown, true)
+    window.addEventListener('scroll', handleSourceMenuScroll, true)
+  })
+
   onBeforeUnmount(() => {
     removeHidePlayerListener?.()
+    window.removeEventListener('keydown', handleSourceMenuKeydown, true)
+    window.removeEventListener('scroll', handleSourceMenuScroll, true)
   })
 </script>
 
 <template>
   <div class="title-container">
     <Transition name=fade>
-      <div class="title-logo" @click="backHome()" v-show="playerShow">Hydrogen</div>
+      <div
+        class="title-logo"
+        @click="backHome()"
+        @contextmenu.prevent.stop="openSourceMenu"
+        v-show="playerShow"
+      >Hydrogen</div>
     </Transition>
     <div class="title-player" :class="{'title-player-in': videoIsPlaying && !playerShow}" v-if="musicVideo && currentSong" @click="playerShow = true">
       <div class="player-content" :class="{'player-content-in': videoIsPlaying && !playerShow}">
@@ -84,6 +148,51 @@
         </div>
       </div>
     </div>
+
+    <!-- 平台来源菜单：与其它右键菜单同一套类名与样式（assets/css/contextMenu.scss）。
+         Teleport 到 body，避免落在 .globalWidget 的 pointer-events:none / 层叠上下文里。 -->
+    <Teleport to="body">
+      <div
+        v-if="sourceMenuVisible"
+        class="arknights-context-menu-backdrop"
+        @mousedown.stop="hideSourceMenu"
+        @click.stop="hideSourceMenu"
+      ></div>
+      <div
+        v-if="sourceMenuVisible"
+        ref="sourceMenuRef"
+        class="arknights-context-menu"
+        :style="{ left: sourceMenuX + 'px', top: sourceMenuY + 'px' }"
+        @click.stop
+      >
+        <div class="menu-header">
+          <span class="menu-title">SEARCH SOURCE</span>
+          <div class="title-underline"></div>
+        </div>
+        <div class="menu-content">
+          <div class="menu-item" @click="selectSearchSource('netease')">
+            <div class="item-icon" aria-hidden="true">
+              <span class="selection-mark" :class="{ selected: !isQQSource }"></span>
+            </div>
+            <span class="item-text">
+              <span class="text-zh">网易云音乐</span>
+              <span class="text-en">NETEASE MUSIC</span>
+            </span>
+            <div class="item-indicator"></div>
+          </div>
+          <div class="menu-item" @click="selectSearchSource('qq')">
+            <div class="item-icon" aria-hidden="true">
+              <span class="selection-mark" :class="{ selected: isQQSource }"></span>
+            </div>
+            <span class="item-text">
+              <span class="text-zh">QQ音乐</span>
+              <span class="text-en">QQ MUSIC</span>
+            </span>
+            <div class="item-indicator"></div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 

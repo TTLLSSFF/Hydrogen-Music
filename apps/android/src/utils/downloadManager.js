@@ -10,6 +10,22 @@ import { getPreferredQuality } from './quality'
 import { resolveTrackWithMatchedFallback } from './musicUrlResolver'
 import { getSirenAudioExtension, getSirenSourceId, SIREN_SOURCE } from './siren'
 import { getLyricWithCloudFallback } from './player/lyricFallback'
+import { isQQSong } from './providerPolicy.mjs'
+
+// QQ 的 trackInfo 常为空，扩展名优先按实际请求到的档位推断，其次才看 URL 后缀。
+function inferQQAudioType(playbackInfo = {}) {
+    const quality = String(playbackInfo.quality || '').toLowerCase()
+    if (quality === 'flac' || quality === 'ape') return 'flac'
+    try {
+        const pathname = new URL(playbackInfo.url || '').pathname || ''
+        const matched = pathname.match(/\.([a-z0-9]+)$/i)
+        if (matched?.[1]) return matched[1].toLowerCase()
+    } catch (_) {
+        const matched = String(playbackInfo.url || '').match(/\.([a-z0-9]+)(?:\?|#|$)/i)
+        if (matched?.[1]) return matched[1].toLowerCase()
+    }
+    return 'mp3'
+}
 
 let isInitialized = false
 
@@ -120,12 +136,24 @@ export const initDownloadManager = () => {
         try {
             // 批量下载时用户选过音质（随歌曲入队），优先按它解析；否则用全局设置
             const preferredQuality = getPreferredQuality(currentItem.quality || quality.value)
-            const trackInfo = await resolveTrackWithMatchedFallback(currentItem, preferredQuality, {
-                id,
-                waitForMatchedMetadata: true,
-            })
+            const isQQ = isQQSong(currentItem)
+            // QQ 歌曲走 provider 自有解析链路，绝不能把 songmid 送去网易云的音乐 URL 端点。
+            // player 体积大，这里动态引入避免与下载管理器在启动期互相牵扯。
+            let trackInfo
+            if (isQQ) {
+                const { resolveDownloadPlaybackInfo } = await import('./player')
+                const playbackInfo = await resolveDownloadPlaybackInfo(currentItem, preferredQuality)
+                trackInfo = playbackInfo?.url
+                    ? { url: playbackInfo.url, type: inferQQAudioType(playbackInfo), source: 'qq' }
+                    : null
+            } else {
+                trackInfo = await resolveTrackWithMatchedFallback(currentItem, preferredQuality, {
+                    id,
+                    waitForMatchedMetadata: true,
+                })
+            }
             if (!trackInfo || !trackInfo.url) {
-                noticeOpen("该歌曲无法下载！", 2)
+                noticeOpen(isQQ ? "该歌曲暂无可用下载地址（付费或版权限制）" : "该歌曲无法下载！", 2)
                 dropUnresolvableItem(currentItem, '无法解析播放地址')
                 return
             }
@@ -155,7 +183,7 @@ export const initDownloadManager = () => {
                 name: item.name,
                 type: trackInfo.type,
                 id,
-                source: trackInfo.source === 'matched-source' ? 'matched-source' : 'netease',
+                source: isQQ ? 'qq' : (trackInfo.source === 'matched-source' ? 'matched-source' : 'netease'),
                 lyrics: lyricPayload,
                 coverUrl,
                 artists,

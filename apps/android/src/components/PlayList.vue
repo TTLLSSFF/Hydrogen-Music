@@ -9,10 +9,17 @@
   import { getSongDisplayName } from '../utils/songName'
   import { getIndexedSong } from '../utils/songList'
   import { shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
+  import { canUseSongAction } from '../utils/providerPolicy.mjs'
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
+  import { getSongIdentity } from '../utils/musicSource.mjs'
   const router = useRouter()
   const playerStore = usePlayerStore()
   const { playing, progress, playMode, currentMusic, currentIndex, listInfo, songList, shuffledList, shuffleIndex, songId, widgetState, playlistWidgetShow, lyricShow, showSongTranslation } = storeToRefs(playerStore)
   const currentSong = computed(() => getIndexedSong(songList.value, currentIndex.value))
+  const isCurrentSong = song => {
+    const current = currentSong.value
+    return !!song && !!current && getSongIdentity(song) === getSongIdentity(current)
+  }
   const isIntelligenceMode = computed(() => listInfo.value?.type === 'intelligence')
 
   const clearPlaylist = () => {
@@ -37,11 +44,10 @@
     }, 300);
   }
 
-  const checkArtist = (artistId) => {
-    if(!artistId) return
-    if(currentSong.value && currentSong.value.type != 'local') {
-      router.push('/mymusic/artist/' + artistId)
-      playerStore.forbidLastRouter = true
+  const checkArtist = (song, singer) => {
+    if(!singer || !canUseSongAction(song, 'artist')) return
+    if(song && song.type != 'local') {
+      if (!openArtistRoute(router, singer, { song, playerStore, source: song.source })) return
       if(!widgetState.value) {widgetState.value = true;playlistWidgetShow.value = false;lyricShow.value = false}
     }
   }
@@ -120,9 +126,9 @@
         key-field="id"
         v-slot="{ item, index }"
       >
-        <div class="list-item" :class="{'list-item-playing': songId == item.id, 'list-item-disabled': shouldBlockRestrictedPlayback(item) }" @dblclick="play(item.id, index)">
+        <div class="list-item" :class="{'list-item-playing': isCurrentSong(item), 'list-item-disabled': shouldBlockRestrictedPlayback(item) }" @dblclick="play(item.id, index)">
           <div class="item-info">
-            <div class="playing-eq" v-show="(songId == item.id)" :class="{ 'is-paused': !playing }" aria-hidden="true">
+            <div class="playing-eq" v-show="isCurrentSong(item)" :class="{ 'is-paused': !playing }" aria-hidden="true">
               <span class="bar"></span>
               <span class="bar"></span>
               <span class="bar"></span>
@@ -130,7 +136,7 @@
             </div>
             <span class="item-name">{{getSongDisplayName(item, '', showSongTranslation)}}</span>
             <span class="item-separator"> - </span>
-            <span class="item-author" @dblclick.stop @click="checkArtist(singer.id)" v-for="(singer, index) in item.ar">{{singer.name}}{{index == item.ar.length -1 ? '' : '/'}}</span>
+            <span class="item-author" @dblclick.stop @click="checkArtist(item, singer)" v-for="(singer, index) in item.ar">{{singer.name}}{{index == item.ar.length -1 ? '' : '/'}}</span>
           </div>
           <svg t="1670569532229" @dblclick.stop @click="delCurrentSong(index, item.id)" class="item-delete" viewBox="150 150 758 758" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2597" width="200" height="200"><path d="M558.933333 529.066667l285.866667 285.866666-29.866667 29.866667-285.866666-285.866667-285.866667 285.866667-29.866667-29.866667 285.866667-285.866666L213.333333 243.2l29.866667-29.866667 285.866667 285.866667L814.933333 213.333333l29.866667 29.866667-285.866667 285.866667z" fill="#444444" p-id="2598"></path></svg>
         </div>

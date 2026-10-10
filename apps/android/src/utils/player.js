@@ -42,6 +42,12 @@ import {
     normalizeFavoritePlaylistMeta,
     resolveFavoritePlaylistMeta as resolveFavoritePlaylistMetaBase,
 } from './favoritePlaylist'
+import { setQQLike } from '../api/qq.js'
+import { normalizeQQPlaybackPayload } from '../api/qqMusic.js'
+import { getPlayBySource } from '../api/musicSource.js'
+import { getHeartModeBlockReason, getQQSongMid, isQQSong } from './providerPolicy.mjs'
+import { getSongIdentity } from './musicSource.mjs'
+import { qqAccountStore } from '../store/qqAccountStore'
 
 const otherStore = useOtherStore()
 const userStore = useUserStore()
@@ -584,6 +590,34 @@ async function resolveRestrictedFallbackPlaybackInfo(song, preferredQuality, opt
     return null
 }
 
+// QQ 曲目用 provider 自有 id 解析，绝不能把 provider id 送去网易云的 URL/可用性端点。
+// 下载与播放共用同一条解析链路。
+async function resolveQQPlaybackInfo(song, quality) {
+    const providerId = song.sourceId || song.songmid || song.mid || song.id
+    if (!providerId) return null
+    const mediaId = song.mediaId
+        || song.media_mid
+        || song.mediaMid
+        || song.strMediaMid
+        || song.file?.media_mid
+        || song.file?.mediaMid
+    const resolvedQuality = getPreferredQuality(quality ?? quality.value)
+    const response = await getPlayBySource('qq', providerId, {
+        quality: resolvedQuality,
+        ...(mediaId ? { mediaId: String(mediaId) } : {}),
+    })
+    const normalized = normalizeQQPlaybackPayload(response, providerId)
+    if (!normalized?.url) return null
+    return {
+        url: normalized.url,
+        trackInfo: normalized.trackInfo || null,
+        duration: normalized.duration || getSongDurationSeconds(song),
+        source: 'qq',
+        // 下载时用来推断扩展名：QQ 的 trackInfo 常为空，这里带回实际请求到的档位
+        quality: resolvedQuality,
+    }
+}
+
 async function resolveSongPlaybackInfo(song, options = {}) {
     if (!song || typeof song !== 'object') return null
     if (song.type === 'local') {
@@ -611,6 +645,11 @@ async function resolveSongPlaybackInfo(song, options = {}) {
                 isSiren: true,
             }
             : null
+    }
+
+    // QQ 曲目用 provider 自有 id 解析，绝不能把 provider id 送去网易云的 URL/可用性端点。
+    if (isQQSong(song)) {
+        return resolveQQPlaybackInfo(song, options.quality ?? quality.value)
     }
 
     const playbackId = options.id ?? song.id
@@ -647,6 +686,20 @@ async function resolveSongPlaybackInfo(song, options = {}) {
     if (playbackInfo) return playbackInfo
 
     return resolveMatchedPlaybackInfo(song, preferredQuality)
+}
+
+export async function resolveDownloadPlaybackInfo(song, requestedQuality, options = {}) {
+    // QQ 下载复用播放同一条解析链路。注意不能传 checkAvailability：
+    // 那是网易云的可用性端点，QQ 歌曲送过去会拿到无意义的结果。
+    if (isQQSong(song)) {
+        return resolveQQPlaybackInfo(song, requestedQuality)
+    }
+    return resolveSongPlaybackInfo(song, {
+        ...options,
+        quality: requestedQuality,
+        checkAvailability: true,
+        force: options.force === true,
+    })
 }
 
 function shouldUseHifiOutput(playbackInfo = {}) {
@@ -1465,6 +1518,81 @@ function resetFailedPlaybackState() {
     progress.value = 0
     time.value = 0
     syncExternalPlaybackState()
+}
+
+// QQ 播放是只读且会话是私有的。会话失效时把队列里的 QQ 条目剔除，
+// 并把当前正在播放的 QQ 曲目清理干净，避免用已失效的凭据继续拉取资源/歌词。
+export function clearQQPlaybackState() {
+    const previousSongs = Array.isArray(songList.value) ? songList.value : []
+    const hadShuffledList = Array.isArray(shuffledList.value)
+    const previousShuffled = hadShuffledList ? shuffledList.value : []
+    const currentSong = getCurrentSong()
+    const indexedSong = Number.isInteger(currentIndex.value) && currentIndex.value >= 0
+        ? previousSongs[currentIndex.value]
+        : null
+    const currentWasQQ = isQQSong(currentSong) || isQQSong(indexedSong)
+    const currentIdentity = getSongIdentity(currentSong)
+    const hasQQQueueSong = previousSongs.some(isQQSong) || previousShuffled.some(isQQSong)
+    if (!currentWasQQ && !hasQQQueueSong) return false
+    const qqPreloadActive = isQQSong(gaplessPreload?.song)
+    // 安卓端 pending 只记录歌曲 id（非 identity）：用队列里的曲目反查它是否为 QQ 曲目
+    const qqPendingPlayback = !!pendingPlaybackSongId
+        && previousSongs.some(song => normalizePlayerSongId(song?.id) === pendingPlaybackSongId && isQQSong(song))
+    const qqPendingLyric = isQQSong(previousSongs.find(song => normalizePlayerSongId(song?.id) === getActiveRemoteLyricFetchSongId()))
+    const filteredSongs = previousSongs.filter(song => !isQQSong(song))
+    const filteredShuffled = previousShuffled.filter(song => !isQQSong(song))
+
+    if (currentWasQQ || qqPendingPlayback) {
+        playbackLoadToken += 1
+        clearPendingPlayback()
+    }
+    if (currentWasQQ || qqPendingLyric) {
+        lyricLoadToken += 1
+        pendingCurrentCloudLyricRetrySongId = ''
+        activeRemoteLyricFetch = null
+    }
+    if (currentWasQQ || qqPreloadActive) clearGaplessPreload()
+    if (currentWasQQ) stopProgressSampling()
+
+    if (currentWasQQ) {
+        disposePlaybackImmediately(currentMusic.value)
+        currentMusic.value = null
+        playing.value = false
+        progress.value = 0
+        time.value = 0
+        lyric.value = null
+        songId.value = filteredSongs[0]?.id ?? null
+        currentIndex.value = 0
+        listInfo.value = null
+    } else if (currentIdentity) {
+        const nextIndex = filteredSongs.findIndex(song => getSongIdentity(song) === currentIdentity)
+        currentIndex.value = nextIndex >= 0 ? nextIndex : 0
+        songId.value = filteredSongs[nextIndex >= 0 ? nextIndex : 0]?.id ?? null
+    }
+
+    songList.value = filteredSongs
+    shuffledList.value = hadShuffledList ? filteredShuffled : null
+    if (filteredShuffled.length === 0) shuffleIndex.value = 0
+    else if (currentWasQQ) shuffleIndex.value = 0
+    else {
+        const nextShuffleIndex = filteredShuffled.findIndex(song => getSongIdentity(song) === currentIdentity)
+        shuffleIndex.value = nextShuffleIndex >= 0 ? nextShuffleIndex : 0
+    }
+
+    if (filteredSongs.length === 0) {
+        songList.value = []
+        shuffledList.value = []
+        songId.value = null
+        currentIndex.value = 0
+        shuffleIndex.value = 0
+        listInfo.value = null
+    }
+
+    if (currentWasQQ) resetCurrentLyricState()
+    syncWindowsTaskbarPlaybackState()
+    syncExternalPlaybackState()
+    savePlaylist()
+    return currentWasQQ || filteredSongs.length !== previousSongs.length
 }
 
 function isTransientPlaybackRequestError(error) {
@@ -2588,6 +2716,7 @@ export function playLast() {
     const target = getPlaybackTarget(PLAYBACK_DIRECTION_PREVIOUS)
     if (!target) return
     addSong(target.id, target.index, true)
+    void applyArmedHeartModeOnSongSwitch()
 }
 export function playNext() {
     // FM模式下的特殊逻辑：触发自定义事件播放下一首FM歌曲
@@ -2604,6 +2733,7 @@ export function playNext() {
     if (target.nextShuffledList) commitNextShuffledCycle(target.nextShuffledList)
     addSong(target.id, target.index, true)
     if (target.nextShuffledList) savePlaylist()
+    void applyArmedHeartModeOnSongSwitch()
 }
 const clearLycAnimation = () => {
     isLyricDelay.value = false
@@ -2676,12 +2806,56 @@ export async function changePlayMode() {
         return
     }
 
-    if (playMode.value == 3 && isFavoritePlaylistPlaybackContext()) {
-        await startIntelligencePlayback({ preserveCurrent: true })
+    // 已登记未生效时再点一下就是取消：同时继续往下走一档，
+    // 否则「随机 → 心动」这一步会一直卡在原地（点了又取消、取消了又点）。
+    if (playerStore.heartModeArmed) {
+        playerStore.heartModeArmed = false
+        noticeOpen('已取消心动模式', 2)
+        applyPlayMode(playMode.value != 3 ? playMode.value + 1 : 0, { inFM: false })
         return
     }
 
+    if (playMode.value == 3 && isFavoritePlaylistPlaybackContext()) {
+        if (armHeartMode()) return
+    }
+
     applyPlayMode(playMode.value != 3 ? playMode.value + 1 : 0, { inFM: false })
+}
+
+/**
+ * 登记心动模式。
+ *
+ * 这里只写状态、不拉推荐：播放顺序是一档一档点过去的，如果点到的瞬间就替换队列，
+ * 单纯调整播放顺序也会把正在听的歌单换掉。真正的推荐拉取交给下一次切歌
+ * （见 applyArmedHeartModeOnSongSwitch）。
+ */
+function armHeartMode() {
+    if (!userStore.user?.userId) {
+        noticeOpen('登录后才能使用心动模式', 2)
+        return false
+    }
+    const qqBlockReason = getHeartModeBlockReason(songList.value)
+    if (qqBlockReason) {
+        noticeOpen(qqBlockReason, 2)
+        return false
+    }
+    playerStore.heartModeArmed = true
+    noticeOpen('心动模式已开启 · 切歌后生效', 2)
+    return true
+}
+
+/**
+ * 切歌时的心动模式触发点。
+ *
+ * 只在「我喜欢的音乐」上下文里生效，且只触发一次：用完就清掉登记，
+ * 之后就在生成的推荐队列里按顺序播放。
+ */
+async function applyArmedHeartModeOnSongSwitch() {
+    if (!playerStore.heartModeArmed) return false
+    if (!isFavoritePlaylistPlaybackContext()) return false
+
+    playerStore.heartModeArmed = false
+    return startIntelligencePlayback({ preserveCurrent: true })
 }
 
 export function playAll(listType, list, listMeta = null) {
@@ -3179,6 +3353,19 @@ function finalizeLikeActionSideEffects({ clickMyPlaylist = true, closeAddPlaylis
     }
 }
 
+// QQ 的「我喜欢」写入在服务端启用了签名/加密校验（实测 80105）：官方客户端走
+// musics.fcg + ag-1 加密协议，第三方客户端目前写不进去。这里给可操作的提示，
+// 而不是把上游报文原样弹给用户，同时保留上游码便于排查。
+const QQ_LIKE_UNSUPPORTED_CODE = 80105
+
+function formatQQLikeFailure(error) {
+    const body = error?.response?.data
+    if (Number(body?.code) === QQ_LIKE_UNSUPPORTED_CODE) {
+        return 'QQ 音乐暂不支持第三方客户端修改「我喜欢」，请到 QQ 音乐官方客户端操作（code 80105）'
+    }
+    return `喜欢/取消喜欢 音乐失败：${body?.message || error?.message || '网络错误'}`
+}
+
 export async function likeSong(like, targetSongId = songId.value) {
     const songIdValue = targetSongId
     const isExplicitTargetSong = arguments.length > 1
@@ -3191,6 +3378,51 @@ export async function likeSong(like, targetSongId = songId.value) {
         console.error('likeSong失败: 没有当前歌曲ID')
         noticeLikeFailure("操作失败：没有选中的歌曲")
         return
+    }
+
+    // QQ 在本客户端是只读播放：绝不能把 QQ 的 provider id 送去网易云的喜欢/歌单端点，
+    // 显式目标也一样。隐式操作时以选中队列条目为准，按 raw id 反查可能在同 id 时选错来源。
+    const targetSong = !isExplicitTargetSong
+        ? getCurrentSong()
+        : (songList.value || []).find(song => (
+            String(song?.id ?? '') === String(songIdValue ?? '')
+            || String(song?.sourceId ?? '') === String(songIdValue ?? '')
+        )) || (isQQSong(libraryInfo.value)
+            ? (libraryStore.librarySongs || []).find(song => (
+                String(song?.id ?? '') === String(songIdValue ?? '')
+                || String(song?.sourceId ?? '') === String(songIdValue ?? '')
+            ))
+            : null)
+    if (isQQSong(targetSong)) {
+        // QQ 喜欢走 provider 自有写端点，按 songmid 记录，与网易云数字 id 列表完全隔离。
+        // 「我喜欢」被上游签名/加密校验挡住（80105），所以不做乐观更新：成功才改状态。
+        const qqMid = getQQSongMid(targetSong)
+        if (!qqMid) {
+            noticeLikeFailure('操作失败：没有可用的歌曲标识')
+            return false
+        }
+        // 服务端用的是官方客户端那套 payload（数字 songId），所以把 numericId 一并带上
+        const qqNumericId = /^\d+$/.test(String(targetSong?.numericId ?? '')) ? String(targetSong.numericId) : ''
+        if (!qqAccountStore.loggedIn) {
+            noticeLikeFailure('请先登录 QQ 音乐')
+            return false
+        }
+
+        const useCurrentPlayerSideEffects = !isExplicitTargetSong && songIdValue == songId.value
+        try {
+            await setQQLike(qqMid, like, qqNumericId)
+        } catch (error) {
+            noticeLikeFailure(formatQQLikeFailure(error))
+            return false
+        }
+
+        userStore.updateQQLikelist(applyOptimisticLikeState(qqMid, like, userStore.qqLikelist))
+        noticeOpen(like ? '已添加到我喜欢' : '已取消喜欢', 2)
+        finalizeLikeActionSideEffects({
+            clickMyPlaylist: useCurrentPlayerSideEffects,
+            closeAddPlaylist: useCurrentPlayerSideEffects,
+        })
+        return true
     }
 
     if (!userStore.user || !userStore.user.userId) {

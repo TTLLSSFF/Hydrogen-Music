@@ -8,7 +8,8 @@ import { useLibraryStore } from '../store/libraryStore'
 import { useLocalStore } from '../store/localStore'
 import { storeToRefs } from 'pinia'
 import { useOtherStore } from '../store/otherStore'
-import { resolvePlatformSource } from '../utils/providerPolicy.mjs'
+import { resolvePlatformSource, canAccessQQMyMusic } from '../utils/providerPolicy.mjs'
+import { hasQQAccount } from '../utils/accountProviders.mjs'
 
 function createRouteLoader(loader) {
     let promise = null
@@ -37,6 +38,7 @@ const LocalMusicDetail = createRouteLoader(() => import('../components/LocalMusi
 const SearchResult = createRouteLoader(() => import('../views/SearchResult.vue'))
 const Settings = createRouteLoader(() => import('../views/Settings.vue'))
 const RadioDetail = createRouteLoader(() => import('../components/RadioDetail.vue'))
+const QQPlaylistCategory = createRouteLoader(() => import('../views/QQPlaylistCategory.vue'))
 
 const userStore = useUserStore()
 const libraryStore = useLibraryStore()
@@ -46,6 +48,8 @@ const localStore = useLocalStore()
 const otherStore = useOtherStore()
 const localOnlyRouteNames = new Set(['settings', 'mymusic', 'localFiles', 'localAlbum', 'localArtist'])
 const hasDifferentLibraryId = (to, from) => String(to?.params?.id || '') != String(from?.params?.id || '')
+const hasDifferentLibrarySource = (to, from) => String(to?.query?.source || 'netease') != String(from?.query?.source || 'netease')
+const hasDifferentLibraryType = (to, from) => String(to?.query?.type || '') != String(from?.query?.type || '')
 const routeComponentPreloadLoaders = [
     HomePage,
     MyMusic,
@@ -129,9 +133,16 @@ const routes = [
                 name: 'playlist',
                 component: LibraryDetail,
                 beforeEnter: async (to, from, next) => {
-                    const needReload = !libraryInfo.value || from.name != 'playlist' || hasDifferentLibraryId(to, from)
+                    const source = String(to.query.source || 'netease').toLowerCase()
+                    const type = String(to.query.type || '').toLowerCase()
+                    if (!canAccessQQMyMusic(source, hasQQAccount(), type)) {
+                        noticeOpen('请先登录 QQ 音乐', 2)
+                        next({ name: 'mymusic' })
+                        return
+                    }
+                    const needReload = !libraryInfo.value || from.name != 'playlist' || hasDifferentLibraryId(to, from) || hasDifferentLibrarySource(to, from) || hasDifferentLibraryType(to, from)
                     try {
-                        if (needReload) await updateLibraryDetail(to.params.id, to.name, { deferRemaining: true })
+                        if (needReload) await updateLibraryDetail(to.params.id, to.name, { deferRemaining: true, source, type })
                     } finally {
                         next()
                     }
@@ -142,9 +153,10 @@ const routes = [
                 name: 'album',
                 component: LibraryDetail,
                 beforeEnter: async (to, from, next) => {
+                    const source = String(to.query.source || '').toLowerCase()
                     const needReload = !libraryInfo.value || from.name != 'album' || hasDifferentLibraryId(to, from)
                     try {
-                        if (needReload) await updateLibraryDetail(to.params.id, to.name)
+                        if (needReload) await updateLibraryDetail(to.params.id, to.name, { source: source == 'qq' ? 'qq' : 'netease' })
                     } finally {
                         next()
                     }
@@ -155,9 +167,13 @@ const routes = [
                 name: 'artist',
                 component: LibraryDetail,
                 beforeEnter: async (to, from, next) => {
+                    const source = String(to.query.source || '').toLowerCase()
+                    const detailOptions = source == 'qq'
+                        ? { source: 'qq', name: to.query.name, singerid: to.query.singerid }
+                        : { source: 'netease' }
                     const needReload = !libraryInfo.value || from.name != 'artist' || hasDifferentLibraryId(to, from)
                     try {
-                        if (needReload) await updateLibraryDetail(to.params.id, to.name)
+                        if (needReload) await updateLibraryDetail(to.params.id, to.name, detailOptions)
                     } finally {
                         next()
                     }
@@ -256,6 +272,12 @@ const routes = [
         beforeEnter: (to, from, next) => {
             next()
         }
+    },
+    {
+        // QQ 专属分类歌单页，固定 QQ 来源，不参与全局平台来源切换
+        path: '/qq/playlists',
+        name: 'qqPlaylistCategory',
+        component: QQPlaylistCategory,
     },
 ]
 

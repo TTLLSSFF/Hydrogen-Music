@@ -6,6 +6,9 @@ export const useUserStore = defineStore('userStore', {
             user: null,
             loginMode: null,
             likelist: null,
+            // QQ 歌曲的喜欢状态单独存放 songmid 集合：likelist 存的是网易云数字 id，
+            // 而 checkIsLike 是不带来源判断的 includes，两者混放会互相串号。
+            qqLikelist: [],
             favoritePlaylistId: null,
             favoritePlaylistName: null,
             appOptionShow: false,
@@ -25,6 +28,7 @@ export const useUserStore = defineStore('userStore', {
             this.user = null
             this.loginMode = null
             this.likelist = null
+            this.qqLikelist = []
             this.favoritePlaylistId = null
             this.favoritePlaylistName = null
             this.appOptionShow = false
@@ -34,6 +38,9 @@ export const useUserStore = defineStore('userStore', {
         },
         updateLikelist(likelist) {
             this.likelist = Array.isArray(likelist) ? likelist : []
+        },
+        updateQQLikelist(likelist) {
+            this.qqLikelist = Array.isArray(likelist) ? likelist : []
         },
         updateFavoritePlaylistId(playlistId) {
             this.favoritePlaylistId = playlistId

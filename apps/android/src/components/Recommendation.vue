@@ -4,13 +4,17 @@
   import { useRouter } from 'vue-router';
   import { useLibraryStore } from '../store/libraryStore'
   import { useLocalStore } from '../store/localStore';
+  import { useOtherStore } from '../store/otherStore'
+  import { getQQPersonalRecommend, normalizeQQRecommendCards } from '../api/qqMusic'
   import { isLogin } from '../utils/authority';
   import { noticeOpen } from '../utils/dialog';
   import { useIsMobile } from '../composables/useIsMobile';
   const libraryStore = useLibraryStore()
   const localStore = useLocalStore()
+  const otherStore = useOtherStore()
   const router = useRouter()
   const isMobile = useIsMobile()
+  const isQQSource = computed(() => otherStore.searchSource === 'qq')
   const recTime = ref('')
   const showMore = ref(false)
   const showMoreTitle = ref('每 日推 荐')
@@ -86,11 +90,35 @@
     }
   }
   const checkRecSongs = () => {
+    if (isQQSource.value) {
+      void openQQDailyRecommend()
+      return
+    }
     libraryStore.libraryInfo = null
     localStore.currentSelectedSongs = null
     router.push('/recommend')
   }
+  // QQ 侧没有可用的「每日歌曲列表」上游接口，用个性化推荐歌单（猜你喜欢）代替：
+  // 打开第一张推荐歌单的详情页，复用现有 QQ 歌单详情与播放链路。
+  const openQQDailyRecommend = async () => {
+    try {
+      const cards = normalizeQQRecommendCards(await getQQPersonalRecommend())
+      const first = cards[0]
+      if (!first?.id) {
+        noticeOpen('QQ 音乐暂无可用的每日推荐', 2)
+        return
+      }
+      libraryStore.libraryInfo = null
+      router.push({ path: `/mymusic/playlist/${first.id}`, query: { source: 'qq', type: 'rec' } })
+    } catch (_) {
+      noticeOpen('登录 QQ 音乐后可查看每日推荐', 2)
+    }
+  }
   const playRecAll = async () => {
+    if (isQQSource.value) {
+      await openQQDailyRecommend()
+      return
+    }
     if(isLogin()) {
         await libraryStore.updateRecommendSongs()
         await playAll('rec', libraryStore.librarySongs)

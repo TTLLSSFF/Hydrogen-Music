@@ -15,6 +15,7 @@ import './assets/css/common.css'
 import '@shared-assets/css/fonts.css'
 import './assets/css/theme.css'
 import './assets/css/mobile.css'
+import './assets/css/contextMenu.scss'
 import { initTheme } from './utils/theme'
 import { init } from './utils/initApp'
 

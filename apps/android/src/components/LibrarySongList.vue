@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { songTime } from '../utils/time'
@@ -14,6 +14,8 @@ import { noticeOpen } from '../utils/dialog'
 import { getSongDisplayName } from '../utils/songName'
 import { getRestrictedPlaybackFailureMessage, shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
 import { getSongIdentity } from '../utils/musicSource.mjs'
+import { canUseSongAction, isQQSong } from '../utils/providerPolicy.mjs'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
 import { useIsMobile } from '../composables/useIsMobile'
 
 const router = useRouter()
@@ -22,7 +24,7 @@ const userStore = useUserStore()
 const libraryStore = useLibraryStore()
 const { libraryInfo } = storeToRefs(libraryStore)
 const playerStore = usePlayerStore()
-const { songId, playMode, playing, showSongTranslation } = storeToRefs(playerStore)
+const { songId, playMode, playing, showSongTranslation, songList, currentIndex, shuffledList } = storeToRefs(playerStore)
 const otherStore = useOtherStore()
 const props = defineProps({
     songlist: {
@@ -66,8 +68,17 @@ const props = defineProps({
         type: Array,
         default: null,
     },
+    // 分页列表（当前为 QQ 歌手页）用：还有更多时滚动到底触发 load-more
+    hasMore: {
+        type: Boolean,
+        default: false,
+    },
+    loadingMore: {
+        type: Boolean,
+        default: false,
+    },
 })
-const emit = defineEmits(['toggle-download-selection'])
+const emit = defineEmits(['toggle-download-selection', 'load-more'])
 const hoverRowKey = ref(null)
 const recycleScroller = ref(null)
 const rowKeyBySong = new WeakMap()
@@ -126,16 +137,53 @@ const isSongDisabled = song => {
     return shouldBlockRestrictedPlayback(song)
 }
 
+const isCurrentSong = song => {
+    const current = Array.isArray(songList.value) ? songList.value[currentIndex.value] : null
+    if (song && current) return getSongIdentity(song) === getSongIdentity(current)
+    // 没有规范队列条目时原始 store id 不含来源信息；仅对无来源歌曲保留旧回退
+    return !!song && !song.source && String(songId.value ?? '') === String(song.id ?? '')
+}
+
+// 距底部不足一屏内触发 load-more；虚拟滚动没有 footer 插槽，故监听滚动容器本身。
+const LOAD_MORE_THRESHOLD = 120
+const getScrollerElement = () => recycleScroller.value?.$el || null
+const handleScrollerScroll = () => {
+    if (!props.hasMore || props.loadingMore) return
+    const scroller = getScrollerElement()
+    if (!scroller) return
+    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+    if (remaining > LOAD_MORE_THRESHOLD) return
+    emit('load-more')
+}
+const attachScrollerScroll = async () => {
+    await nextTick()
+    const scroller = getScrollerElement()
+    if (!scroller) return
+    scroller.removeEventListener('scroll', handleScrollerScroll)
+    scroller.addEventListener('scroll', handleScrollerScroll, { passive: true })
+}
+const detachScrollerScroll = () => {
+    getScrollerElement()?.removeEventListener('scroll', handleScrollerScroll)
+}
+
 watch(scrollerItems, scheduleRecycleScrollerRefresh, { flush: 'post' })
 
-onMounted(refreshListRuntimeState)
+onMounted(() => {
+    refreshListRuntimeState()
+    void attachScrollerScroll()
+})
 
-onActivated(refreshListRuntimeState)
+onActivated(() => {
+    refreshListRuntimeState()
+    void attachScrollerScroll()
+})
 
-const checkArtist = artistId => {
-    if (!props.artistRouteEnabled || !artistId) return
-    router.push('/mymusic/artist/' + artistId)
-    playerStore.forbidLastRouter = true
+onDeactivated(detachScrollerScroll)
+onBeforeUnmount(detachScrollerScroll)
+
+const checkArtist = (song, singer) => {
+    if (!props.artistRouteEnabled || !singer || !canUseSongAction(song, 'artist')) return
+    openArtistRoute(router, singer, { song, playerStore, source: song?.source })
 }
 const play = async (song, index) => {
     if (props.downloadSelectionMode) return
@@ -152,14 +200,24 @@ const play = async (song, index) => {
         await libraryStore.waitForPlaylistHydration(libraryInfo.value.id)
     }
     const targetQueueSongs = queueSongs.value || []
-    const targetIndex = (targetQueueSongs || []).findIndex(item => item?.id == song.id)
+    const targetIdentity = getSongIdentity(song)
+    const targetIndex = (targetQueueSongs || []).findIndex(item => getSongIdentity(item) === targetIdentity)
     await addToList(props.queueListType || router.currentRoute.value.name, targetQueueSongs, props.queueMeta || null)
+    if (playMode.value == 3) {
+        // addToList 会替换规范队列，旧的随机索引属于另一份列表。先重建，
+        // 再按来源身份定位被点击的歌曲，而不是把规范索引塞进随机队列。
+        await setShuffledList()
+        const shuffledIndex = Array.isArray(shuffledList.value)
+            ? shuffledList.value.findIndex(item => getSongIdentity(item) === targetIdentity)
+            : -1
+        await addSong(song.id, shuffledIndex >= 0 ? shuffledIndex : 0, true)
+        return
+    }
     await addSong(song.id, targetIndex >= 0 ? targetIndex : index, true)
-    if (playMode.value == 3) await setShuffledList()
 }
 
 const togglePlay = async (song, index) => {
-    if (songId.value === song.id) {
+    if (isCurrentSong(song)) {
         if (playing.value) {
             await pauseMusic()
         } else {
@@ -191,10 +249,15 @@ const openMenu = (e, item) => {
     otherStore.selectedItem = item
     otherStore.selectedPlaylist = libraryInfo.value
 
-    if (props.contextMenuMode === 'siren' || item?.source === 'siren') {
+    if (isQQSong(item)) {
+        // 「从歌单中删除」需要当前歌单上下文：只有歌曲本身就在 QQ 歌单里时才带上，
+        // 其他场景（搜索、榜单等）保持为空，避免写操作打到错误目标。
+        otherStore.selectedPlaylist = isQQSong(libraryInfo.value) ? libraryInfo.value : null
+        otherStore.menuTree = otherStore.treeQQ
+    } else if (props.contextMenuMode === 'siren' || item?.source === 'siren') {
         otherStore.selectedPlaylist = null
         otherStore.menuTree = otherStore.tree5
-    } else if (otherStore.selectedPlaylist && otherStore.selectedPlaylist.creator && otherStore.selectedPlaylist.creator.userId == userStore.user.userId) {
+    } else if (otherStore.selectedPlaylist && otherStore.selectedPlaylist.creator && otherStore.selectedPlaylist.creator.userId == userStore.user?.userId) {
         otherStore.menuTree = otherStore.tree1
     } else {
         otherStore.menuTree = otherStore.tree2
@@ -209,7 +272,7 @@ const openMenu = (e, item) => {
         <RecycleScroller ref="recycleScroller" v-if="props.songlist" id="libraryScroll" class="library-song-list" :items="scrollerItems" :item-size="42" key-field="rowKey" v-slot="{ item }">
             <div
                 class="list-item"
-                :class="{ 'list-item-playing': songId == item.song.id, 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly, 'list-item-download-mode': props.downloadSelectionMode, 'list-item-download-selected': isDownloadSelected(item.song) }"
+                :class="{ 'list-item-playing': isCurrentSong(item.song), 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly, 'list-item-download-mode': props.downloadSelectionMode, 'list-item-download-selected': isDownloadSelected(item.song) }"
                 @mouseenter="hoverRowKey = item.rowKey"
                 @mouseleave="hoverRowKey = null"
                 @click="handleRowClick(item.song, item.sourceIndex)"
@@ -222,10 +285,10 @@ const openMenu = (e, item) => {
                             class="item-play-btn"
                             :class="{ 'state-visible': hoverRowKey === item.rowKey }"
                             @click.stop="togglePlay(item.song, item.sourceIndex)"
-                            :aria-label="songId === item.song.id && playing ? '暂停' : '播放'"
+                            :aria-label="isCurrentSong(item.song) && playing ? '暂停' : '播放'"
                             :tabindex="isMobile || hoverRowKey === item.rowKey ? 0 : -1"
                         >
-                            <svg v-if="songId === item.song.id && playing" viewBox="138 138 749 749" xmlns="http://www.w3.org/2000/svg">
+                            <svg v-if="isCurrentSong(item.song) && playing" viewBox="138 138 749 749" xmlns="http://www.w3.org/2000/svg">
                                 <rect x="256" y="200" width="160" height="624" rx="32" fill="currentColor" />
                                 <rect x="608" y="200" width="160" height="624" rx="32" fill="currentColor" />
                             </svg>
@@ -236,13 +299,13 @@ const openMenu = (e, item) => {
                                 ></path>
                             </svg>
                         </button>
-                        <div class="playing-eq" :class="{ 'is-paused': !playing, 'state-visible': hoverRowKey !== item.rowKey && songId == item.song.id }" aria-hidden="true">
+                        <div class="playing-eq" :class="{ 'is-paused': !playing, 'state-visible': hoverRowKey !== item.rowKey && isCurrentSong(item.song) }" aria-hidden="true">
                             <span class="bar"></span>
                             <span class="bar"></span>
                             <span class="bar"></span>
                             <span class="bar"></span>
                         </div>
-                        <div class="item-num" :class="{ 'state-visible': hoverRowKey !== item.rowKey && songId != item.song.id }">{{ item.sourceIndex + 1 }}</div>
+                        <div class="item-num" :class="{ 'state-visible': hoverRowKey !== item.rowKey && !isCurrentSong(item.song) }">{{ item.sourceIndex + 1 }}</div>
                     </div>
                     <span class="item-name">
                         <span class="item-name-text">{{ getSongDisplayName(item.song, '', showSongTranslation) }}</span>
@@ -251,7 +314,7 @@ const openMenu = (e, item) => {
                 </div>
                 <div class="item-other">
                     <div class="item-author" v-if="item.song.ar">
-                        <span class="item-singer" @click.stop="checkArtist(singer.id)" v-for="(singer, index) in item.song.ar">{{ singer.name }}{{ index == item.song.ar.length - 1 ? '' : '/' }}</span>
+                        <span class="item-singer" @click.stop="checkArtist(item.song, singer)" v-for="(singer, index) in item.song.ar">{{ singer.name }}{{ index == item.song.ar.length - 1 ? '' : '/' }}</span>
                     </div>
                         <span class="item-time">{{ songTime(item.song.dt || item.song.duration) || '--:--' }}</span>
                 </div>

@@ -2005,3 +2005,32 @@ html[data-hm-mobile='true'] #app .login-content .to-register span {
   min-height: 44px;
   font-size: 13px;
 }
+
+/* —— QQ 音乐移植：分类歌单页 / 来源菜单 的移动端最小覆盖 —— */
+html[data-hm-mobile='true'] #app .category-page .category-body { flex-direction: column; }
+html[data-hm-mobile='true'] #app .category-page .view-control { margin-left: 0; }
+html[data-hm-mobile='true'] #app .category-page .tag-sidebar {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin-right: 0;
+  margin-bottom: 10px;
+  padding-right: 0;
+  padding-bottom: 8px;
+  overflow-x: auto;
+  border-right: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+html[data-hm-mobile='true'] #app .category-page .tag-sidebar .tag-item,
+html[data-hm-mobile='true'] #app .category-page .tag-sidebar .tag-status {
+  flex: 0 0 auto;
+  margin: 0 6px 0 0;
+  white-space: nowrap;
+}
+html[data-hm-mobile='true'] #app .category-page .playlist-panel .playlist-grid {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 12px;
+}
+html[data-hm-mobile='true'] #app .arknights-context-menu { max-width: calc(100vw - 16px); }

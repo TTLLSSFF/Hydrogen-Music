@@ -1,5 +1,5 @@
 <script setup>
-  import { ref, watch, watchPostEffect } from 'vue'
+  import { computed, ref, watch, watchPostEffect } from 'vue'
   import { useRouter } from 'vue-router'
   import { createPlaylist, updatePlaylist, deletePlaylist } from '../api/playlist'
   import { addToNext, addToNextLocal } from '../utils/player/lazy'
@@ -8,7 +8,26 @@
   import { useOtherStore } from '../store/otherStore';
   import { usePlayerStore } from '../store/playerStore'
   import { useUserStore } from '../store/userStore';
+  import {
+    canUseSongAction,
+    filterProviderPlaylists,
+    findProviderPlaylist,
+    isProviderPlaylist,
+    isQQSong,
+  } from '../utils/providerPolicy.mjs'
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
+  import { getSirenSourceId } from '../utils/siren'
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
+  import { withCoverParam } from '../utils/coverBackdrop'
   import { getLikelist, getUserPlaylistCount, getUserPlaylist } from '../api/user'
+  import { getQQPlaylists } from '../api/qq'
+  import { loadQQPlaylistPages } from '../utils/qqLibrary.mjs'
+  import { useQQAccountStore } from '../store/qqAccountStore'
+  import {
+    addSongsToPlaylist,
+    getWritablePlaylistId,
+    removeSongsFromPlaylist,
+  } from '../utils/playlistMutation.mjs'
   import { schedulePlaylistCacheInvalidation } from '../utils/cacheInvalidation'
   import { copyToClipboard } from '../utils/clipboard'
   import { storeToRefs } from 'pinia';
@@ -19,6 +38,51 @@
   const otherStore = useOtherStore()
   const playerStore = usePlayerStore()
   const userStore = useUserStore()
+  const qqAccountStore = useQQAccountStore()
+  const loadedNeteasePlaylistUserId = ref('')
+  const neteaseWritablePlaylists = computed(() => {
+    const accountId = String(userStore.user?.userId || '')
+    if (!accountId || loadedNeteasePlaylistUserId.value !== accountId) return []
+    return filterProviderPlaylists(libraryStore.playlistUserCreated, 'netease')
+  })
+  // QQ 歌单单独加载而不是复用 ensureUserPlaylistsLoaded：后者以网易云 userId 为前提，
+  // 纯 QQ 账号永远进不去，弹窗会恒空。只写本弹窗自己的 ref，避免动 libraryStore
+  // 里那份由 LibraryType 维护、还包含「我喜欢」的歌单列表。
+  const qqDialogPlaylists = ref([])
+  const loadedQQPlaylistUserId = ref('')
+  const qqWritablePlaylists = computed(() => (
+    qqAccountStore.loggedIn ? qqDialogPlaylists.value : []
+  ))
+  // 待添加歌曲的来源：QQ 歌曲只能写 QQ 歌单（dirId + songmid），网易云歌曲只能写网易云歌单
+  // （pid + songid）。两套歌单混在一个列表里时，用户会把 QQ 歌曲点进网易云歌单——必然失败。
+  // 批量选择里混了两种来源时不做过滤（没有能同时覆盖两者的目标歌单）。
+  const selectedSongSource = computed(() => {
+    const items = Array.isArray(otherStore.selectedItems) && otherStore.selectedItems.length > 0
+      ? otherStore.selectedItems
+      : [otherStore.selectedItem]
+    const sources = new Set(
+      items
+        .filter(item => item && typeof item === 'object')
+        .map(item => normalizeMusicSource(item.source)),
+    )
+    return sources.size === 1 ? Array.from(sources)[0] : ''
+  })
+  const writablePlaylists = computed(() => {
+    if (selectedSongSource.value === 'qq') return qqWritablePlaylists.value
+    if (selectedSongSource.value === 'netease') return neteaseWritablePlaylists.value
+    return [
+      ...neteaseWritablePlaylists.value,
+      ...qqWritablePlaylists.value,
+    ]
+  })
+  // 创建歌单走的是网易云接口，QQ 歌曲写不进新建的网易云歌单，因此只对网易云歌曲展示该入口
+  const canCreateNeteasePlaylist = computed(() => (
+    !!userStore.user?.userId && selectedSongSource.value !== 'qq'
+  ))
+  const getPlaylistCover = item => withCoverParam(
+    item?.coverImgUrl || item?.img1v1Url || item?.picUrl || item?.coverUrl,
+    150,
+  )
   const { librarySongs, listType1, listType2 } = storeToRefs(libraryStore)
   const menu = ref(null)
 
@@ -55,38 +119,102 @@
 
   const normalizePlaylistTarget = playlistTarget => {
     if (playlistTarget && typeof playlistTarget == 'object') {
+      // QQ 目标用 dirId 写入；没有 dirId 说明该歌单只能读
+      if (isQQSong(playlistTarget)) {
+        if (!getWritablePlaylistId(playlistTarget)) return null
+        return {
+          ...playlistTarget,
+          source: 'qq',
+          name: getPlaylistDisplayName(playlistTarget),
+        }
+      }
+      if (!userStore.user?.userId) return null
+      if (!isProviderPlaylist(playlistTarget, 'netease')) return null
       return {
+        ...playlistTarget,
         id: playlistTarget.id,
+        source: 'netease',
         name: getPlaylistDisplayName(playlistTarget),
       }
     }
 
-    const matchedPlaylist = (libraryStore.playlistUserCreated || []).find(item => item.id == playlistTarget)
-    return {
-      id: playlistTarget,
-      name: matchedPlaylist ? getPlaylistDisplayName(matchedPlaylist) : '歌单',
+    if (userStore.user?.userId) {
+      const matchedPlaylist = findProviderPlaylist(
+        neteaseWritablePlaylists.value,
+        playlistTarget,
+        'netease',
+      )
+      if (matchedPlaylist) {
+        return {
+          ...matchedPlaylist,
+          id: matchedPlaylist.id,
+          source: 'netease',
+          name: getPlaylistDisplayName(matchedPlaylist),
+        }
+      }
     }
+
+    const matchedQQPlaylist = qqWritablePlaylists.value.find(
+      item => String(item.id) === String(playlistTarget),
+    )
+    if (matchedQQPlaylist) {
+      return {
+        ...matchedQQPlaylist,
+        source: 'qq',
+        name: getPlaylistDisplayName(matchedQQPlaylist),
+      }
+    }
+    return null
   }
 
   // 确保在打开“添加到歌单”弹窗时，已加载用户歌单列表
   const ensureUserPlaylistsLoaded = async () => {
     try {
       // 仅在已登录且还未加载过时拉取
-      if (!userStore.user || !userStore.user.userId) return
-      if (Array.isArray(libraryStore.playlistUserCreated) && libraryStore.playlistUserCreated.length > 0) return
+      if (!userStore.user || !userStore.user.userId) {
+        loadedNeteasePlaylistUserId.value = ''
+        return
+      }
+      const accountId = String(userStore.user.userId)
+      if (loadedNeteasePlaylistUserId.value === accountId) return
 
       const count = await getUserPlaylistCount()
-      libraryStore.updateUserPlaylistCount(count)
 
       const params = {
-        uid: userStore.user.userId,
+        uid: accountId,
         limit: 500,
         offset: 0,
         timestamp: Date.now(),
       }
       const list = await getUserPlaylist(params)
       if (list && Array.isArray(list.playlist)) {
-        libraryStore.updateUserPlaylist(list.playlist)
+        const createdCount = Number(count?.createdPlaylistCount) || 0
+        const subscribedCount = Number(count?.subPlaylistCount) || 0
+        const neteaseCreated = list.playlist.slice(0, createdCount).map(item => ({ ...item, source: 'netease' }))
+        const neteaseSubscribed = list.playlist.slice(createdCount, createdCount + subscribedCount).map(item => ({ ...item, source: 'netease' }))
+        const existingCreated = Array.isArray(libraryStore.playlistUserCreated)
+          ? libraryStore.playlistUserCreated
+          : []
+        const existingSubscribed = Array.isArray(libraryStore.playlistUserSub)
+          ? libraryStore.playlistUserSub
+          : []
+        const qqCreated = filterProviderPlaylists(existingCreated, 'qq')
+        const qqSubscribed = filterProviderPlaylists(existingSubscribed, 'qq')
+        const mergedCreated = [...neteaseCreated, ...qqCreated]
+        const mergedSubscribed = [...neteaseSubscribed, ...qqSubscribed]
+        const currentLibraryList = libraryStore.libraryList
+        const wasCreatedList = currentLibraryList === existingCreated
+        const wasSubscribedList = currentLibraryList === existingSubscribed
+        libraryStore.playlistUserCreated = mergedCreated
+        libraryStore.playlistUserSub = mergedSubscribed
+        libraryStore.playlistCount = {
+          ...(libraryStore.playlistCount || {}),
+          createdPlaylistCount: mergedCreated.length,
+          subPlaylistCount: mergedSubscribed.length,
+        }
+        if (wasCreatedList) libraryStore.libraryList = mergedCreated
+        else if (wasSubscribedList) libraryStore.libraryList = mergedSubscribed
+        loadedNeteasePlaylistUserId.value = accountId
       }
     } catch (e) {
       // 静默失败，弹窗仍可显示，后续可再次尝试
@@ -94,19 +222,92 @@
     }
   }
 
+  // QQ 歌单：只在弹窗需要时拉一次，并且只落到本弹窗的 ref（见 qqDialogPlaylists 的说明）。
+  // 没有可写 dirId 的歌单直接过滤掉，避免用户点了才发现写不进去。
+  const ensureQQPlaylistsLoaded = async () => {
+    if (!qqAccountStore.loggedIn) {
+      qqDialogPlaylists.value = []
+      loadedQQPlaylistUserId.value = ''
+      return
+    }
+    const accountId = String(qqAccountStore.user?.uin || '')
+    if (!accountId || loadedQQPlaylistUserId.value === accountId) return
+    try {
+      const loaded = await loadQQPlaylistPages(
+        params => getQQPlaylists({ uin: accountId, ...params }),
+        { subscribed: false, limit: 500 },
+      )
+      if (!qqAccountStore.loggedIn) return
+      qqDialogPlaylists.value = (Array.isArray(loaded) ? loaded : [])
+        .filter(item => !!getWritablePlaylistId(item))
+      loadedQQPlaylistUserId.value = accountId
+    } catch (error) {
+      // 静默失败：弹窗仍可显示网易云歌单，后续打开会再次尝试
+      console.error('加载 QQ 歌单失败:', error)
+    }
+  }
+
   watch(
     () => otherStore.addPlaylistShow,
     async (show) => {
-      if (show) await ensureUserPlaylistsLoaded()
+      if (!show) return
+      await ensureUserPlaylistsLoaded()
+      await ensureQQPlaylistsLoaded()
     },
     { immediate: true }
   )
 
+  watch(
+    () => userStore.user?.userId,
+    () => {
+      loadedNeteasePlaylistUserId.value = ''
+    },
+  )
+
+  watch(
+    () => [qqAccountStore.loggedIn, qqAccountStore.user?.uin],
+    () => {
+      loadedQQPlaylistUserId.value = ''
+      qqDialogPlaylists.value = []
+    },
+  )
+
   const addToPlaylist = () => {
+    if (!canUseSongAction(otherStore.selectedItem, 'playlistMutation')) {
+      noticeOpen('该歌曲暂不支持歌单修改', 2)
+      return
+    }
     otherStore.addPlaylistShow = true
   }
 
   const deleteFromPlaylist = async () => {
+    if (!canUseSongAction(otherStore.selectedItem, 'playlistMutation')) {
+      noticeOpen('该歌曲暂不支持歌单修改', 2)
+      return
+    }
+    const currentPlaylist = otherStore.selectedPlaylist
+    if (!getWritablePlaylistId(currentPlaylist)) {
+      // 从搜索结果、榜单等非歌单场景右键时没有歌单上下文
+      noticeOpen('请从歌单内操作', 2)
+      otherStore.contextMenuShow = false
+      return
+    }
+    // QQ 歌单走 provider 自有写端点；网易云特有的喜欢列表联动与详情重取不适用
+    if (isQQSong(currentPlaylist)) {
+      const qqResult = await removeSongsFromPlaylist({
+        playlist: currentPlaylist,
+        songs: [otherStore.selectedItem],
+      })
+      if (!qqResult.ok) {
+        noticeOpen('删除失败', 2)
+        return
+      }
+      const qqSongIndex = (librarySongs.value || []).findIndex((song) => song.id == otherStore.selectedItem.id)
+      if (qqSongIndex !== -1) librarySongs.value.splice(qqSongIndex, 1)
+      updatePlaylistCache(currentPlaylist.id)
+      noticeOpen('删除成功', 2)
+      return
+    }
     let params = {
       op: 'del',
       pid: otherStore.selectedPlaylist.id,
@@ -230,13 +431,27 @@
     })
   }
 
+  // 分享链接按来源生成：网易云歌曲用网页版歌曲页，网易云电台节目用节目页，
+  // QQ 歌曲用官方曲目页，塞壬唱片用官网曲目页；都不匹配时提示不支持。
   const copySongLink = async () => {
     const song = otherStore.selectedItem
-    // 电台节目对应 program 页；沿用歌曲页链接会指向错误 ID
-    const link = song?.type === 'dj' && song?.programId
-      ? `https://music.163.com/#/program?id=${song.programId}`
-      : `https://music.163.com/#/song?id=${song.id}`
+    let link = ''
+    if (isQQSong(song)) {
+      const songMid = song?.sourceId || song?.songmid || song?.mid
+      if (songMid) link = `https://y.qq.com/n/ryqq/songDetail/${songMid}`
+    } else if (song?.source === 'siren') {
+      const cid = getSirenSourceId(song)
+      if (cid) link = `https://monster-siren.hypergryph.com/music/${cid}`
+    } else if (song?.type === 'dj' && song?.programId) {
+      link = `https://music.163.com/#/program?id=${song.programId}`
+    } else if (song?.id) {
+      link = `https://music.163.com/#/song?id=${song.id}`
+    }
     otherStore.contextMenuShow = false
+    if (!link) {
+      noticeOpen('该歌曲暂不支持复制链接', 2)
+      return
+    }
     const copied = await copyToClipboard(link)
     noticeOpen(copied ? '歌曲链接已复制' : '复制失败', 2)
   }
@@ -245,10 +460,57 @@
     otherStore.contextMenuShow = false
     if(id == 1) { addToNext(otherStore.selectedItem, true); return; }
     if(id == 2) { addToNext(otherStore.selectedItem, false); return; }
+    if(id == 21) {
+      const song = otherStore.selectedItem
+      const artist = song?.ar?.[0]
+      if (!artist) {
+        noticeOpen('暂无歌手信息', 2)
+        return
+      }
+      if (song?.source === 'siren') {
+        const artistId = artist.id
+        if (!artistId) {
+          noticeOpen('暂无歌手信息', 2)
+          return
+        }
+        playerStore.forbidLastRouter = true
+        router.push('/siren/artist/' + artistId)
+        otherStore.contextMenuShow = false
+        return
+      }
+      if (!openArtistRoute(router, artist, { song, playerStore, source: song?.source })) {
+        noticeOpen('暂无歌手信息', 2)
+        return
+      }
+      otherStore.contextMenuShow = false
+      return
+    }
+    if(id == 22) {
+      const song = otherStore.selectedItem
+      if (!canUseSongAction(song, 'mv')) {
+        noticeOpen('QQ 音乐暂不支持 MV', 2)
+        otherStore.contextMenuShow = false
+        return
+      }
+      const mvId = song?.mv
+      if (!mvId) {
+        noticeOpen('暂无 MV 信息', 2)
+        return
+      }
+      playerStore.forbidLastRouter = true
+      if (song?.source === 'qq') router.push({ path: '/mymusic/mv/' + mvId, query: { source: 'qq' } })
+      else router.push('/mymusic/mv/' + mvId)
+      otherStore.contextMenuShow = false
+      return
+    }
     if(id == 3) {
       const song = otherStore.selectedItem
-      if (!song) return
-      if (song.type === 'local') {
+      if (!canUseSongAction(song, 'download')) {
+        noticeOpen('该歌曲暂不支持下载', 2)
+        otherStore.contextMenuShow = false
+        return
+      }
+      if (!song || song.type === 'local') {
         noticeOpen('本地歌曲无需下载', 2)
         return
       }
@@ -261,13 +523,23 @@
     if(id == 12) { return copySongLink(); }
     if(id == 11) {
       const song = otherStore.selectedItem
-      const albumId = song?.al?.id
+      if (!canUseSongAction(song, 'album')) {
+        noticeOpen('该歌曲暂不支持专辑详情', 2)
+        otherStore.contextMenuShow = false
+        return
+      }
+      // QQ 专辑路由按 albumMid 取数（getQQAlbumInfo 只认 albummid），
+      // al.id 是数字 albumid，用它拼路由会查不到专辑。
+      const albumId = isQQSong(song)
+        ? (song?.al?.mid || song?.albumMid || song?.al?.albumMid)
+        : song?.al?.id
       if (!albumId) {
         noticeOpen('暂无专辑信息', 2)
         return
       }
       playerStore.forbidLastRouter = true
       if (song?.source === 'siren') router.push('/siren/album/' + albumId)
+      else if (song?.source === 'qq') router.push({ path: '/mymusic/album/' + albumId, query: { source: 'qq' } })
       else router.push('/mymusic/album/' + albumId)
       otherStore.contextMenuShow = false
       return
@@ -318,22 +590,42 @@
     }
     createActive.value = false
   }
-  const addToMyPlaylist = playlistTarget => {
-      const playlist = normalizePlaylistTarget(playlistTarget)
-      let params = {
-        op: 'add',
-        pid: playlist.id,
-        tracks: otherStore.selectedItem.id
+  const addToMyPlaylist = async playlistTarget => {
+      if (!canUseSongAction(otherStore.selectedItem, 'playlistMutation')) {
+        noticeOpen('该歌曲暂不支持歌单修改', 2)
+        return
       }
-      updatePlaylist(params).then(result => {
-        if(isPlaylistUpdateSuccess(result)) {
-          updateCurrentPlaylistIfViewing(playlist.id).finally(() => {
-            updatePlaylistCache(playlist.id)
-            noticeOpen(`已添加到${playlist.name}`, 2)
-          })
-        }else {
-          noticeOpen('添加至歌单错误', 2)
-        }
+      const playlist = normalizePlaylistTarget(playlistTarget)
+      if (!playlist || !getWritablePlaylistId(playlist)) {
+        noticeOpen('歌单不可用', 2)
+        return
+      }
+      // 支持批量添加：优先使用 selectedItems，如果不存在则使用 selectedItem
+      const items = otherStore.selectedItems && otherStore.selectedItems.length > 0
+        ? otherStore.selectedItems
+        : [otherStore.selectedItem]
+      if (items.some(item => !canUseSongAction(item, 'playlistMutation'))) {
+        noticeOpen('该歌曲暂不支持歌单修改', 2)
+        return
+      }
+
+      const result = await addSongsToPlaylist({ playlist, songs: items })
+      if (!result.ok) {
+        noticeOpen(result.message || '添加至歌单错误', 2)
+        return
+      }
+
+      const count = items.length
+      // QQ 歌单没有网易云那套本地详情缓存，写完直接刷新弹窗与列表即可
+      if (isQQSong(playlist)) {
+        updatePlaylistCache(playlist.id)
+        noticeOpen(`已添加 ${count} 首歌曲到${playlist.name}`, 2)
+        return
+      }
+
+      updateCurrentPlaylistIfViewing(playlist.id).finally(() => {
+        updatePlaylistCache(playlist.id)
+        noticeOpen(`已添加 ${count} 首歌曲到${playlist.name}`, 2)
       })
   }
 </script>
@@ -358,7 +650,7 @@
         <div class="playlist-container" :class="{'playlist-container-newPlaylist': justNewPlaylist}" @click.stop>
           <span class="add-title">{{justNewPlaylist ? '添加歌单' : '添加到我的歌单'}}</span>
           <div class="my-playlist">
-            <div class="create-playlist" v-show="!justNewPlaylist" :style="{background: createActive ? 'rgba(53, 53, 53, 0.7)' : 'none'}" @click="createActive = !createActive">
+            <div class="create-playlist" v-show="!justNewPlaylist && canCreateNeteasePlaylist" :style="{background: createActive ? 'rgba(53, 53, 53, 0.7)' : 'none'}" @click="createActive = !createActive">
               <div class="list-img">
                 <svg t="1671329712143" class="icon" viewBox="-1 -2 1027 1027" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2116" width="200" height="200"><path d="M939.939489 459.072557 562.339502 459.072557 562.339502 83.519182 462.055494 83.519182 462.055494 459.072557 84.455507 459.072557 84.455507 559.356564 462.055494 559.356564 462.055494 939.003164 562.339502 939.003164 562.339502 559.356564 939.939489 559.356564Z" fill="#ffffff" p-id="2117"></path></svg>
               </div>
@@ -375,9 +667,9 @@
               <div class="create-confirm" @click="createAndAdd()">完成</div>
               <div class="create-cancel" @click="createCancel()">取消</div>
             </div>
-            <div class="list" @click="addToMyPlaylist(item)" v-show="!justNewPlaylist" v-for="(item, index) in libraryStore.playlistUserCreated">
+            <div class="list" @click="addToMyPlaylist(item)" v-show="!justNewPlaylist" v-for="(item, index) in writablePlaylists" :key="`${item.source || 'netease'}-playlist-${item.id}`">
               <div class="list-img">
-                <img :src="(item.coverImgUrl || item.img1v1Url || item.picUrl || item.coverUrl) + '?param=150y150'" alt="">
+                <img :src="getPlaylistCover(item)" alt="">
               </div>
               <span class="list-name">{{(item.name ?? item.title)}}</span>
             </div>

@@ -116,6 +116,17 @@ export const useOtherStore = defineStore('otherStore', {
                 name: '显示专辑'
             }
           ],
+          // QQ 歌曲：下载走播放地址解析，歌单增删走 provider 自有写端点。
+          // 「从歌单删除」需要当前歌单上下文，不在 QQ 歌单内时由调用方给出提示。
+          treeQQ: [
+            { id: 1, name: '播放' },
+            { id: 2, name: '下一首播放' },
+            { id: 3, name: '下载' },
+            { id: 4, name: '添加到歌单' },
+            { id: 5, name: '从歌单中删除' },
+            { id: 11, name: '显示专辑' },
+            { id: 12, name: '复制歌曲链接' },
+          ],
           tree6: [
             {
                 id: 10,

@@ -1,27 +1,60 @@
 <script setup>
-  import { onActivated, ref } from 'vue'
+  import { onActivated, ref, watch } from 'vue'
   import { useRouter } from 'vue-router';
   import { getNewestSong } from '../api/song';
+  import { getQQNewSongs, normalizeQQNewSongs } from '../api/qqMusic';
+  import { useOtherStore } from '../store/otherStore';
   import { addToNext, startMusic, pauseMusic } from '../utils/player/lazy';
   import { usePlayerStore } from '../store/playerStore';
   import { storeToRefs } from 'pinia';
   import { getSongDisplayName } from '../utils/songName';
+  import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
 
   const router = useRouter()
   const playerStore = usePlayerStore()
+  const otherStore = useOtherStore()
   const { songId, playing, showSongTranslation } = storeToRefs(playerStore)
   const newestSongList = ref()
   let newestSongLoaded = false
+  let loadedQQSource = false
 
   onActivated(() => {
-      if (newestSongLoaded && Array.isArray(newestSongList.value) && newestSongList.value.length > 0) return
+      const qqSource = otherStore.searchSource === 'qq'
+      if (newestSongLoaded && loadedQQSource === qqSource && Array.isArray(newestSongList.value) && newestSongList.value.length > 0) return
       //参数:limit限制数量，默认为10
       loadData(10)
   })
+
+  // 切换平台来源后必须重新加载，否则会继续显示上一个来源的新歌
+  watch(() => otherStore.searchSource, () => {
+      newestSongLoaded = false
+      newestSongList.value = []
+      void loadData(10)
+  })
+
   async function loadData(limit) {
-    const listData = await getNewestSong(limit)
-    newestSongList.value = listData.result
+    const qqSource = otherStore.searchSource === 'qq'
+    if (qqSource) {
+      try {
+        const payload = await getQQNewSongs()
+        // QQ 歌曲归一化为组件消费的 { picUrl, name, song: { artists } } 结构
+        newestSongList.value = normalizeQQNewSongs(payload)
+          .slice(0, Math.max(1, limit))
+          .map(song => ({
+            ...song,
+            picUrl: song.al?.picUrl || song.coverUrl || '',
+            song: { artists: Array.isArray(song.ar) ? song.ar : [] },
+          }))
+      } catch (_) {
+        // QQ 请求失败只展示空列表，不把异常抛进渲染
+        newestSongList.value = []
+      }
+    } else {
+      const listData = await getNewestSong(limit)
+      newestSongList.value = listData.result
+    }
     newestSongLoaded = true
+    loadedQQSource = qqSource
   }
   const getImgUrl = (item) => {
     let img = item.picUrl || item.blurPicUrl
@@ -43,9 +76,12 @@
     }
     await play(song)
   }
-  const checkArtist = (artistId) => {
-    router.push('/mymusic/artist/' + artistId)
-    playerStore.forbidLastRouter = true
+  const checkArtist = (song, singer) => {
+    openArtistRoute(router, singer, {
+      song,
+      playerStore,
+      source: loadedQQSource ? 'qq' : song?.source,
+    })
   }
 </script>
 
@@ -61,7 +97,7 @@
                 <div class="song-other">
                     <div class="song-name">{{getSongDisplayName(item, '', showSongTranslation)}}</div>
                     <div class="song-author">
-                        <span @click="checkArtist(singer.id)" v-for="(singer, index) in item.song.artists">{{singer.name}}{{index == item.song.artists.length -1 ? '' : '/'}}</span>
+                        <span @click="checkArtist(item, singer)" v-for="(singer, index) in item.song.artists">{{singer.name}}{{index == item.song.artists.length -1 ? '' : '/'}}</span>
                     </div>
                 </div>
             </div>

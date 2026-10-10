@@ -12,6 +12,12 @@
   import { resolveFavoritePlaylistMeta } from '../utils/favoritePlaylist'
   import { storeToRefs } from 'pinia'
   import { scanMusic } from '../utils/locaMusic.js'
+  import { qqAccountStore } from '../store/qqAccountStore'
+  import { getQQPlaylists, getQQCollectedPlaylists, getQQLikedSongs } from '../api/qq'
+  import { normalizeQQLikedPlaylist } from '../api/qqMusic'
+  import { loadQQPlaylistPages as loadQQPlaylistPagesData, mergeQQPlaylistLists } from '../utils/qqLibrary.mjs'
+  import { isLogin } from '../utils/authority'
+  import { getMusicAccountId, isMusicAccountRequestCurrent } from '../utils/accountIdentity.mjs'
 
   const userStore = useUserStore()
   const { user } = storeToRefs(userStore)
@@ -35,12 +41,60 @@
 //   const currentList = ref(typeList[0])
 
   function getCurrentUserId() {
-    const userId = user.value?.userId
-    return userId == null || userId === '' ? null : String(userId)
+    const neteaseId = user.value?.userId == null || user.value?.userId === '' ? '' : String(user.value.userId)
+    const qqId = qqAccountStore.user?.uin || qqAccountStore.user?.id || ''
+    if (!neteaseId && !qqId) return null
+    return `${neteaseId}:${qqId}`
   }
 
-  function isLibraryRequestActive(requestToken, requestUserId) {
-    return requestToken === libraryRequestToken && getCurrentUserId() === requestUserId
+  async function loadQQPlaylist(requestToken, requestUserId, subscribed = false) {
+    try {
+      return await loadQQPlaylistPagesData(
+        params => subscribed
+          ? getQQCollectedPlaylists({ uin: requestUserId, ...params })
+          : getQQPlaylists({ uin: requestUserId, ...params }),
+        {
+          subscribed,
+          limit: subscribed ? 20 : 500,
+          isActive: () => isLibraryRequestActive(requestToken, requestUserId, 'qq'),
+        },
+      )
+    } catch (error) {
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      console.warn('QQ playlist load failed:', error?.message || error)
+      return []
+    }
+  }
+
+  async function loadQQLikedPlaylist(requestToken, requestUserId) {
+    try {
+      const likedResponse = await getQQLikedSongs({ uin: requestUserId, limit: 1, offset: 0 })
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      // 列表项保留元信息里的封面（歌曲封面）：详情页合并时以它为准，两处显示同一张
+      return normalizeQQLikedPlaylist(likedResponse)
+    } catch (error) {
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'qq')) return false
+      console.warn('QQ liked playlist load failed:', error?.message || error)
+      return null
+    }
+  }
+
+  function isLibraryRequestActive(requestToken, requestUserId, provider = '') {
+    if (requestToken !== libraryRequestToken) return false
+
+    if (!provider) {
+      return isMusicAccountRequestCurrent(requestUserId, getCurrentUserId())
+    }
+
+    const requestedId = getMusicAccountId(requestUserId, provider)
+    if (!requestedId) return false
+
+    const neteaseId = user.value?.userId == null || user.value?.userId === '' ? '' : String(user.value.userId)
+    const qqId = qqAccountStore.user?.uin || qqAccountStore.user?.id || ''
+    if (provider === 'qq') return qqAccountStore.loggedIn === true && String(qqId) === requestedId
+    if (provider === 'netease') return isLogin() && neteaseId === requestedId
+
+    return isMusicAccountRequestCurrent(requestUserId, getCurrentUserId())
   }
 
   function clearAccountLibraryLists() {
@@ -159,9 +213,32 @@
     }
 
     if (option.value == 0) {
-      const loaded = await loadUserPlaylist(requestToken, requestUserId, options)
-      if (!loaded || !isLibraryRequestActive(requestToken, requestUserId)) return false
+      // 网易云与 QQ 的账号是并行存在的：只有对应账号登录时才拉它自己的歌单，
+      // 否则保持为空，避免把复合 id 送进网易云接口。
+      if (isLogin()) await loadUserPlaylist(requestToken, requestUserId, options)
+      else { libraryStore.playlistUserCreated = [] ; libraryStore.playlistUserSub = [] }
+      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      // QQ 歌单（我创建 / 我收藏 / 我喜欢）与网易云歌单并行加载后合并
+      const qqUserId = String(qqAccountStore.user?.uin || qqAccountStore.user?.id || '')
+      const [qqCreated, qqSubscribed, qqLiked] = await Promise.all([
+        qqAccountStore.loggedIn ? loadQQPlaylist(requestToken, qqUserId, false) : Promise.resolve([]),
+        qqAccountStore.loggedIn ? loadQQPlaylist(requestToken, qqUserId, true) : Promise.resolve([]),
+        qqAccountStore.loggedIn ? loadQQLikedPlaylist(requestToken, qqUserId) : Promise.resolve(null),
+      ])
+      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      const qqLists = mergeQQPlaylistLists(qqCreated, qqSubscribed, qqLiked)
+      const created = [...(libraryStore.playlistUserCreated || []), ...qqLists.created]
+      const subscribed = [...(libraryStore.playlistUserSub || []), ...qqLists.subscribed]
+      libraryStore.playlistUserCreated = created
+      libraryStore.playlistUserSub = subscribed
+      libraryStore.playlistCount = { createdPlaylistCount: created.length, subPlaylistCount: subscribed.length }
+      syncFavoritePlaylistTrackCount()
+      libraryList.value = typeOne.value == 0 ? created : subscribed
       listType2.value = typeOne.value == 0 ? 0 : 1
+      libraryListAlbum.value = null
+      libraryListAritist.value = null
+      lastLoadedUserId.value = requestUserId
+      lastHandledPlaylistOverviewVersion.value = playlistOverviewVersion.value
       changeLibraryList(typeOne.value == 0 ? 0 : 1)
     } else if (option.value == 1 && typeTwo.value == 0) {
       const loaded = await loadAllUserSubAlbums(requestToken, requestUserId)
@@ -314,6 +391,17 @@
       if (nextUserId === previousUserId) return
       lastLoadedUserId.value = null
       if (option.value == 0 || option.value == 1) {
+        void refreshCurrentSection()
+      }
+    }
+  )
+
+  // QQ 账号登录/切换同样会改变复合账号键，需要重新加载歌单列表
+  watch(
+    () => [qqAccountStore.loggedIn, qqAccountStore.user?.uin || qqAccountStore.user?.id || ''],
+    () => {
+      lastLoadedUserId.value = null
+      if (option.value == 0) {
         void refreshCurrentSection()
       }
     }

@@ -11,6 +11,9 @@
   import { useUserStore } from '../store/userStore'
   import { usePlayerStore } from '../store/playerStore'
   import { useOtherStore } from '../store/otherStore'
+  import { isQQSong, canUseSongAction, getQQSongMid } from '../utils/providerPolicy.mjs'
+  import { qqAccountStore } from '../store/qqAccountStore'
+  import { noticeOpen } from '../utils/dialog'
   import { storeToRefs } from 'pinia'
   import { getSongDisplayName } from '../utils/songName'
   import { getIndexedSong } from '../utils/songList'
@@ -153,13 +156,14 @@
   const currentSongArtists = computed(() => Array.isArray(currentSong.value?.ar) ? currentSong.value.ar : [])
   const isCurrentLocalSong = computed(() => currentSong.value?.type === 'local')
   const isCurrentSirenSong = computed(() => currentSong.value?.source === 'siren')
+  const isCurrentQQSong = computed(() => isQQSong(currentSong.value))
   const hasUserSession = computed(() => !!userStore.user?.userId)
   const canShowSongLike = computed(() => (
-    hasUserSession.value
-    && !!currentSong.value
+    !!currentSong.value
     && !isCurrentLocalSong.value
     && !isDjMode.value
     && !isCurrentSirenSong.value
+    && (isCurrentQQSong.value ? qqAccountStore.loggedIn : hasUserSession.value)
   ))
   const currentSongCoverUrl = computed(() => {
     return withCoverParam(getSongCoverUrl(currentSong.value), 128)
@@ -177,6 +181,11 @@
   }, { immediate: true })
 
   const checkIsLike = computed(() => (id) => {
+    // QQ 用 songmid 查独立的 qqLikelist，网易云沿用 likelist，两者 id 形态不同
+    if (isQQSong(currentSong.value)) {
+      const mid = getQQSongMid(currentSong.value)
+      return !!mid && Array.isArray(userStore.qqLikelist) && userStore.qqLikelist.includes(mid)
+    }
     return Array.isArray(userStore.likelist) && userStore.likelist.includes(id)
   })
 
@@ -206,20 +215,26 @@
       return
     }
     if(cur.type != 'local') {
-        const targetPath = cur.source === 'siren'
-          ? '/siren/album/' + cur.al.id
-          : '/mymusic/album/' + cur.al.id
-        router.push(targetPath)
+        const albumId = cur.al?.mid || cur.al?.id || cur.albumMid || cur.albumId
+        if (!albumId) return
+        const target = cur.source === 'siren'
+          ? { path: '/siren/album/' + albumId }
+          : { path: '/mymusic/album/' + albumId, query: isQQSong(cur) ? { source: 'qq' } : {} }
+        router.push(target)
         playlistWidgetShow.value = false
         playerStore.forbidLastRouter = true
     }
   }
 
   const addToPlaylist = () => {
-    if (currentSong.value && currentSong.value.type !== 'local' && currentSong.value.source !== 'siren') {
-        otherStore.selectedItem = currentSong.value;
-        otherStore.addPlaylistShow = true;
+    const song = currentSong.value
+    if (!song || song.type === 'local' || song.source === 'siren') return
+    if (!canUseSongAction(song, 'playlistMutation')) {
+        noticeOpen('该歌曲暂不支持歌单修改', 2)
+        return
     }
+    otherStore.selectedItem = song;
+    otherStore.addPlaylistShow = true;
   }
 
   // 订阅/取消订阅 电台

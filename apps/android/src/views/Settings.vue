@@ -8,6 +8,7 @@ import { getVipInfo } from '@/api/user'
 import { isLogin } from '@/utils/authority'
 import { useUserStore } from '@/store/userStore'
 import { usePlayerStore } from '@/store/playerStore'
+import { useLibraryStore } from '@/store/libraryStore'
 import { qqAccountStore } from '@/store/qqAccountStore'
 import Selector from '../components/Selector.vue'
 import FontSelector from '../components/FontSelector.vue'
@@ -15,7 +16,7 @@ import PlatformSourceSwitch from '../components/PlatformSourceSwitch.vue'
 import UpdateDialog from '../components/UpdateDialog.vue'
 import { setTheme, getSavedTheme } from '@/utils/theme'
 import { confirmAccountLogout, initializeCurrentAccountSession } from '@/utils/accountSession'
-import { applyCurrentHifiOutputSettings, enforceLocalOnlyPlayback, restoreOnlinePlayback } from '@/utils/player/lazy'
+import { applyCurrentHifiOutputSettings, enforceLocalOnlyPlayback, restoreOnlinePlayback, clearQQPlaybackState } from '@/utils/player/lazy'
 import { getSettingsSnapshot, setCachedSettingsSnapshot } from '@/utils/settingsSnapshot'
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
@@ -27,6 +28,7 @@ const { MUSIC_LEVEL_OPTIONS, normalizeSettings } = settingsSchema
 const router = useRouter()
 const userStore = useUserStore()
 const playerStore = usePlayerStore()
+const libraryStore = useLibraryStore()
 
 const vipInfo = ref(null)
 const musicLevel = ref('lossless')
@@ -680,6 +682,17 @@ const logoutQQAccount = async () => {
         await qqAccountStore.logout()
         noticeOpen('QQ 音乐账号已退出', 2)
     } finally {
+        libraryStore.clearQQScopedState()
+        try {
+            await clearQQPlaybackState()
+        } catch (error) {
+            console.warn('QQ playback state cleanup failed:', error)
+        }
+        const route = router.currentRoute.value
+        const routeSource = String(route?.query?.source || libraryStore.libraryInfo?.source || '').toLowerCase()
+        if (route?.name === 'playlist' && routeSource === 'qq') {
+            await router.replace({ name: 'mymusic' })
+        }
         qqLoading.value = false
     }
 }

@@ -1,12 +1,19 @@
 <script setup>
   import { formatTime } from '../utils/time'
   import { useOtherStore } from '../store/otherStore'
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
+  import { noticeOpen } from '../utils/dialog'
   const otherStore = useOtherStore()
 
   const props = defineProps(['mvlist'])
   //MV日期
   const publishTime = time => formatTime(time, "YYYY-MM-DD")
   const playMV = (item) => {
+    // QQ 音乐没有可用的 MV 播放上游接口，直接提示而不是打开空预览
+    if (normalizeMusicSource(item?.source) === 'qq') {
+      noticeOpen('QQ 音乐暂不支持播放 MV', 2)
+      return
+    }
     otherStore.getMvData(item.id)
   }
 </script>

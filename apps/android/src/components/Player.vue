@@ -19,6 +19,10 @@ import { getSongDisplayName } from '../utils/songName';
 import { getIndexedSong } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
 import { useIsMobile } from '../composables/useIsMobile';
+import { isQQSong, getQQCommentId, getQQSongMid, canUseSongAction } from '../utils/providerPolicy.mjs'
+import { qqAccountStore } from '../store/qqAccountStore'
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs'
+import { noticeOpen } from '../utils/dialog'
 import AudioVisualizer from './AudioVisualizer.vue';
 import defaultLocalCover from '@shared-assets/icon/icon.png';
 
@@ -223,8 +227,10 @@ const currentSongArtists = computed(() => Array.isArray(currentSong.value?.ar) ?
 const isCurrentSirenSong = computed(() => currentSong.value?.source === 'siren');
 const currentSongDisplayName = computed(() => getSongDisplayName(currentSong.value, '加载中...', showSongTranslation.value));
 const showRemoteCurrentSong = computed(() => !!currentSong.value && currentSong.value.type !== 'local');
+const isCurrentQQSong = computed(() => isQQSong(currentSong.value));
 const showOnlineCurrentSongActions = computed(() => !isDjMode.value && showRemoteCurrentSong.value && !isCurrentSirenSong.value);
-const showCommentPanelAction = computed(() => showRemoteCurrentSong.value && !isCurrentSirenSong.value);
+// 评论：QQ 侧旧版接口只认数字 topid，取不到资源 id 时隐藏入口（属上游数据形态问题，不提示）
+const showCommentPanelAction = computed(() => showRemoteCurrentSong.value && !isCurrentSirenSong.value && (!isCurrentQQSong.value || !!getQQCommentId(currentSong.value)));
 
 const currentSongCoverUrl = computed(() => {
     return withCoverParam(getSongCoverUrl(currentSong.value), 1024);
@@ -254,9 +260,19 @@ watch(playlistWidgetShow, shown => {
     if (shown) playlistWidgetLoaded.value = true;
 });
 
+// 喜欢状态按来源取数：QQ 用 songmid 查独立的 qqLikelist，
+// 网易云沿用 likelist。两者 id 形态不同，混用会互相串号。
 const checkIsLike = computed(() => id => {
+    if (isQQSong(currentSong.value)) {
+        const mid = getQQSongMid(currentSong.value);
+        return !!mid && Array.isArray(userStore.qqLikelist) && userStore.qqLikelist.includes(mid);
+    }
     return Array.isArray(userStore.likelist) && userStore.likelist.includes(id);
 });
+// QQ 的 ♡ 依赖 QQ 登录态，网易云的依赖 likelist 是否已加载
+const canLikeCurrentSong = computed(() => isQQSong(currentSong.value)
+    ? qqAccountStore.loggedIn
+    : Array.isArray(userStore.likelist));
 
 // 智能判断当前歌曲有哪些类型的歌词
 const hasOriginalLyric = computed(() => {
@@ -291,10 +307,12 @@ const toAlbum = () => {
     }
     // 普通歌曲：仍然跳转专辑
     if (song.type != 'local') {
-        const targetPath = song.source === 'siren'
-            ? '/siren/album/' + song.al.id
-            : '/mymusic/album/' + song.al.id
-        router.push(targetPath);
+        const albumId = song.al?.mid || song.al?.id || song.albumMid || song.albumId
+        if (!albumId) return
+        const target = song.source === 'siren'
+            ? { path: '/siren/album/' + albumId }
+            : { path: '/mymusic/album/' + albumId, query: isQQSong(song) ? { source: 'qq' } : {} }
+        router.push(target);
         widgetState.value = true;
         lyricShow.value = false;
         playlistWidgetShow.value = false;
@@ -312,12 +330,12 @@ const download = () => {
     }
 };
 
-const checkArtist = artistId => {
+const checkArtist = singer => {
     const song = currentSong.value;
     // 电台模式下禁止点击作者
-    if (isDjMode.value || isCurrentSirenSong.value || !artistId) return;
+    if (isDjMode.value || isCurrentSirenSong.value || !singer) return;
     if (song && song.type != 'local') {
-        router.push('/mymusic/artist/' + artistId);
+        if (!openArtistRoute(router, singer, { song, playerStore, source: song.source })) return;
         widgetState.value = true;
         lyricShow.value = false;
         playlistWidgetShow.value = false;
@@ -341,10 +359,13 @@ const backToVideo = () => {
 
 const addToPlaylist = () => {
     const song = currentSong.value;
-    if (song && song.type !== 'local' && song.source !== 'siren') {
-        otherStore.selectedItem = song;
-        otherStore.addPlaylistShow = true;
+    if (!song || song.type === 'local' || song.source === 'siren') return;
+    if (!canUseSongAction(song, 'playlistMutation')) {
+        noticeOpen('该歌曲暂不支持歌单修改', 2);
+        return;
     }
+    otherStore.selectedItem = song;
+    otherStore.addPlaylistShow = true;
 };
 
 // 订阅/取消订阅 电台
@@ -397,7 +418,7 @@ const toggleDjSub = async isSubscribe => {
                     <div class="music-author-lable" :class="{ 'music-author-lable-video': videoIsPlaying || coverBlur }"></div>
                     <div class="music-author">
                             <span
-                                @click="checkArtist(singer.id)"
+                                @click="checkArtist(singer)"
                                 :class="['author', { disabled: isDjMode || isCurrentSirenSong }]"
                                 :style="{ color: videoIsPlaying || coverBlur ? 'var(--text)' : 'var(--muted-text)' }"
                                 v-for="(singer, index) in currentSongArtists"
@@ -695,7 +716,7 @@ const toggleDjSub = async isSubscribe => {
                 <template v-if="showOnlineCurrentSongActions">
                     <svg
                         t="1668786418014"
-                        v-if="Array.isArray(userStore.likelist)"
+                        v-if="canLikeCurrentSong"
                         @click="likeSong(true)"
                         v-show="!checkIsLike(songId)"
                         class="icon like-icon"
@@ -713,7 +734,7 @@ const toggleDjSub = async isSubscribe => {
                     </svg>
                     <svg
                         t="1668786896650"
-                        v-if="Array.isArray(userStore.likelist)"
+                        v-if="canLikeCurrentSong"
                         @click="likeSong(false)"
                         v-show="checkIsLike(songId)"
                         class="icon like-icon liked"

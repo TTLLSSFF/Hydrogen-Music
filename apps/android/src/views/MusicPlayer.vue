@@ -12,6 +12,8 @@ import { readCommentCountCache, writeCommentCountCache } from '../utils/commentC
 import { buildCoverBackdropCandidates } from '../utils/coverBackdrop';
 import { getIndexedSongOrFirst } from '../utils/songList';
 import { useStableImageSource } from '../composables/useStableImageSource';
+import { canUseSongAction, getQQCommentId, isQQSong } from '../utils/providerPolicy.mjs'
+import { getQQComments, normalizeQQCommentList } from '../api/qqMusic';
 const playerStore = usePlayerStore();
 const Comments = defineAsyncComponent(() => import('../components/Comments.vue'));
 const MusicVideo = defineAsyncComponent(() => import('../components/MusicVideo.vue'));
@@ -102,9 +104,21 @@ const isCurrentSirenSong = computed(() => currentTrack.value?.source === 'siren'
 const commentCount = ref(0);
 const commentCountRequestSerial = ref(0);
 
+// QQ 评论资源 id 与评论面板共用同一份实现：旧版评论接口只接受数字 topid，
+// 早期这里优先取 songmid，导致请求必然被上游 400 拒绝、评论数恒为 0。
 const commentTarget = computed(() => {
     const track = currentTrack.value;
-    if (!track || track.type === 'local' || track.source === 'siren') return null;
+    if (!track || track.type === 'local' || track.source === 'siren' || !canUseSongAction(track, 'commentRead')) return null;
+
+    if (isQQSong(track)) {
+        const qqId = getQQCommentId(track);
+        if (!qqId) return null;
+        return {
+            key: `qq:${qqId}`,
+            type: 'qq',
+            id: qqId,
+        };
+    }
 
     if (isDj.value) {
         const programId = track && (track.programId || track.programID || track.programid);
@@ -126,6 +140,7 @@ const commentTarget = computed(() => {
 });
 
 const formatCommentCount = total => {
+    if (total === null) return '—';
     const count = Number(total);
     if (!Number.isFinite(count) || count <= 0) return '0';
     if (count < 10000) return `${Math.floor(count)}`;
@@ -149,6 +164,20 @@ const fetchCommentCount = async target => {
     }
 
     try {
+        if (target.type === 'qq') {
+            const payload = await getQQComments({ id: target.id, type: 1, page: 0, pagesize: 1 });
+            if (serial !== commentCountRequestSerial.value) return;
+            const qqTotal = Number(normalizeQQCommentList(payload)?.total);
+            if (Number.isFinite(qqTotal) && qqTotal > 0) {
+                commentCount.value = Math.floor(qqTotal);
+                writeCommentCountCache(target.key, commentCount.value);
+            } else if (!hasCachedCount) {
+                commentCount.value = 0;
+                writeCommentCountCache(target.key, 0);
+            }
+            return;
+        }
+
         let response = null;
         if (target.type === 'dj') {
             response = await getDjProgramComments(target.id, { limit: 1, offset: 0 });
@@ -171,7 +200,7 @@ const fetchCommentCount = async target => {
     } catch (_) {
         if (serial !== commentCountRequestSerial.value) return;
         if (!hasCachedCount) {
-            commentCount.value = 0;
+            commentCount.value = null;
         }
     }
 };
@@ -180,6 +209,8 @@ const handleCommentTotalChange = payload => {
     const currentTarget = commentTarget.value;
     if (!currentTarget || !payload || payload.targetKey !== currentTarget.key) return;
 
+    // 面板已取得总数，废弃更早发出的入口请求，避免迟到的失败或旧值覆盖它。
+    commentCountRequestSerial.value++;
     const total = Number(payload.total);
     commentCount.value = Number.isFinite(total) && total > 0 ? Math.floor(total) : 0;
     writeCommentCountCache(currentTarget.key, commentCount.value);
@@ -196,6 +227,9 @@ watch(
 const commentPanelKey = computed(() => {
     const track = currentTrack.value;
     const idx = typeof playerStore.currentIndex === 'number' ? playerStore.currentIndex : 0;
+    if (isQQSong(track)) {
+        return `comments-qq-${getQQCommentId(track) || 'none'}-${idx}`;
+    }
     if (isDj.value) {
         const pid = track && (track.programId || track.programID || track.programid);
         return `comments-dj-${pid || 'none'}-${idx}`;
@@ -206,7 +240,7 @@ const commentPanelKey = computed(() => {
 
 watch(currentTrack, (song) => {
     try {
-        if (song && (song.type === 'local' || song.source === 'siren') && rightPanelMode.value === 1) {
+        if (song && (song.type === 'local' || song.source === 'siren' || !canUseSongAction(song, 'commentRead')) && rightPanelMode.value === 1) {
             rightPanelMode.value = 0;
         }
     } catch (_) {}
@@ -278,7 +312,7 @@ watch(currentTrack, (song) => {
             <Transition name="panel-switch" mode="out-in">
                 <ProgramIntro v-if="rightPanelMode === 0 && isDj" key="program-intro" />
                 <Lyric class="lyric-container" v-else-if="rightPanelMode === 0" :key="`lyric-${lyricKey}`"></Lyric>
-                <Comments class="comments-container" v-else-if="rightPanelMode === 1" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
+                <Comments class="comments-container" v-else-if="rightPanelMode === 1 && currentTrack && canUseSongAction(currentTrack, 'commentRead')" :key="commentPanelKey" @total-change="handleCommentTotalChange"></Comments>
             </Transition>
         </div>
 

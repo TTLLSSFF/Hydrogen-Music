@@ -11,7 +11,11 @@ import { playAll, addToNext } from '../utils/player/lazy';
 import { scheduleAlbumSublistCacheInvalidation, scheduleArtistSublistCacheInvalidation } from '../utils/cacheInvalidation';
 import { matchSearchText, normalizeSongFilterKeyword } from '../utils/songFilter';
 import { createSongSortOptions, sortSongEntries } from '../utils/songSort';
-import { getSongIdentity } from '../utils/musicSource.mjs';
+import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs';
+import { hasQQAccount } from '../utils/accountProviders.mjs';
+import { canAccessQQMyMusic, canUseSongAction, findProviderPlaylist, isQQSong } from '../utils/providerPolicy.mjs';
+import { getWritablePlaylistId } from '../utils/playlistMutation.mjs';
+import { openArtistRoute } from '../utils/qqArtistRoute.mjs';
 import LibrarySongList from './LibrarySongList.vue';
 import LibraryAlbumList from './LibraryAlbumList.vue';
 import LibraryMVList from '../components/LibraryMVList.vue';
@@ -26,12 +30,17 @@ const playerStore = usePlayerStore();
 const otherStore = useOtherStore();
 const libraryStore = useLibraryStore();
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
-const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration } = storeToRefs(libraryStore);
+const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration, qqSingerSongsHasMore, qqSingerSongsLoading, qqSingerAlbumsHasMore, qqSingerAlbumsLoading } = storeToRefs(libraryStore);
 
 const router = useRouter();
 const isAlbum = ref(false);
 const isSinger = ref(false);
 const isSongList = ref(false);
+const isCurrentNeteasePlaylistCreated = computed(() => !!findProviderPlaylist(
+    playlistUserCreated.value,
+    libraryInfo.value?.id,
+    'netease',
+));
 const introduceDetailShow = ref(false);
 const introduceDetailShowDelay = ref(false);
 const songSearchKeyword = ref('');
@@ -207,6 +216,8 @@ const isAlbumRoute = computed(() => currentLibraryRouteName.value == 'album');
 const isArtistTopSongRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 0);
 const isArtistAlbumRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 1);
 const isArtistMVRoute = computed(() => currentLibraryRouteName.value == 'artist' && artistPageType.value == 2);
+const isQQPlaylist = computed(() => isPlaylistRoute.value && isQQSong(libraryInfo.value));
+const isQQSource = computed(() => isQQSong(libraryInfo.value));
 const showSongSearch = computed(() => isPlaylistRoute.value || isAlbumRoute.value || isArtistTopSongRoute.value || isArtistAlbumRoute.value || isArtistMVRoute.value);
 const normalizedSongSearchKeyword = computed(() => normalizeSongFilterKeyword(songSearchKeyword.value));
 const hasSongSearchKeyword = computed(() => normalizedSongSearchKeyword.value !== '');
@@ -229,6 +240,18 @@ const sortedLibraryEntries = computed(() => {
 const hasChangedSongSort = computed(() => songSortMode.value != 'default'
     && sortedLibraryEntries.value.some((entry, index) => entry.sourceIndex != index));
 const sortedLibrarySongs = computed(() => sortedLibraryEntries.value.map(entry => entry.song));
+// QQ 歌手页歌曲分页：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
+const isQQSingerSongsPaging = computed(() => isArtistTopSongRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
+const loadMoreQQSingerSongs = () => {
+    if (!isQQSingerSongsPaging.value || !qqSingerSongsHasMore.value || qqSingerSongsLoading.value) return;
+    void libraryStore.loadMoreQQSingerSongs();
+};
+// QQ 歌手页专辑分页：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
+const isQQSingerAlbumsPaging = computed(() => isArtistAlbumRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
+const loadMoreQQSingerAlbums = () => {
+    if (!isQQSingerAlbumsPaging.value || !qqSingerAlbumsHasMore.value || qqSingerAlbumsLoading.value) return;
+    void libraryStore.loadMoreQQSingerAlbums();
+};
 const songFilterEntries = computed(() => {
     return sortedLibraryEntries.value
         .filter(entry => !showSongSearch.value || !hasSongSearchKeyword.value || matchSearchText(libraryStore.getSongSearchText(entry.song, `song-${entry.sourceIndex}`), normalizedSongSearchKeyword.value));
@@ -349,13 +372,33 @@ onBeforeRouteUpdate(async (to, from, next) => {
     setPendingScrollPolicyForRoute(to);
 
     const normalizedToName = normalizeRouteName(to.name);
-    const detailLoadOptions = normalizedToName == 'playlist' ? { deferRemaining: true } : {};
-    await updateLibraryDetail(to.params.id, normalizedToName, detailLoadOptions);
+    const requestedSource = String(to.query.source || 'netease').toLowerCase();
+    const requestedType = String(to.query.type || '').toLowerCase();
+    if (normalizedToName == 'playlist' && !canAccessQQMyMusic(requestedSource, hasQQAccount(), requestedType)) {
+        noticeOpen('请先登录 QQ 音乐', 2);
+        next({ name: 'mymusic' });
+        return;
+    }
+    const detailLoadOptions = normalizedToName == 'playlist'
+        ? { deferRemaining: true, source: requestedSource, type: requestedType }
+        : normalizedToName == 'album'
+            ? { source: to.query.source || 'netease' }
+            : normalizedToName == 'artist'
+                ? { source: to.query.source || 'netease', name: to.query.name, singerid: to.query.singerid }
+                : {};
     libraryTypeCheck(to.name);
     artistPageType.value = 0;
     libraryAlbum.value = null;
     libraryMV.value = null;
+    // 先放行路由，详情数据随后填充，避免点击后卡顿
     next();
+    try {
+        await updateLibraryDetail(to.params.id, normalizedToName, detailLoadOptions);
+    } catch (error) {
+        libraryStore.libraryChangeAnimation = false;
+        noticeOpen('加载失败', 2);
+        return;
+    }
     await applyPendingScrollPolicy();
 });
 
@@ -403,17 +446,21 @@ const createTime = computed(() => {
 
 //如果是歌手页面，可以更换下面的类型
 const changeType = type => {
+    const isQQSinger = normalizeMusicSource(libraryInfo.value?.source) === 'qq'
     if (type == 0) {
         isSongList.value = true;
-        updateArtistTopSong(libraryInfo.value.id);
+        if (isQQSinger) libraryStore.updateQQSingerTopSongs()
+        else updateArtistTopSong(libraryInfo.value.id);
     }
     if (type == 1) {
         isSongList.value = false;
-        updateArtistAlbum(libraryInfo.value.id);
+        if (isQQSinger) libraryStore.updateQQSingerAlbums()
+        else updateArtistAlbum(libraryInfo.value.id);
     }
     if (type == 2) {
         isSongList.value = false;
-        updateArtistsMV(libraryInfo.value.id);
+        if (isQQSinger) libraryStore.updateQQSingerMvs()
+        else updateArtistsMV(libraryInfo.value.id);
     }
     artistPageType.value = type;
 };
@@ -451,6 +498,10 @@ const subHandle = id => {
 };
 
 const librarySub = id => {
+    if (isQQSong(libraryInfo.value)) {
+        noticeOpen('QQ 音乐暂不支持歌单收藏', 2);
+        return;
+    }
     let params = {
         id: id,
         t: libraryInfo.value.followed ? 0 : 1,
@@ -497,9 +548,13 @@ const librarySub = id => {
 };
 
 //查看并跳转歌手页面
-const checkArtist = artistId => {
-    router.push('/mymusic/artist/' + artistId);
-    playerStore.forbidLastRouter = true;
+const checkArtist = artist => {
+    openArtistRoute(router, artist, {
+        playerStore,
+        source: libraryInfo.value?.source,
+        name: artist?.name,
+        singerid: artist?.singerid || artist?.singerID,
+    });
 };
 const waitCurrentPlaylistHydration = async () => {
     if (normalizeRouteName(router.currentRoute.value.name) != 'playlist') return;
@@ -543,6 +598,105 @@ const downloadSelected = async () => {
     otherStore.downloadTitle = `下载 ${selectedDownloadSongs.value.length} 首歌曲`;
     otherStore.downloadQualityShow = true;
     exitSelectionMode();
+};
+
+// 添加到歌单
+const addSelectedToPlaylist = async () => {
+    if ((selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
+        noticeOpen('所选歌曲暂不支持歌单修改', 2);
+        return;
+    }
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+
+    try {
+        // 显示歌单选择弹窗，但保存选中的歌曲列表（弹窗内部按来源分流写入）
+        otherStore.selectedItems = [...selectedDownloadSongs.value];
+        otherStore.addPlaylistShow = true;
+
+        // 监听弹窗关闭后退出选择模式
+        const unwatch = watch(
+            () => otherStore.addPlaylistShow,
+            (newVal) => {
+                if (!newVal) {
+                    exitSelectionMode();
+                    unwatch();
+                }
+            }
+        );
+    } catch (error) {
+        console.error('添加到歌单失败:', error);
+        noticeOpen('添加失败', 2);
+    }
+};
+
+// 从歌单中删除
+const deleteSelectedFromPlaylist = async () => {
+    if ((selectedDownloadSongs.value || []).some(song => !canUseSongAction(song, 'playlistMutation'))) {
+        noticeOpen('所选歌曲暂不支持歌单修改', 2);
+        return;
+    }
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    if (!getWritablePlaylistId(libraryInfo.value)) {
+        noticeOpen('当前不在歌单页面', 2);
+        return;
+    }
+
+    // QQ 歌单走 provider 自有写端点；网易云特有的缓存与详情刷新对它不适用
+    if (isQQSong(libraryInfo.value)) {
+        const { removeSongsFromPlaylist } = await import('../utils/playlistMutation.mjs');
+        const qqResult = await removeSongsFromPlaylist({
+            playlist: libraryInfo.value,
+            songs: selectedDownloadSongs.value,
+        });
+        if (!qqResult.ok) {
+            noticeOpen('删除失败', 2);
+            return;
+        }
+        const removedIds = new Set(selectedDownloadSongs.value.map(song => String(song.id)));
+        const remaining = (librarySongs.value || []).filter(song => !removedIds.has(String(song.id)));
+        librarySongs.value = remaining;
+        exitSelectionMode();
+        noticeOpen(`已删除 ${qqResult.total} 首歌曲`, 2);
+        return;
+    }
+
+    try {
+        const { updatePlaylist } = await import('../api/playlist');
+        const trackIds = selectedDownloadSongs.value.map(song => song.id).join(',');
+        const params = {
+            op: 'del',
+            pid: libraryInfo.value.id,
+            tracks: trackIds
+        };
+
+        const result = await updatePlaylist(params);
+        const isSuccess = !!(result && ((result.status === 200 && result.body && result.body.code === 200) || result.code === 200 || result.status === 200));
+
+        if (isSuccess) {
+            // 从当前歌曲列表中移除这些歌曲
+            selectedDownloadSongs.value.forEach(selectedSong => {
+                const selectedIdentity = getSongIdentity(selectedSong);
+                const songIndex = (librarySongs.value || []).findIndex(song => getSongIdentity(song) === selectedIdentity);
+                if (songIndex !== -1) {
+                    librarySongs.value.splice(songIndex, 1);
+                }
+            });
+
+            noticeOpen(`已删除 ${selectedDownloadSongs.value.length} 首歌曲`, 2);
+            exitSelectionMode();
+        } else {
+            noticeOpen('删除失败', 2);
+        }
+    } catch (error) {
+        console.error('删除歌曲失败:', error);
+        noticeOpen('删除失败', 2);
+    }
 };
 
 // 添加到播放列表（下一首播放，与右键菜单同一语义）
@@ -667,7 +821,7 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                     <div class="info-other">
                         <div class="introduce-author">
                             <span class="author" v-if="libraryInfo.creator">{{ libraryInfo.creator.nickname }}</span>
-                            <span class="author" @click="checkArtist(artist.id)" v-for="(artist, index) in libraryInfo.artists">
+                            <span class="author" @click="checkArtist(artist)" v-for="(artist, index) in libraryInfo.artists">
                                 {{ artist.name }}{{ index == libraryInfo.artists.length - 1 ? '' : '/' }}
                             </span>
                             <span class="author" v-if="libraryInfo.trans">{{ libraryInfo.trans }}&nbsp;&nbsp;</span>
@@ -676,8 +830,8 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         <span class="introduce-num" v-if="!isSinger">共{{ libraryInfo.trackCount || libraryInfo.size }}首 - {{ totalTime }}分钟</span>
                         <span class="introduce-num" v-if="isSinger">{{ libraryInfo.musicSize }}首歌 · {{ libraryInfo.albumSize }}张专辑 · {{ libraryInfo.mvSize }}个MV</span>
                         <div class="library-operation">
-                            <template v-if="isLogin()">
-                                <div class="operation-collection operation-item" v-show="(playlistUserCreated || []).findIndex(song => song.id == libraryInfo.id) == -1" @click="librarySub(libraryInfo.id)">
+                            <template v-if="isQQPlaylist ? hasQQAccount() : isLogin()">
+                                <div class="operation-collection operation-item" v-if="isLogin() && !isQQPlaylist && !isQQSource" v-show="!isCurrentNeteasePlaylistCreated" @click="librarySub(libraryInfo.id)">
                                     <svg
                                         v-show="!libraryInfo.followed"
                                         t="1669112450805"
@@ -728,7 +882,9 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                     </div>
                                     <div class="selection-menu" :class="{ 'selection-menu-expanded': selectionMenuExpanded && downloadSelectionMode }">
                                         <div class="selection-menu-item" @click="downloadSelected">下载</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist || !!getWritablePlaylistId(libraryInfo)" @click="addSelectedToPlaylist">添加到歌单</div>
                                         <div class="selection-menu-item" @click="addSelectedToPlayerList">添加到播放列表</div>
+                                        <div class="selection-menu-item" v-if="!isQQPlaylist || !!getWritablePlaylistId(libraryInfo)" @click="deleteSelectedFromPlaylist">从歌单中删除</div>
                                         <div class="operation-download-select">
                                             <button @click="selectAllDownloadSongs()">全选</button>
                                             <button @click="cancelDownloadSelection()">取消</button>
@@ -810,15 +966,18 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :source-indexes="visibleLibrarySourceIndexes"
                         :download-selection-mode="downloadSelectionMode"
                         :selected-download-ids="selectedDownloadIds"
+                        :has-more="isQQSingerSongsPaging && qqSingerSongsHasMore"
+                        :loading-more="qqSingerSongsLoading"
                         class="library-content"
                         @toggle-download-selection="toggleDownloadSelection"
+                        @load-more="loadMoreQQSingerSongs"
                     ></LibrarySongList>
                 </template>
                 <template v-else-if="artistPageType == 1">
                     <div class="library-search-empty" v-if="showSongSearchEmpty">
                         <span class="empty-title">{{ songSearchEmptyTitle }}</span>
                     </div>
-                    <LibraryAlbumList v-else id="libraryScroll" :albumlist="visibleArtistAlbums" class="library-content3"></LibraryAlbumList>
+                    <LibraryAlbumList v-else id="libraryScroll" :albumlist="visibleArtistAlbums" :has-more="isQQSingerAlbumsPaging && qqSingerAlbumsHasMore" :loading-more="qqSingerAlbumsLoading" @load-more="loadMoreQQSingerAlbums" class="library-content3"></LibraryAlbumList>
                 </template>
                 <template v-else-if="artistPageType == 2">
                     <div class="library-search-empty" v-if="showSongSearchEmpty">

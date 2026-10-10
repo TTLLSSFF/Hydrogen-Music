@@ -1,25 +1,64 @@
 <script setup>
+  import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
   import { formatTime } from '../utils/time'
   import { useRouter } from 'vue-router'
   import { usePlayerStore } from '../store/playerStore';
+  import { normalizeMusicSource } from '../utils/musicSource.mjs'
 
   const router = useRouter()
-  const props = defineProps(['albumlist', 'type'])
+  const props = defineProps({
+    albumlist: { type: Array, default: () => [] },
+    type: { type: String, default: '' },
+    // 分页列表（当前为 QQ 歌手页）用：还有更多时滚动到底触发 load-more
+    hasMore: { type: Boolean, default: false },
+    loadingMore: { type: Boolean, default: false },
+  })
+  const emit = defineEmits(['load-more'])
   const playerStore = usePlayerStore()
+  // 本组件根元素自身就是滚动容器（#libraryScroll + overflow: auto），故监听根元素。
+  const scrollerRef = ref(null)
 
   //专辑日期
   const publishTime = time => formatTime(time, "YYYY-MM-DD")
 
-  const checkAlbum = (albumId) => {
+  const checkAlbum = (albumId, item) => {
     playerStore.forbidLastRouter = true
-    router.push('/mymusic/album/' + albumId)
+    // QQ 专辑详情走公共 getAlbumInfo，跳转时带 source=qq 让路由按来源分发。
+    const source = normalizeMusicSource(item?.source)
+    router.push({ path: '/mymusic/album/' + albumId, query: source === 'qq' ? { source: 'qq' } : {} })
   }
+
+  // 距底部不足一屏内触发 load-more
+  const LOAD_MORE_THRESHOLD = 120
+  const handleScrollerScroll = () => {
+    if (!props.hasMore || props.loadingMore) return
+    const scroller = scrollerRef.value
+    if (!scroller) return
+    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+    if (remaining > LOAD_MORE_THRESHOLD) return
+    emit('load-more')
+  }
+  const attachScrollerScroll = async () => {
+    await nextTick()
+    const scroller = scrollerRef.value
+    if (!scroller) return
+    scroller.removeEventListener('scroll', handleScrollerScroll)
+    scroller.addEventListener('scroll', handleScrollerScroll, { passive: true })
+  }
+  const detachScrollerScroll = () => {
+    scrollerRef.value?.removeEventListener('scroll', handleScrollerScroll)
+  }
+
+  onMounted(() => { void attachScrollerScroll() })
+  onActivated(() => { void attachScrollerScroll() })
+  onDeactivated(detachScrollerScroll)
+  onBeforeUnmount(detachScrollerScroll)
 </script>
 
 <template>
-  <div class="library-content">
+  <div class="library-content" ref="scrollerRef">
     <div class="library-album-list">
-        <div class="list-item" @click="checkAlbum(item.id)" v-for="(item, index) in props.albumlist" :key="item.id || index">
+        <div class="list-item" @click="checkAlbum(item.id, item)" v-for="(item, index) in props.albumlist" :key="item.id || index">
             <div class="item-title" :class="{'item-title-full': props.type == 'search'}">
                 <div class="item-img">
                     <div class="album-back"></div>
