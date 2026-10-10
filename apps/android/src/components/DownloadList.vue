@@ -3,12 +3,22 @@
   import VueSlider from 'vue-slider-component'
   import { usePlayerStore } from '../store/playerStore'
   import { useLocalStore } from '../store/localStore'
+  import { useDownloadStore } from '../store/downloadStore'
   import { initDownloadManager } from '../utils/downloadManager'
   import { storeToRefs } from 'pinia'
   import { getSongDisplayName } from '../utils/songName'
   
+  const props = defineProps({
+    view: {
+      type: String,
+      default: 'downloading',
+    },
+  })
   const localStore = useLocalStore()
   const { isFirstDownload, isDownloading, downloadList } = storeToRefs(localStore)
+  const downloadStore = useDownloadStore()
+  const { completed } = storeToRefs(downloadStore)
+  const completedList = computed(() => Array.isArray(completed.value) ? completed.value : [])
   const playerStore = usePlayerStore()
   const { showSongTranslation } = storeToRefs(playerStore)
   const progress = ref(0)
@@ -68,7 +78,8 @@
 </script>
 
 <template>
-  <div class="download-list">
+  <!-- 正在下载：本地队列 + 原生 MusicDownload 插件（开始/暂停/取消语义保持原样） -->
+  <div class="download-list" v-if="props.view !== 'completed'">
     <Transition name="download-transition">
       <div class="download-control" v-show="downloadList.length != 0">
         <div class="download-start" @click="changeState(true)" :class="{'selected': isDownloading}">开始</div>
@@ -94,6 +105,32 @@
       <div v-show="downloadList.length == 0" class="list-none">NONE</div>
     </Transition>
   </div>
+  <!-- 下载完成：只保留下载记录（成功/失败、移除、清空），与主应用一致 -->
+  <div class="download-list" v-else>
+    <Transition name="download-transition">
+      <div class="download-control" v-show="completedList.length != 0">
+        <span class="download-count">{{ completedList.length }} 条记录</span>
+        <span class="download-clear-text" @click="downloadStore.clearCompleted()">清空</span>
+      </div>
+    </Transition>
+    <div class="list-item">
+      <div class="item" v-for="item in completedList" :key="item.id">
+        <span class="download-index" :class="item.status">{{ item.status === 'success' ? '✓' : '×' }}</span>
+        <div class="download">
+          <div class="item-name">{{ getSongDisplayName(item, '', showSongTranslation) }}</div>
+          <div class="download-detail">
+            <span class="download-status" :class="item.status">{{ item.status === 'success' ? '已完成' : '失败' }}</span>
+            <span class="download-reason" v-if="item.status === 'success' && item.path" :title="item.path">{{ item.path }}</span>
+            <span class="download-reason" v-else-if="item.status !== 'success'">{{ item.reason }}</span>
+          </div>
+        </div>
+        <span class="download-remove" @click="downloadStore.removeCompleted(item.id)">移除</span>
+      </div>
+    </div>
+    <Transition name="download-transition">
+      <div v-show="completedList.length == 0" class="list-none">NONE</div>
+    </Transition>
+  </div>
 </template>
 
 <style scoped lang="scss">
@@ -105,6 +142,8 @@
     --download-hover-bg: rgba(0, 0, 0, 0.045);
     --download-progress-bg: rgba(0, 0, 0, 0.1);
     --download-progress-fill: #000000;
+    --download-success: #2f9e44;
+    --download-failed: #d64545;
 
     width: 100%;
     height: 100%;
@@ -117,6 +156,16 @@
       font: 14Px SourceHanSansCN-Bold;
       color: var(--download-text);
       position: relative;
+      .download-count{
+        opacity: 0.7;
+      }
+      .download-clear-text{
+        transition: 0.2s;
+        &:hover{
+          cursor: pointer;
+          opacity: 0.6;
+        }
+      }
       .download-start, .download-pause{
         padding: 1Px 6Px;
         transition: 0.2s;
@@ -175,6 +224,12 @@
           width: 30Px;
           font: 14Px Bender-Bold;
           color: var(--download-muted-text);
+          &.success{
+            color: var(--download-success);
+          }
+          &.failed{
+            color: var(--download-failed);
+          }
         }
         .download{
           width: 100%;
@@ -188,6 +243,31 @@
             -webkit-box-orient: vertical;
             -webkit-line-clamp: 1;
             word-break: break-all;
+          }
+          .download-detail{
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            font: 12Px SourceHanSansCN-Bold;
+            color: var(--download-muted-text);
+            .download-status{
+              flex: 0 0 auto;
+              margin-right: 8Px;
+              &.success{
+                color: var(--download-success);
+              }
+              &.failed{
+                color: var(--download-failed);
+              }
+            }
+            .download-reason{
+              overflow: hidden;
+              display: -webkit-box;
+              -webkit-box-orient: vertical;
+              -webkit-line-clamp: 1;
+              word-break: break-all;
+              opacity: 0.72;
+            }
           }
           .download-progress{
             display: flex;
@@ -209,6 +289,16 @@
               font: 12Px Bender-Bold;
               color: var(--download-muted-text);
             }
+          }
+        }
+        .download-remove{
+          flex: 0 0 auto;
+          font: 12Px SourceHanSansCN-Bold;
+          color: var(--download-muted-text);
+          transition: 0.2s;
+          &:hover{
+            cursor: pointer;
+            color: var(--download-text);
           }
         }
       }
@@ -243,6 +333,8 @@
     --download-hover-bg: rgba(255, 255, 255, 0.06);
     --download-progress-bg: rgba(255, 255, 255, 0.16);
     --download-progress-fill: rgba(255, 255, 255, 0.9);
+    --download-success: #69db7c;
+    --download-failed: #ff8787;
   }
 
   :global(html.dark .download-list .download-control .selected){

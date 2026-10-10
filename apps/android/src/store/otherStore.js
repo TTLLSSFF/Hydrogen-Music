@@ -13,6 +13,9 @@ export const useOtherStore = defineStore('otherStore', {
           contextMenuShow: false,
           contextMenuPosition: { x: 0, y: 0 },
           menuTree: null,
+          downloadQualityShow: false,
+          downloadItems: [],
+          downloadTitle: '',
           tree1: [
             {
                 id: 1,

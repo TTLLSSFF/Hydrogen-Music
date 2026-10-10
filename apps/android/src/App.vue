@@ -23,6 +23,7 @@ import { initAndroidBackButton } from './utils/backButton';
 const MusicPlayer = defineAsyncComponent(() => import('./views/MusicPlayer.vue'));
 const VideoPlayer = defineAsyncComponent(() => import('./components/VideoPlayer.vue'));
 const ContextMenu = defineAsyncComponent(() => import('./components/ContextMenu.vue'));
+const DownloadQualityDialog = defineAsyncComponent(() => import('./components/DownloadQualityDialog.vue'));
 const GlobalDialog = defineAsyncComponent(() => import('./components/GlobalDialog.vue'));
 const GlobalNotice = defineAsyncComponent(() => import('./components/GlobalNotice.vue'));
 const Update = defineAsyncComponent(() => import('./components/Update.vue'));
@@ -112,6 +113,7 @@ const handleTitleBarDoubleClick = () => {
     <div class="contextMune">
         <ContextMenu v-if="otherStore.contextMenuShow || otherStore.addPlaylistShow"></ContextMenu>
     </div>
+    <DownloadQualityDialog></DownloadQualityDialog>
     <div class="globalDialog">
         <GlobalDialog v-if="otherStore.dialogShow"></GlobalDialog>
     </div>

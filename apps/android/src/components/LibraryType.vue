@@ -31,7 +31,7 @@
   const SUB_ALBUM_PAGE_SIZE = 100
   let libraryRequestToken = 0
 
-//   const typeList = [['我创建的','我收藏的'],['专辑','歌手','MV'],['正在下载','下载完成'],['全部','专辑','歌手']]
+//   const typeList = [['我创建的','我收藏的'],['专辑','歌手','MV'],['正在下载','下载完成','已下载文件'],['全部','专辑','歌手']]
 //   const currentList = ref(typeList[0])
 
   function getCurrentUserId() {
@@ -211,6 +211,8 @@
       listType2.value = 0
     } else if (option.value == 2 && typeThree.value == 1) {
       listType2.value = 1
+    } else if (option.value == 2 && typeThree.value == 2) {
+      listType2.value = 2
     } else if (option.value == 3 && typeFour.value == 0) {
       listType2.value = 0
     } else if (option.value == 3 && typeFour.value == 1) {
@@ -294,7 +296,7 @@
 
   const refreshLocal = () => {
     localStore.isRefreshLocalFile = true
-    if(listType1.value == 2 && listType2.value == 1) {scanMusic({type:'downloaded',refresh:true});}
+    if(listType1.value == 2 && listType2.value == 2) {scanMusic({type:'downloaded',refresh:true});}
     if(listType1.value == 3) {scanMusic({type:'local',refresh:true});}
     router.push('/mymusic')
   }
@@ -368,11 +370,12 @@
                 <span v-show="option == 1" class="option" :class="{'option-selected': typeTwo == 3}" @click="changeType(3)">电台</span>
                 <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 0}" @click="changeType(0)">正在下载</span>
                 <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 1}" @click="changeType(1)">下载完成</span>
+                <span v-show="option == 2" class="option" :class="{'option-selected': typeThree == 2}" @click="changeType(2)">已下载文件</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 0}" @click="changeType(0)">全部</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 1}" @click="changeType(1)">专辑</span>
                 <span v-show="option == 3" class="option" :class="{'option-selected': typeFour == 2}" @click="changeType(2)">歌手</span>
             </div>
-            <span class="refresh" @click="refreshLocal()" v-show="(listType1 == 2 && listType2 == 1 && localStore.downloadedFolderSettings) || (listType1 == 3 && localStore.localFolderSettings.length != 0)">刷新</span>
+            <span class="refresh" @click="refreshLocal()" v-show="(listType1 == 2 && listType2 == 2 && localStore.downloadedFolderSettings) || (listType1 == 3 && localStore.localFolderSettings.length != 0)">刷新</span>
         </div>
     </div>
   </div>

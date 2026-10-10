@@ -13,6 +13,7 @@ import { storeToRefs } from 'pinia'
 import { noticeOpen } from '../utils/dialog'
 import { getSongDisplayName } from '../utils/songName'
 import { getRestrictedPlaybackFailureMessage, shouldBlockRestrictedPlayback } from '../utils/restrictedPlaybackAvailability'
+import { getSongIdentity } from '../utils/musicSource.mjs'
 import { useIsMobile } from '../composables/useIsMobile'
 
 const router = useRouter()
@@ -56,7 +57,17 @@ const props = defineProps({
         type: String,
         default: '',
     },
+    // 批量下载选择模式：进入后整行点击 = 勾选/取消勾选，不触发播放
+    downloadSelectionMode: {
+        type: Boolean,
+        default: false,
+    },
+    selectedDownloadIds: {
+        type: Array,
+        default: null,
+    },
 })
+const emit = defineEmits(['toggle-download-selection'])
 const hoverRowKey = ref(null)
 const recycleScroller = ref(null)
 const rowKeyBySong = new WeakMap()
@@ -127,6 +138,7 @@ const checkArtist = artistId => {
     playerStore.forbidLastRouter = true
 }
 const play = async (song, index) => {
+    if (props.downloadSelectionMode) return
     if (shouldBlockRestrictedPlayback(song)) {
         noticeOpen(getRestrictedPlaybackFailureMessage(song), 2)
         return
@@ -158,6 +170,22 @@ const togglePlay = async (song, index) => {
     await play(song, index)
 }
 
+const selectedDownloadIdSet = computed(() => new Set((props.selectedDownloadIds || []).map(id => String(id))))
+const isDownloadSelected = song => {
+    const identity = getSongIdentity(song)
+    return !!identity && selectedDownloadIdSet.value.has(identity)
+}
+
+// 移动端整行点击 = 播放，桌面端整行点击无动作（双击播放）；
+// 批量选择模式下两者都改为勾选/取消勾选。
+const handleRowClick = (song, index) => {
+    if (props.downloadSelectionMode) {
+        emit('toggle-download-selection', song)
+        return
+    }
+    if (isMobile) void play(song, index)
+}
+
 const openMenu = (e, item) => {
     otherStore.contextMenuShow = true
     otherStore.selectedItem = item
@@ -181,10 +209,10 @@ const openMenu = (e, item) => {
         <RecycleScroller ref="recycleScroller" v-if="props.songlist" id="libraryScroll" class="library-song-list" :items="scrollerItems" :item-size="42" key-field="rowKey" v-slot="{ item }">
             <div
                 class="list-item"
-                :class="{ 'list-item-playing': songId == item.song.id, 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly }"
+                :class="{ 'list-item-playing': songId == item.song.id, 'list-item-disabled': isSongDisabled(item.song), 'list-item-vip': item.song.vipOnly, 'list-item-download-mode': props.downloadSelectionMode, 'list-item-download-selected': isDownloadSelected(item.song) }"
                 @mouseenter="hoverRowKey = item.rowKey"
                 @mouseleave="hoverRowKey = null"
-                @click="isMobile && play(item.song, item.sourceIndex)"
+                @click="handleRowClick(item.song, item.sourceIndex)"
                 @dblclick="!isMobile && play(item.song, item.sourceIndex)"
                 @contextmenu.prevent.stop="openMenu($event, item.song)"
             >
@@ -227,7 +255,7 @@ const openMenu = (e, item) => {
                     </div>
                         <span class="item-time">{{ songTime(item.song.dt || item.song.duration) || '--:--' }}</span>
                 </div>
-                <button v-if="isMobile" type="button" class="song-more" :aria-label="'更多操作：' + item.song.name" @click.stop="openMenu($event, item.song)">
+                <button v-if="isMobile && !props.downloadSelectionMode" type="button" class="song-more" :aria-label="'更多操作：' + item.song.name" @click.stop="openMenu($event, item.song)">
                     <svg viewBox="1.2 1.2 21.6 21.6" width="20" height="20" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                 </button>
             </div>
@@ -265,6 +293,21 @@ const openMenu = (e, item) => {
             align-items: center;
             transition: 0.2s;
             user-select: text;
+            position: relative;
+            overflow: hidden;
+            // 批量选择时从左侧滑入的选中底色（与主应用同一套动效）
+            &::before {
+                content: '';
+                width: 100%;
+                height: 100%;
+                position: absolute;
+                top: 0;
+                left: 0;
+                background-color: black;
+                transform: translateX(-101%);
+                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
+                z-index: 0;
+            }
             &:hover {
                 cursor: default;
                 background-color: rgba(0, 0, 0, 0.045);
@@ -402,6 +445,33 @@ const openMenu = (e, item) => {
         }
         .list-item-playing {
             background-color: rgba(0, 0, 0, 0.045);
+        }
+        .list-item-download-mode {
+            cursor: pointer;
+            user-select: none;
+            &:hover {
+                cursor: pointer;
+            }
+        }
+        .list-item-download-selected {
+            opacity: 1;
+            &::before {
+                transform: translateX(0);
+            }
+            .item-title,
+            .item-other {
+                transform: translateX(22px) scale(1.04);
+                transition: transform 0.32s cubic-bezier(0.14, 0.91, 0.58, 1);
+            }
+            .item-title .item-name,
+            .item-title .item-state .item-num,
+            .item-other span {
+                color: white;
+            }
+            .item-play-btn,
+            .playing-eq {
+                color: white;
+            }
         }
         .list-item-disabled {
             opacity: 0.7;

@@ -1,6 +1,7 @@
 // 全局下载管理器初始化
 import { useLocalStore } from '../store/localStore'
 import { usePlayerStore } from '../store/playerStore'
+import { useDownloadStore } from '../store/downloadStore'
 import { storeToRefs } from 'pinia'
 import { getSirenLyricText, getSirenSong } from '../api/siren'
 import { noticeOpen } from './dialog'
@@ -17,10 +18,36 @@ export const initDownloadManager = () => {
     
     const localStore = useLocalStore()
     const playerStore = usePlayerStore()
+    const downloadStore = useDownloadStore()
     const { downloadList, isDownloading, isFirstDownload } = storeToRefs(localStore)
     const { quality } = storeToRefs(playerStore)
     
     let currentIndex = -1
+
+    // 「下载完成」记录的歌曲信息：downloadStore 只存记录，元数据在这里补齐
+    const buildRecordMeta = item => ({
+        name: item?.name,
+        tns: item?.tns || null,
+        artists: getItemArtists(item),
+        album: (item?.al && item.al.name) || (item?.album && item.album.name) || item?.album || '',
+    })
+
+    const failureReason = code => {
+        const text = typeof code === 'string' ? code : ''
+        if (text === 'noSavePath') return '未设置下载目录'
+        if (text.indexOf('saveFailed') === 0) return '无法写入下载目录'
+        return '下载失败'
+    }
+
+    // 解析阶段就失败（拿不到播放地址等）：记一条失败记录并出队，
+    // 与原生插件的失败事件保持同一套「下载完成」记录。
+    const dropUnresolvableItem = (item, reason) => {
+        if (item?.id) {
+            downloadStore.finishDownload(item.id, { status: 'failed', reason, ...buildRecordMeta(item) })
+        }
+        downloadList.value.splice(currentIndex, 1)
+        downNext()
+    }
 
     const getItemArtists = item => {
         if (Array.isArray(item?.ar)) return item.ar.map(artist => artist?.name).filter(Boolean)
@@ -76,8 +103,7 @@ export const initDownloadManager = () => {
         } catch (error) {
             console.error('塞壬歌曲下载失败:', error)
             noticeOpen("该歌曲无法下载！", 2)
-            downloadList.value.splice(currentIndex, 1)
-            downNext()
+            dropUnresolvableItem(item, '无法解析塞壬播放地址')
         }
     }
     
@@ -92,15 +118,15 @@ export const initDownloadManager = () => {
 
         const id = currentItem.id
         try {
-            const preferredQuality = getPreferredQuality(quality.value)
+            // 批量下载时用户选过音质（随歌曲入队），优先按它解析；否则用全局设置
+            const preferredQuality = getPreferredQuality(currentItem.quality || quality.value)
             const trackInfo = await resolveTrackWithMatchedFallback(currentItem, preferredQuality, {
                 id,
                 waitForMatchedMetadata: true,
             })
             if (!trackInfo || !trackInfo.url) {
                 noticeOpen("该歌曲无法下载！", 2)
-                downloadList.value.splice(currentIndex, 1)
-                downNext()
+                dropUnresolvableItem(currentItem, '无法解析播放地址')
                 return
             }
 
@@ -139,8 +165,7 @@ export const initDownloadManager = () => {
         } catch (error) {
             console.error('歌曲下载解析失败:', error)
             noticeOpen("该歌曲无法下载！", 2)
-            downloadList.value.splice(currentIndex, 1)
-            downNext()
+            dropUnresolvableItem(currentItem, '解析播放地址出错')
         }
     }
 
@@ -170,6 +195,11 @@ export const initDownloadManager = () => {
     // 注册全局下载回调
     windowApi.downloadNext(() => {
         if(isDownloading.value && downloadList.value.length != 0) {
+            // 原生插件在这一条下载成功后发 downloadNext：记一条「下载完成」，再出队
+            const finished = downloadList.value[currentIndex]
+            if (finished?.id) {
+                downloadStore.finishDownload(finished.id, { status: 'success', ...buildRecordMeta(finished) })
+            }
             downloadList.value.splice(currentIndex, 1)
             downNext()
         } else {
@@ -202,8 +232,31 @@ export const initDownloadManager = () => {
     window.addEventListener('hm:download-start', startQueue)
 
     windowApi.downloadError(code => {
+        // 原生插件失败时**不会**再发 downloadNext，必须在这里出队并推进，
+        // 否则整条队列会卡死在失败的那一首上（原有行为即如此）。
+        const advanceFailedItem = record => {
+            if (!isDownloading.value || currentIndex < 0) return
+            const failed = downloadList.value[currentIndex]
+            if (!failed) return
+            if (record && failed.id) {
+                downloadStore.finishDownload(failed.id, {
+                    status: 'failed',
+                    reason: failureReason(code),
+                    ...buildRecordMeta(failed),
+                })
+            }
+            downloadList.value.splice(currentIndex, 1)
+            downNext()
+        }
+
+        // 用户主动取消（删除正在下载项）不写失败记录，只让队列继续
+        if (code === 'cancelled') {
+            advanceFailedItem(false)
+            return
+        }
         if (code == 'noSavePath') {
             noticeOpen('请先在设置中设置下载目录', 2)
+            advanceFailedItem(true)
             return
         }
         // 目录不可写是最常见的失败：能读到文件但 provider 不支持 createDocument。
@@ -211,9 +264,11 @@ export const initDownloadManager = () => {
         if (typeof code === 'string' && code.indexOf('saveFailed') === 0) {
             console.warn('[download] 写入目录失败:', code)
             noticeOpen('无法写入下载目录，请在设置里重新选择（建议用系统文件选择器选「Download」）', 4)
+            advanceFailedItem(true)
             return
         }
         noticeOpen('下载失败', 2)
+        advanceFailedItem(true)
     })
     
     isInitialized = true

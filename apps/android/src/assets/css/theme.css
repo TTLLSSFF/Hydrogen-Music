@@ -1703,3 +1703,27 @@ body {
 .dark .my-music .library-container .library-nodata .line2 {
   background: linear-gradient(to bottom right, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0) calc(50% - 0.5px), rgba(255, 255, 255, 0.8) 50%, rgba(255, 255, 255, 0) calc(50% + 0.5px), rgba(255, 255, 255, 0) 100%) !important;
 }
+
+/* 批量下载选择：深色模式下选中行与「选择」子菜单沿用同一档浅色遮罩 */
+.dark .library-detail .selection-menu-expanded .selection-menu-item:hover,
+.dark .library-detail .operation-download-select button:hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+.dark .library-song-list .list-item-download-selected::before {
+  background-color: var(--text) !important;
+}
+
+.dark .library-song-list .list-item-download-selected .item-title .item-name,
+.dark .library-song-list .list-item-download-selected .item-title .item-name .item-name-text,
+.dark .library-song-list .list-item-download-selected .item-title .item-state .item-num,
+.dark .library-song-list .list-item-download-selected .item-other span,
+.dark .library-song-list .list-item-download-selected .item-play-btn,
+.dark .library-song-list .list-item-download-selected .playing-eq {
+  color: #111213 !important;
+  -webkit-text-fill-color: #111213 !important;
+}
+
+.dark .library-song-list .list-item-download-selected .playing-eq .bar {
+  background-color: #111213 !important;
+}

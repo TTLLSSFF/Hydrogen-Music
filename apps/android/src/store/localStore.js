@@ -63,7 +63,7 @@ export const useLocalStore = defineStore('localStore', {
                 && !!(window.Capacitor.Plugins && window.Capacitor.Plugins.MusicDownload)
             if(!this.downloadedFolderSettings && !nativeDownloadReady) {
                 noticeOpen("请先在设置中设置下载目录", 2)
-                return
+                return false
             }
             this.downloadList = this.downloadList.concat(list)
             this.downloadList = this.removedup(this.downloadList, 'id')
@@ -72,6 +72,7 @@ export const useLocalStore = defineStore('localStore', {
                 this.isFirstDownload = false
             }
             noticeOpen('已添加到下载列表', 2)
+            return true
         },
         getSongs(arr) {
             arr.forEach(song => {

@@ -7,10 +7,11 @@ import { subPlaylist } from '../api/playlist';
 import { subAlbum } from '../api/album';
 import { subArtist } from '../api/artist';
 import { formatTime } from '../utils/time';
-import { playAll } from '../utils/player/lazy';
+import { playAll, addToNext } from '../utils/player/lazy';
 import { scheduleAlbumSublistCacheInvalidation, scheduleArtistSublistCacheInvalidation } from '../utils/cacheInvalidation';
 import { matchSearchText, normalizeSongFilterKeyword } from '../utils/songFilter';
 import { createSongSortOptions, sortSongEntries } from '../utils/songSort';
+import { getSongIdentity } from '../utils/musicSource.mjs';
 import LibrarySongList from './LibrarySongList.vue';
 import LibraryAlbumList from './LibraryAlbumList.vue';
 import LibraryMVList from '../components/LibraryMVList.vue';
@@ -18,11 +19,11 @@ import SongFilterInput from './SongFilterInput.vue';
 import SongSortControl from './SongSortControl.vue';
 import { usePlayerStore } from '../store/playerStore';
 import { useLibraryStore } from '../store/libraryStore';
-import { useLocalStore } from '../store/localStore';
+import { useOtherStore } from '../store/otherStore';
 import { storeToRefs } from 'pinia';
 
 const playerStore = usePlayerStore();
-const localStore = useLocalStore();
+const otherStore = useOtherStore();
 const libraryStore = useLibraryStore();
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
 const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration } = storeToRefs(libraryStore);
@@ -511,10 +512,77 @@ const playAllSafe = async () => {
     playAll(router.currentRoute.value.name || 'other', sortedLibrarySongs.value);
 };
 
-//下载本歌单/专辑全部歌曲
-const downloadAll = async () => {
+// 批量下载选择模式：对齐主应用（整行点击 = 勾选，选中后走音质弹窗再整批入队）
+const downloadSelectionMode = ref(false);
+const selectedDownloadSongs = ref([]);
+const selectionMenuExpanded = ref(false);
+const selectedDownloadIds = computed(() => selectedDownloadSongs.value.map(song => getSongIdentity(song)).filter(Boolean));
+
+const exitSelectionMode = () => {
+    downloadSelectionMode.value = false;
+    selectedDownloadSongs.value = [];
+    selectionMenuExpanded.value = false;
+};
+
+const enterSelectionMode = () => {
+    // 立刻展开菜单，剩余歌曲在后台继续加载，全选时再等待
+    downloadSelectionMode.value = true;
+    selectedDownloadSongs.value = [];
+    selectionMenuExpanded.value = true;
+    noticeOpen('请选择歌曲', 2);
+    void waitCurrentPlaylistHydration();
+};
+
+// 下载所选：只把选中项交给音质弹窗，真正的入队由弹窗完成
+const downloadSelected = async () => {
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    otherStore.downloadItems = [...selectedDownloadSongs.value];
+    otherStore.downloadTitle = `下载 ${selectedDownloadSongs.value.length} 首歌曲`;
+    otherStore.downloadQualityShow = true;
+    exitSelectionMode();
+};
+
+// 添加到播放列表（下一首播放，与右键菜单同一语义）
+const addSelectedToPlayerList = async () => {
+    if (selectedDownloadSongs.value.length === 0) {
+        noticeOpen('请先选择歌曲', 2);
+        return;
+    }
+    try {
+        for (const song of selectedDownloadSongs.value) {
+            await addToNext(song, false);
+        }
+        noticeOpen(`已添加 ${selectedDownloadSongs.value.length} 首歌曲到播放列表`, 2);
+        exitSelectionMode();
+    } catch (error) {
+        console.error('添加到播放列表失败:', error);
+        noticeOpen('添加失败', 2);
+    }
+};
+
+const toggleDownloadSelection = song => {
+    if (!song) return;
+    const identity = getSongIdentity(song);
+    if (!identity) return;
+    const index = selectedDownloadSongs.value.findIndex(item => getSongIdentity(item) === identity);
+    if (index >= 0) {
+        selectedDownloadSongs.value.splice(index, 1);
+        return;
+    }
+    selectedDownloadSongs.value.push(song);
+};
+
+const selectAllDownloadSongs = async () => {
+    // 全选需要完整歌单，此处才等待剩余歌曲加载完成
     await waitCurrentPlaylistHydration();
-    localStore.updateDownloadList(librarySongs.value || []);
+    selectedDownloadSongs.value = (visibleLibrarySongs.value || []).filter(song => song?.type !== 'local' && !!getSongIdentity(song));
+};
+
+const cancelDownloadSelection = () => {
+    exitSelectionMode();
 };
 
 watch(
@@ -643,25 +711,29 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                     </svg>
                                     <span>{{ libraryInfo.followed ? '已收藏' : '收藏' }}</span>
                                 </div>
-                                <div class="operation-download operation-item" v-if="!isSinger">
-                                    <svg
-                                        t="1669030443895"
-                                        class="download-icon"
-                                        viewBox="-35 -41 1106 1106"
-                                        version="1.1"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        p-id="10347"
-                                        width="200"
-                                        height="200"
-                                        data-v-7f63928d=""
-                                    >
-                                        <path
-                                            d="M921.6 563.2c-9.6-9.6-25.6-9.6-35.2 0L544 896l0-822.4c0-12.8-9.6-22.4-25.6-22.4s-25.6 9.6-25.6 22.4L492.8 896l-342.4-339.2c-9.6-9.6-25.6-9.6-35.2 0-9.6 9.6-9.6 22.4 0 32l384 377.6c6.4 6.4 12.8 6.4 19.2 6.4 0 0 0 0 0 0 3.2 0 3.2 0 6.4 0 0 0 0 0 3.2 0 3.2 0 6.4-3.2 9.6-6.4l380.8-371.2C931.2 588.8 931.2 572.8 921.6 563.2z"
-                                            p-id="10348"
-                                            data-v-7f63928d=""
-                                        ></path>
-                                    </svg>
-                                    <span @click="downloadAll()">下载</span>
+                                <div class="operation-selection-wrapper" v-if="!isSinger || artistPageType == 0" :class="{ 'selection-active': downloadSelectionMode }">
+                                    <div class="operation-selection operation-item" @click="enterSelectionMode">
+                                        <svg
+                                            t="1735052000000"
+                                            class="selection-icon"
+                                            viewBox="0 0 1024 1024"
+                                            version="1.1"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            width="200"
+                                            height="200"
+                                        >
+                                            <path d="M810.666667 128c23.466667 0 42.666667 19.2 42.666666 42.666667v682.666666c0 23.466667-19.2 42.666667-42.666666 42.666667H213.333333c-23.466667 0-42.666667-19.2-42.666666-42.666667V170.666667c0-23.466667 19.2-42.666667 42.666666-42.666667h597.333334z m-42.666667 85.333333H256v597.333334h512V213.333333z m-128 384c23.466667 0 42.666667 19.2 42.666667 42.666667s-19.2 42.666667-42.666667 42.666667H384c-23.466667 0-42.666667-19.2-42.666667-42.666667s19.2-42.666667 42.666667-42.666667h256z m0-170.666666c23.466667 0 42.666667 19.2 42.666667 42.666666s-19.2 42.666667-42.666667 42.666667H384c-23.466667 0-42.666667-19.2-42.666667-42.666667s19.2-42.666666 42.666667-42.666666h256z m0-170.666667c23.466667 0 42.666667 19.2 42.666667 42.666667s-19.2 42.666667-42.666667 42.666666H384c-23.466667 0-42.666667-19.2-42.666667-42.666666s19.2-42.666667 42.666667-42.666667h256z"></path>
+                                        </svg>
+                                        <span>选择</span>
+                                    </div>
+                                    <div class="selection-menu" :class="{ 'selection-menu-expanded': selectionMenuExpanded && downloadSelectionMode }">
+                                        <div class="selection-menu-item" @click="downloadSelected">下载</div>
+                                        <div class="selection-menu-item" @click="addSelectedToPlayerList">添加到播放列表</div>
+                                        <div class="operation-download-select">
+                                            <button @click="selectAllDownloadSongs()">全选</button>
+                                            <button @click="cancelDownloadSelection()">取消</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </template>
                             <div class="operation-search" v-if="showSongSearch">
@@ -736,7 +808,10 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :songlist="visibleLibrarySongs"
                         :queue-songlist="hasSongSearchKeyword || songSortMode != 'default' ? sortedLibrarySongs : null"
                         :source-indexes="visibleLibrarySourceIndexes"
+                        :download-selection-mode="downloadSelectionMode"
+                        :selected-download-ids="selectedDownloadIds"
                         class="library-content"
+                        @toggle-download-selection="toggleDownloadSelection"
                     ></LibrarySongList>
                 </template>
                 <template v-else-if="artistPageType == 1">
@@ -913,6 +988,177 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                                 font-size: 15px;
                                 color: var(--ld-text);
                             }
+                        }
+                        // 批量下载选择：入口「选择」与展开后的菜单/全选取消
+                        .operation-selection-wrapper {
+                            margin-right: 20px;
+                            display: flex;
+                            flex-direction: row;
+                            align-items: center;
+                            position: relative;
+                            gap: 0;
+                        }
+                        .operation-selection {
+                            margin-right: 0;
+                            flex: 0 0 auto;
+                            display: flex;
+                            flex-direction: row;
+                            align-items: center;
+                            position: relative;
+                            z-index: 2;
+                            opacity: 1;
+                            max-width: 120px;
+                            overflow: hidden;
+                            white-space: nowrap;
+                            transition: opacity 0.15s ease 0s;
+                            &:hover {
+                                cursor: pointer;
+                                opacity: 0.6 !important;
+                            }
+                            .selection-icon {
+                                width: 16px;
+                                height: 16px;
+                            }
+                            span {
+                                margin-left: 5px;
+                                font-size: 15px;
+                                color: var(--ld-text);
+                            }
+                        }
+                        .operation-selection-wrapper.selection-active .operation-selection {
+                            opacity: 0;
+                            max-width: 0;
+                            pointer-events: none;
+                            transition: opacity 0.15s ease 0s, max-width 0.2s cubic-bezier(0.14, 0.91, 0.58, 1) 0.15s;
+                        }
+                        .operation-selection-wrapper:not(.selection-active) .operation-selection {
+                            transition: opacity 0.2s ease 0.58s, max-width 0.2s cubic-bezier(0.14, 0.91, 0.58, 1) 0.58s;
+                        }
+                        .selection-menu {
+                            display: flex;
+                            flex-direction: row;
+                            align-items: center;
+                            gap: 0;
+                            max-width: 0;
+                            margin-left: 0;
+                            overflow: visible;
+                            opacity: 0;
+                            transition: max-width 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.05s, opacity 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.05s, margin-left 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.05s;
+                            position: relative;
+                            z-index: 1;
+                        }
+                        .selection-menu-expanded {
+                            max-width: 600px;
+                            margin-left: 0;
+                            opacity: 1;
+                        }
+                        .selection-menu:not(.selection-menu-expanded) {
+                            // 收回时容器只负责收窄，淡出交给子项自己完成，避免透明度叠加导致闪烁
+                            overflow: hidden;
+                            transition: max-width 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.28s, opacity 0s linear 0.48s, margin-left 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) 0.28s;
+                        }
+                        .selection-menu-item {
+                            margin-left: 15px;
+                            padding: 4px 10px;
+                            flex: 0 0 auto;
+                            font: 15px SourceHanSansCN-Bold;
+                            font-weight: bold;
+                            color: var(--ld-text);
+                            white-space: nowrap;
+                            position: relative;
+                            opacity: 0;
+                            transform: translateX(-20px);
+                            z-index: 1;
+                            transition: background-color 0.2s ease;
+                            &:hover {
+                                cursor: pointer;
+                            }
+                        }
+                        .selection-menu-expanded .selection-menu-item:hover {
+                            background-color: rgba(0, 0, 0, 0.045);
+                        }
+                        .selection-menu-expanded .selection-menu-item,
+                        .selection-menu-expanded .operation-download-select {
+                            opacity: 1;
+                            transform: none;
+                            animation: selection-item-slide-in 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) backwards;
+                            &:nth-child(1) {
+                                animation-delay: 0.25s;
+                            }
+                            &:nth-child(2) {
+                                animation-delay: 0.3s;
+                            }
+                            &:nth-child(3) {
+                                animation-delay: 0.35s;
+                            }
+                        }
+                        .selection-menu:not(.selection-menu-expanded) .selection-menu-item {
+                            pointer-events: none;
+                        }
+                        .selection-menu:not(.selection-menu-expanded) .selection-menu-item,
+                        .selection-menu:not(.selection-menu-expanded) .operation-download-select {
+                            animation: selection-item-slide-out 0.28s cubic-bezier(0.14, 0.91, 0.58, 1) backwards;
+                            &:nth-child(1) {
+                                animation-delay: 0.2s;
+                            }
+                            &:nth-child(2) {
+                                animation-delay: 0.15s;
+                            }
+                            &:nth-child(3) {
+                                animation-delay: 0.1s;
+                            }
+                        }
+                        @keyframes selection-item-slide-in {
+                            0% {
+                                opacity: 0;
+                                transform: translateX(-20px);
+                            }
+                            100% {
+                                opacity: 1;
+                                transform: none;
+                            }
+                        }
+                        @keyframes selection-item-slide-out {
+                            0% {
+                                opacity: 1;
+                                transform: translateX(0);
+                            }
+                            100% {
+                                opacity: 0;
+                                transform: translateX(-20px);
+                            }
+                        }
+                        .operation-download-select {
+                            display: flex;
+                            align-items: center;
+                            gap: 8px;
+                            margin-left: 15px;
+                            flex: 0 0 auto;
+                            opacity: 0;
+                            transform: translateX(-20px);
+                            button {
+                                min-width: 38px;
+                                height: 22px;
+                                padding: 0 8px;
+                                border: 0;
+                                background: transparent;
+                                color: var(--ld-text);
+                                font: 11px SourceHanSansCN-Bold;
+                                transition: 0.2s;
+                                &:hover {
+                                    cursor: pointer;
+                                    background-color: rgba(0, 0, 0, 0.045);
+                                }
+                                &:active {
+                                    transform: scale(0.94);
+                                }
+                            }
+                        }
+                        .operation-download-select button {
+                            pointer-events: none;
+                        }
+                        .selection-menu-expanded .operation-download-select button {
+                            pointer-events: auto;
                         }
                         .operation-search {
                             position: absolute;

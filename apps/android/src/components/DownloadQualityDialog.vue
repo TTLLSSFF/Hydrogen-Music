@@ -1,0 +1,286 @@
+<script setup>
+import { computed, ref } from 'vue'
+import { MUSIC_LEVEL_OPTIONS } from '../shared/settingsSchema'
+import { useOtherStore } from '../store/otherStore'
+import { noticeOpen } from '../utils/dialog'
+import { enqueueDownloads } from '../utils/downloadQueue'
+
+const otherStore = useOtherStore()
+const downloading = ref(false)
+const progressText = ref('')
+
+const downloadItems = computed(() => Array.isArray(otherStore.downloadItems) ? otherStore.downloadItems.filter(Boolean) : [])
+const itemCount = computed(() => downloadItems.value.length)
+const dialogTitle = computed(() => otherStore.downloadTitle || (itemCount.value > 1 ? `下载 ${itemCount.value} 首歌曲` : '选择下载音质'))
+
+const closeDialog = () => {
+    if (downloading.value) return
+    otherStore.downloadQualityShow = false
+    otherStore.downloadItems = []
+    otherStore.downloadTitle = ''
+    progressText.value = ''
+}
+
+const confirmDownload = async level => {
+    if (downloading.value) return
+    if (!itemCount.value) {
+        closeDialog()
+        return
+    }
+
+    downloading.value = true
+    progressText.value = `正在添加 0/${itemCount.value}`
+    const songs = [...downloadItems.value]
+
+    try {
+        // 安卓端不解析播放地址（那是 downloadManager 取队列时做的），这里只入队；
+        // 音质随每首歌带给队列，避免改掉全局音质设置。
+        const accepted = enqueueDownloads(songs, level)
+        if (accepted > 0) {
+            progressText.value = `已添加 ${accepted}/${itemCount.value}`
+            noticeOpen(`已添加 ${accepted} 首歌曲到下载列表`, 2)
+        }
+    } finally {
+        downloading.value = false
+        closeDialog()
+    }
+}
+</script>
+
+<template>
+    <Transition name="add-fade">
+        <div class="download-quality-dialog" v-if="otherStore.downloadQualityShow" @click="closeDialog">
+            <div class="download-container" @click.stop>
+                <div class="download-body">
+                    <span class="download-title">{{ dialogTitle }}</span>
+                    <div class="download-quality-list">
+                        <button
+                            class="quality-item"
+                            v-for="item in MUSIC_LEVEL_OPTIONS"
+                            :key="item.value"
+                            :disabled="downloading"
+                            @click="confirmDownload(item.value)"
+                        >
+                            <span class="quality-name">{{ item.label }}</span>
+                            <span class="quality-code">{{ item.value }}</span>
+                        </button>
+                    </div>
+                    <span class="download-progress" v-if="progressText">{{ progressText }}</span>
+                    <span class="download-style5">DOWNLOAD</span>
+                </div>
+                <span class="download-style download-style1"></span>
+                <span class="download-style download-style2"></span>
+                <span class="download-style download-style3"></span>
+                <span class="download-style download-style4"></span>
+            </div>
+        </div>
+    </Transition>
+</template>
+
+<style scoped lang="scss">
+.download-quality-dialog {
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    background-color: rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+    z-index: 9999;
+    .download-container {
+        width: 0;
+        height: 0;
+        background-color: rgb(15, 15, 15);
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        animation: download-container-in 0.6s 0.3s forwards;
+        @keyframes download-container-in {
+            0% {
+                width: 0;
+                height: 0;
+            }
+            50% {
+                width: 300px;
+                height: 0;
+            }
+            100% {
+                width: 300px;
+                height: 460px;
+            }
+        }
+        // 内容裁剪层：横向展开阶段容器高度为 0，内容需随之裁掉，
+        // 否则带 padding 的列表会露出 padding box 那一段
+        .download-body {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+        .download-title {
+            display: inline-block;
+            max-width: calc(100% - 32px);
+            padding: 10px 0;
+            position: relative;
+            z-index: 2;
+            font: 16px SourceHanSansCN-Bold;
+            color: white;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            opacity: 0;
+            animation: download-title-in 0.3s 0.5s forwards;
+            @keyframes download-title-in {
+                0% {
+                    opacity: 0;
+                }
+                100% {
+                    opacity: 1;
+                }
+            }
+        }
+        .download-quality-list {
+            width: 100%;
+            height: calc(100% - 52px);
+            padding-bottom: 34px;
+            box-sizing: border-box;
+            overflow: auto;
+            position: relative;
+            z-index: 1;
+            &::-webkit-scrollbar {
+                display: none;
+            }
+            .quality-item {
+                padding: 11px 22px;
+                width: 100%;
+                min-height: 42px;
+                border: 0 !important;
+                border-radius: 0 !important;
+                outline: none;
+                background: transparent !important;
+                background-color: transparent !important;
+                display: flex;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+                transition: 0.2s;
+                color: white !important;
+                &:hover:not(:disabled) {
+                    cursor: pointer;
+                    background-color: rgba(53, 53, 53, 0.7) !important;
+                }
+                &:active:not(:disabled) {
+                    transform: scale(0.98);
+                }
+                &:disabled {
+                    opacity: 0.45;
+                    cursor: wait;
+                }
+                .quality-name {
+                    font: 14px SourceHanSansCN-Bold;
+                }
+                .quality-code {
+                    font: 10px Bender-Bold;
+                    color: rgb(165, 165, 165) !important;
+                    text-transform: uppercase;
+                }
+            }
+        }
+        .download-progress {
+            position: absolute;
+            bottom: 14px;
+            left: 0;
+            width: 100%;
+            z-index: 2;
+            font: 11px SourceHanSansCN-Bold;
+            color: rgb(190, 190, 190) !important;
+            text-align: center;
+        }
+        .download-style {
+            width: 9px;
+            height: 9px;
+            background-color: rgb(247, 247, 247);
+            position: absolute;
+            z-index: 2;
+            opacity: 0;
+            animation: download-style-in 0.4s forwards;
+            @keyframes download-style-in {
+                0% {
+                    opacity: 0;
+                }
+                10% {
+                    opacity: 1;
+                }
+                20% {
+                    opacity: 0;
+                }
+                30% {
+                    opacity: 1;
+                }
+                40% {
+                    opacity: 0;
+                }
+                50% {
+                    opacity: 1;
+                }
+                60% {
+                    opacity: 0;
+                }
+                70% {
+                    opacity: 1;
+                }
+                80% {
+                    opacity: 0;
+                }
+                90% {
+                    opacity: 0;
+                }
+                100% {
+                    opacity: 1;
+                }
+            }
+        }
+        $position: -4px;
+        .download-style1 {
+            top: $position;
+            left: $position;
+        }
+        .download-style2 {
+            top: $position;
+            right: $position;
+        }
+        .download-style3 {
+            bottom: $position;
+            right: $position;
+        }
+        .download-style4 {
+            bottom: $position;
+            left: $position;
+        }
+        // 与「添加到歌单」「更新日志」的水印同一套参数，仅字号按 300px 容器宽度收窄
+        .download-style5 {
+            max-width: calc(100% - 32px);
+            font: 36px Gilroy-ExtraBold;
+            color: rgba(255, 255, 255, 0.08);
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            z-index: -1;
+            white-space: nowrap;
+            overflow: hidden;
+            pointer-events: none;
+            opacity: 0;
+            animation: download-style5-in 0.3s 0.6s forwards;
+            @keyframes download-style5-in {
+                0% {
+                    opacity: 0;
+                }
+                100% {
+                    opacity: 1;
+                }
+            }
+        }
+    }
+}
+</style>

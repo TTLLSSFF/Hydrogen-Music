@@ -5,7 +5,6 @@
   import { addToNext, addToNextLocal } from '../utils/player/lazy'
   import { noticeOpen } from '../utils/dialog';
   import { useLibraryStore } from '../store/libraryStore';
-  import { useLocalStore } from '../store/localStore';
   import { useOtherStore } from '../store/otherStore';
   import { usePlayerStore } from '../store/playerStore'
   import { useUserStore } from '../store/userStore';
@@ -17,7 +16,6 @@
   const isMobile = useIsMobile()
   const router = useRouter()
   const libraryStore = useLibraryStore()
-  const localStore = useLocalStore()
   const otherStore = useOtherStore()
   const playerStore = usePlayerStore()
   const userStore = useUserStore()
@@ -233,7 +231,11 @@
   }
 
   const copySongLink = async () => {
-    const link = `https://music.163.com/#/song?id=${otherStore.selectedItem.id}`
+    const song = otherStore.selectedItem
+    // 电台节目对应 program 页；沿用歌曲页链接会指向错误 ID
+    const link = song?.type === 'dj' && song?.programId
+      ? `https://music.163.com/#/program?id=${song.programId}`
+      : `https://music.163.com/#/song?id=${song.id}`
     otherStore.contextMenuShow = false
     const copied = await copyToClipboard(link)
     noticeOpen(copied ? '歌曲链接已复制' : '复制失败', 2)
@@ -243,7 +245,19 @@
     otherStore.contextMenuShow = false
     if(id == 1) { addToNext(otherStore.selectedItem, true); return; }
     if(id == 2) { addToNext(otherStore.selectedItem, false); return; }
-    if(id == 3) { localStore.updateDownloadList(otherStore.selectedItem); return; }
+    if(id == 3) {
+      const song = otherStore.selectedItem
+      if (!song) return
+      if (song.type === 'local') {
+        noticeOpen('本地歌曲无需下载', 2)
+        return
+      }
+      // 与歌单页的批量下载统一：先选音质，再由弹窗入队
+      otherStore.downloadItems = [song]
+      otherStore.downloadTitle = '下载当前歌曲'
+      otherStore.downloadQualityShow = true
+      return
+    }
     if(id == 12) { return copySongLink(); }
     if(id == 11) {
       const song = otherStore.selectedItem

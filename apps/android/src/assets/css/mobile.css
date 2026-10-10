@@ -1723,6 +1723,33 @@ html[data-hm-mobile='true'] #app .operation-search .filter-input {
   min-width: 56px;
 }
 
+/* 批量下载选择：手机上横向余地不够，展开后允许换行并收紧间距；
+   子项与全选/取消按钮抬高到接近 32px 的触控目标。 */
+html[data-hm-mobile='true'] #app .library-introduce .library-operation {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+html[data-hm-mobile='true'] #app .library-introduce .selection-menu-expanded {
+  max-width: none;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+html[data-hm-mobile='true'] #app .library-introduce .selection-menu-item {
+  margin-left: 10px;
+  padding: 6px 10px;
+}
+
+html[data-hm-mobile='true'] #app .library-introduce .operation-download-select {
+  margin-left: 10px;
+}
+
+html[data-hm-mobile='true'] #app .library-introduce .operation-download-select button {
+  height: 28px;
+  padding: 0 10px;
+}
+
 /* 发行时间 / 查看详情：原来是右栏竖排，改成一行横向排列 */
 html[data-hm-mobile='true'] #app .library-introduce .introduce-other {
   width: 100%;
