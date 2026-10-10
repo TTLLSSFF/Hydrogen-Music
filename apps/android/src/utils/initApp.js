@@ -17,7 +17,7 @@ import settingsSchema from '../shared/settingsSchema.js'
 const { normalizeSettings } = settingsSchema
 
 const playerStore = usePlayerStore()
-const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime, searchAssistLimit, showSongTranslation, gaplessPlayback, audioVisualizer, localHifiOutput, localHifiOutputMode, localHifiMpvPath, localHifiAudioDevice } = storeToRefs(playerStore)
+const { quality, lyricSize, tlyricSize, rlyricSize, lyricInterludeTime, searchAssistLimit, showSongTranslation, qqNeteaseLyricBridge, gaplessPlayback, audioVisualizer, localHifiOutput, localHifiOutputMode, localHifiMpvPath, localHifiAudioDevice } = storeToRefs(playerStore)
 const localStore = useLocalStore()
 const userStore = useUserStore()
 
@@ -109,6 +109,7 @@ export function applySettingsSnapshot(settings, options = {}) {
     lyricInterludeTime.value = normalizedSettings?.music?.lyricInterlude
     searchAssistLimit.value = normalizedSettings?.music?.searchAssistLimit
     showSongTranslation.value = normalizedSettings?.music?.showSongTranslation !== false
+    qqNeteaseLyricBridge.value = normalizedSettings?.music?.qqNeteaseLyricBridge === true
     gaplessPlayback.value = normalizedSettings?.music?.gaplessPlayback === true
     audioVisualizer.value = normalizedSettings?.music?.audioVisualizer === true
     localHifiOutput.value = normalizedSettings?.music?.localHifiOutput === true

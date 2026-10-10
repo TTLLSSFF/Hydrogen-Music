@@ -21,6 +21,7 @@ import { getSettingsSnapshot, setCachedSettingsSnapshot } from '@/utils/settings
 import { applyCustomFontStyle, syncDesktopLyricCustomFont } from '@/utils/setFont'
 import { buildFontOptions, loadSystemFontOptions, resolveSystemFontLabel, resolveSystemFontValue } from '@/utils/fontResolver'
 import { markHifiOutputModeConfigured, resolveInitialHifiOutputMode } from '@/utils/hifiOutputModeMigration'
+import { clearQQNeteaseLyricBridgeCache } from '@/utils/player/qqLyricBridge.mjs'
 import settingsSchema from '@/shared/settingsSchema.js'
 
 const { MUSIC_LEVEL_OPTIONS, normalizeSettings } = settingsSchema
@@ -223,6 +224,7 @@ const applySettingsToForm = settings => {
     lyricInterlude.value = normalizedSettings.music.lyricInterlude
     searchAssistLimit.value = normalizedSettings.music.searchAssistLimit
     playerStore.showSongTranslation = normalizedSettings.music.showSongTranslation !== false
+    playerStore.qqNeteaseLyricBridge = normalizedSettings.music.qqNeteaseLyricBridge === true
     playerStore.gaplessPlayback = normalizedSettings.music.gaplessPlayback === true
     playerStore.audioVisualizer = normalizedSettings.music.audioVisualizer === true
     // 原生 App（Android）没有 MPV 后端：即使桌面端存过「已开启」也要强制关掉，
@@ -327,6 +329,7 @@ const setAppSettings = () => {
             lyricInterlude: lyricInterlude.value,
             searchAssistLimit: searchAssistLimit.value,
             showSongTranslation: playerStore.showSongTranslation,
+            qqNeteaseLyricBridge: playerStore.qqNeteaseLyricBridge,
             gaplessPlayback: playerStore.gaplessPlayback,
             audioVisualizer: playerStore.audioVisualizer,
             localHifiOutput: playerStore.localHifiOutput,
@@ -565,6 +568,12 @@ const setMusicVideo = () => setConfirmedPlayerFlag('musicVideo', PERFORMANCE_CON
 const setLyricBlur = () => setConfirmedPlayerFlag('lyricBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setCoverBlur = () => setConfirmedPlayerFlag('coverBlur', PERFORMANCE_CONFIRM_MESSAGE)
 const setGaplessPlayback = () => setConfirmedPlayerFlag('gaplessPlayback', GAPLESS_CONFIRM_MESSAGE)
+// QQ 歌曲的翻译/罗马音要按「歌名 + 歌手」去网易云匹配：开关一变就得清掉匹配缓存，
+// 否则之前匹配失败（或被关闭时跳过）的歌曲会一直被缓存成「没有翻译」。
+const toggleQQNeteaseLyricBridge = () => {
+    playerStore.qqNeteaseLyricBridge = !playerStore.qqNeteaseLyricBridge
+    clearQQNeteaseLyricBridgeCache()
+}
 const setAudioVisualizer = () => setConfirmedPlayerFlag('audioVisualizer', PERFORMANCE_CONFIRM_MESSAGE)
 const buildHifiOutputConfig = () => ({
     mpvPath: playerStore.localHifiMpvPath,
@@ -859,6 +868,19 @@ const toggleLocalOnlyMode = async () => {
                                     </div>
                                     <Transition name="toggle">
                                         <div class="toggle-on" v-show="playerStore.showSongTranslation"></div>
+                                    </Transition>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="option">
+                            <div class="option-name">QQ 歌词翻译/罗马音匹配网易云</div>
+                            <div class="option-operation">
+                                <div class="toggle" @click="toggleQQNeteaseLyricBridge()">
+                                    <div class="toggle-off" :class="{ 'toggle-on-in': playerStore.qqNeteaseLyricBridge }">
+                                        {{ playerStore.qqNeteaseLyricBridge ? '已开启' : '已关闭' }}
+                                    </div>
+                                    <Transition name="toggle">
+                                        <div class="toggle-on" v-show="playerStore.qqNeteaseLyricBridge"></div>
                                     </Transition>
                                 </div>
                             </div>

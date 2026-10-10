@@ -1,10 +1,16 @@
 import { search as searchMusic } from '../../api/other'
 import { getLyric } from '../../api/song'
+import { getLyricBySource } from '../../api/musicSource.js'
+import { normalizeQQLyricPayload } from '../../api/qqMusic.js'
 import { getCloudLyric } from '../../api/cloud'
+import request from '../request'
 import pinia from '../../store/pinia'
 import { useCloudStore } from '../../store/cloudStore'
 import { useUserStore } from '../../store/userStore'
+import { usePlayerStore } from '../../store/playerStore'
 import { createUnavailableLyric, hasUsableLyricPayload, isPlaceholderLyricPayload, normalizeLyricPayload, splitCombinedCloudLyricPayload } from './lyricPayload'
+import { bridgeQQNeteaseLyricTracks } from './qqLyricBridge.mjs'
+import { normalizeMusicSource } from '../musicSource.mjs'
 
 const CLOUD_LYRIC_SEARCH_LIMIT = 8
 const CLOUD_LYRIC_DURATION_TOLERANCE_MS = 8000
@@ -512,8 +518,56 @@ async function getCloudLyricFallback(song) {
     return cloudLyricFallbackCache.get(cacheKey)
 }
 
+// —— QQ 翻译/罗马音桥接（设置项 qqNeteaseLyricBridge）——
+// QQ 上游不返回翻译与罗马音，开关打开时按「歌名 + 歌手」在网易云找同一首歌借用，
+// 时间轴对不上就什么都不要。这两个请求是后台补充，失败绝不能打扰用户（不弹全局错误）。
+export async function searchNeteaseLyricBridgeCandidates({ name, artist } = {}) {
+    const keywords = [String(name || '').trim(), String(artist || '').trim()].filter(Boolean).join(' ')
+    if (!keywords) return []
+    const payload = await request({
+        url: '/cloudsearch',
+        method: 'get',
+        params: { keywords, type: 1, limit: 8 },
+        suppressGlobalNotice: true,
+    })
+    const songs = payload?.result?.songs
+    return Array.isArray(songs) ? songs : []
+}
+
+export async function fetchNeteaseLyricBridgeTrack(id) {
+    if (!id) return null
+    return await request({
+        url: '/lyric',
+        method: 'get',
+        params: { id },
+        suppressGlobalNotice: true,
+    })
+}
+
+async function attachQQNeteaseBridgeIfEnabled(song, payload) {
+    if (!usePlayerStore(pinia).qqNeteaseLyricBridge) return payload
+    return await bridgeQQNeteaseLyricTracks({
+        song,
+        payload,
+        searchCandidates: searchNeteaseLyricBridgeCandidates,
+        fetchCandidateLyric: fetchNeteaseLyricBridgeTrack,
+    }) || payload
+}
+
 export async function getLyricWithCloudFallback(songOrId) {
     const song = resolveCloudDiskSong(songOrId)
+    if (normalizeMusicSource(song?.source) === 'qq') {
+        const providerId = song.sourceId || song.songmid || song.mid || song.id
+        if (!providerId) return createUnavailableLyric()
+        try {
+            const response = await getLyricBySource('qq', providerId)
+            const normalized = normalizeQQLyricPayload(response?.data || response?.body || response)
+            if (!hasUsableLyricPayload(normalized)) return createUnavailableLyric()
+            return await attachQQNeteaseBridgeIfEnabled(song, normalized)
+        } catch (_) {
+            return createUnavailableLyric()
+        }
+    }
     const lyricId = song ? song.id : songOrId
     const cloudSongId = getCloudDiskSongId(song)
     const hasCloudContext = !!cloudSongId

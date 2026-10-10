@@ -27,7 +27,8 @@ import { createNextShuffledCycle, createShuffledList, haveSameSongIds } from './
 import { normalizeQueueSong, normalizeQueueSongs } from './player/queueSong'
 import { isTogetherSong } from './listenTogether'
 import { getPrefetchedSongAssets, getSongAssetKey, prefetchSongAssets } from './player/assetPrefetch'
-import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong } from './player/lyricFallback'
+import { getLyricWithCloudFallback, isCloudDiskSong, markCloudDiskSong, searchNeteaseLyricBridgeCandidates, fetchNeteaseLyricBridgeTrack } from './player/lyricFallback'
+import { bridgeQQNeteaseLyricTracks } from './player/qqLyricBridge.mjs'
 import { createDecodedAudioPlayer } from './player/webAudioGapless'
 import { resolveActivatedPlaybackPosition } from './player/activationProgress.mjs'
 import { createHifiOutputPlayer } from './player/hifiOutputPlayer'
@@ -1593,6 +1594,33 @@ export function clearQQPlaybackState() {
     syncExternalPlaybackState()
     savePlaylist()
     return currentWasQQ || filteredSongs.length !== previousSongs.length
+}
+
+// QQ 歌曲缺翻译/罗马音时，用户点「译 / ABC」再试一次桥接（首次匹配可能失败并被缓存）。
+// 成功后换一个新对象引用，让歌词监听重建歌词行。
+export async function applyCurrentSongQQNeteaseLyricBridge() {
+    const currentSong = getCurrentSong()
+    const currentSongId = normalizePlayerSongId(songId.value || currentSong?.id)
+    if (!currentSong || !currentSongId || !isQQSong(currentSong) || isSirenSong(currentSong)) return false
+
+    const payload = lyric.value
+    if (!payload || typeof payload !== 'object') return false
+    const lyricText = value => (typeof value?.lyric === 'string' ? value.lyric : '')
+    if (lyricText(payload.tlyric).trim() || lyricText(payload.romalrc).trim()) return true
+
+    const isTargetCurrent = () => normalizePlayerSongId(songId.value) === currentSongId
+    const bridged = await bridgeQQNeteaseLyricTracks({
+        song: currentSong,
+        payload,
+        searchCandidates: searchNeteaseLyricBridgeCandidates,
+        fetchCandidateLyric: fetchNeteaseLyricBridgeTrack,
+        isActive: isTargetCurrent,
+        force: true,
+    })
+    if (!bridged || !isTargetCurrent()) return false
+
+    lyric.value = bridged
+    return true
 }
 
 function isTransientPlaybackRequestError(error) {

@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router';
 import { songTime2 } from '../utils/time';
 import VueSlider from 'vue-slider-component';
 import OverflowMarquee from './base/OverflowMarquee.vue';
-import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode, prefetchIntelligenceMode, likeSong, changeProgressByDragStart, changeProgressByDragEnd } from '../utils/player/lazy';
+import { startMusic, pauseMusic, playLast, playNext, changeProgress, changePlayMode, prefetchIntelligenceMode, likeSong, applyCurrentSongQQNeteaseLyricBridge, changeProgressByDragStart, changeProgressByDragEnd } from '../utils/player/lazy';
 import { getDjDetail, subDj } from '../api/dj';
 import { useUserStore } from '../store/userStore';
 import { usePlayerStore } from '../store/playerStore';
@@ -289,6 +289,39 @@ const hasRomaLyric = computed(() => {
     if (!lyricsObjArr.value || !Array.isArray(lyricsObjArr.value)) return false;
     return lyricsObjArr.value.some(item => item.rlyric && item.rlyric.trim() !== '');
 });
+
+// QQ 上游不提供翻译/罗马音：图标整块消失会让人以为功能坏了，
+// 因此对 QQ 歌曲保留图标，点下去按需再匹配一次网易云（开关打开时），否则明确提示。
+const isQQTranslationUnavailable = computed(() => isQQSong(currentSong.value) && !hasTransLyric.value);
+const isQQRomanizationUnavailable = computed(() => isQQSong(currentSong.value) && !hasRomaLyric.value);
+
+const toggleLyricTrack = async (field, unavailable, unavailableMessage) => {
+    if (unavailable.value) {
+        if (playerStore.qqNeteaseLyricBridge && isQQSong(currentSong.value)) {
+            const bridged = await applyCurrentSongQQNeteaseLyricBridge();
+            if (bridged) {
+                if (lyricType.value.indexOf(field) == -1) lyricType.value.push(field);
+                return;
+            }
+        }
+        noticeOpen(unavailableMessage, 2);
+        return;
+    }
+    const index = lyricType.value.indexOf(field);
+    if (index != -1) lyricType.value.splice(index, 1);
+    else lyricType.value.push(field);
+};
+
+const toggleTransLyric = () => toggleLyricTrack(
+    'trans',
+    isQQTranslationUnavailable,
+    playerStore.qqNeteaseLyricBridge ? '未在网易云匹配到该歌曲的翻译' : 'QQ 音乐未提供该歌曲的翻译',
+);
+const toggleRomaLyric = () => toggleLyricTrack(
+    'roma',
+    isQQRomanizationUnavailable,
+    playerStore.qqNeteaseLyricBridge ? '未在网易云匹配到该歌曲的罗马音' : 'QQ 音乐未提供该歌曲的罗马音（音译）',
+);
 
 const toAlbum = () => {
     const song = currentSong.value;
@@ -584,7 +617,7 @@ const toggleDjSub = async isSubscribe => {
                 <svg
                     t="1673182533775"
                     v-show="hasRomaLyric && lyricType.indexOf('roma') != -1 && lyricType.indexOf('noRoma') == -1"
-                    @click="lyricType.splice(lyricType.indexOf('roma'), 1)"
+                    @click="toggleRomaLyric"
                     class="icon lyric-toggle active"
                     viewBox="-103 -102 1229 1229"
                     version="1.1"
@@ -601,8 +634,8 @@ const toggleDjSub = async isSubscribe => {
                 </svg>
                 <svg
                     t="1673182533775"
-                    v-show="hasRomaLyric && lyricType.indexOf('roma') == -1 && lyricType.indexOf('noRoma') == -1"
-                    @click="lyricType.push('roma')"
+                    v-show="(hasRomaLyric || isQQRomanizationUnavailable) && lyricType.indexOf('roma') == -1 && lyricType.indexOf('noRoma') == -1"
+                    @click="toggleRomaLyric"
                     class="icon lyric-toggle inactive"
                     viewBox="-103 -102 1229 1229"
                     version="1.1"
@@ -621,7 +654,7 @@ const toggleDjSub = async isSubscribe => {
                 <svg
                     t="1673182625534"
                     v-show="hasTransLyric && lyricType.indexOf('trans') != -1 && lyricType.indexOf('noTrans') == -1"
-                    @click="lyricType.splice(lyricType.indexOf('trans'), 1)"
+                    @click="toggleTransLyric"
                     class="icon lyric-toggle active"
                     viewBox="-102 -102 1229 1229"
                     version="1.1"
@@ -638,8 +671,8 @@ const toggleDjSub = async isSubscribe => {
                 </svg>
                 <svg
                     t="1673182625534"
-                    v-show="hasTransLyric && lyricType.indexOf('trans') == -1 && lyricType.indexOf('noTrans') == -1"
-                    @click="lyricType.push('trans')"
+                    v-show="(hasTransLyric || isQQTranslationUnavailable) && lyricType.indexOf('trans') == -1 && lyricType.indexOf('noTrans') == -1"
+                    @click="toggleTransLyric"
                     class="icon lyric-toggle inactive"
                     viewBox="-102 -102 1229 1229"
                     version="1.1"

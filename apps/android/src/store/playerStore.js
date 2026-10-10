@@ -123,6 +123,7 @@ export const usePlayerStore = defineStore('playerStore', {
             playerShow: true,
             lyricBlur: false,
             showSongTranslation: true, // 歌曲名是否显示翻译（原名 (翻译)）
+            qqNeteaseLyricBridge: false, // QQ 歌曲缺歌词时，用网易云同名曲歌词兜底
             gaplessPlayback: false, // 是否预缓冲下一首以减少切歌空隙
             audioVisualizer: false, // 是否显示顶部音频可视化
             localHifiOutput: false, // 本地音乐是否使用 HiFi 输出后端
@@ -137,6 +138,6 @@ export const usePlayerStore = defineStore('playerStore', {
     },
     persist: {
         storage: playerPersistStorage,
-        pick: ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','musicVideo','lyricBlur','showSongTranslation','gaplessPlayback','audioVisualizer','localHifiOutput','localHifiOutputMode','localHifiMpvPath','localHifiAudioDevice','coverBlur']
+        pick: ['volume','playMode','shuffleIndex','listInfo','songId','currentIndex','time','quality','lyricType','lyricLineOffsets','musicVideo','lyricBlur','showSongTranslation','qqNeteaseLyricBridge','gaplessPlayback','audioVisualizer','localHifiOutput','localHifiOutputMode','localHifiMpvPath','localHifiAudioDevice','coverBlur']
     },
 })
