@@ -190,7 +190,11 @@ jobs:
 
       - name: Create or update draft release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # 本仓库是 fork：即使顶层声明了 contents: write，github.token 仍可能被限制
+          # （创建 release 时报 403 Resource not accessible by integration）。
+          # 配了 RELEASE_TOKEN（fine-grained PAT，Contents: Read and write）就优先用它，
+          # 没配则回退到原来的 github.token 行为。
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           OVERWRITE_EXISTING: ${{ github.event.inputs.overwrite_existing || 'true' }}
         shell: bash
