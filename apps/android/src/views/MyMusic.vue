@@ -10,6 +10,7 @@
   import { useLibraryStore } from '../store/libraryStore'
   import { useLocalStore } from '../store/localStore';
   import { storeToRefs } from 'pinia'
+  import { hasAnyMusicAccount } from '../utils/accountProviders.mjs'
   const router = useRouter()
   const libraryStore = useLibraryStore()
   const { listType1, listType2, libraryInfo, lastLibraryRoute, libraryChangeAnimation } = storeToRefs(libraryStore)
@@ -18,6 +19,7 @@
   const playerStore = usePlayerStore()
   const localStore = useLocalStore()
   const { downloadedMusicFolder, localMusicFolder, localMusicClassify, downloadedFolderSettings, localFolderSettings } = storeToRefs(localStore)
+  const hasMusicAccount = computed(() => hasAnyMusicAccount())
 
   /**
    * 传给 LocalMusicList 的 folderlist 必须是**数组**。
@@ -50,7 +52,7 @@
 
 <template>
   <div class="my-music" :class="{'my-music-full': !playerStore.songList, 'has-detail': isDetailRoute}">
-    <div class="music-library" v-if="user || userStore.localOnlyMode">
+    <div class="music-library" v-if="hasMusicAccount || userStore.localOnlyMode">
       <LibraryType class="library-type"></LibraryType>
       <LibraryList v-if="!userStore.localOnlyMode" v-show="listType1 != 2 && listType1 != 3" class="library-list"></LibraryList>
       <DownloadList v-if="!userStore.localOnlyMode" v-show="listType1 == 2 && listType2 == 0" class="download-list"></DownloadList>
@@ -60,7 +62,7 @@
       <div class="no-folder" @click="router.push('/settings')" v-if="!userStore.localOnlyMode && !downloadedFolderSettings && listType1 == 2 && listType2 == 2">去设置下载地址</div>
       <div class="no-folder" @click="router.push('/settings')" v-if="localFolderSettings.length == 0 && listType1 == 3">去设置扫描地址</div>
     </div>
-      <div class="library-view" :class="{'library-view-nologin': !user && !userStore.localOnlyMode}">
+      <div class="library-view" :class="{'library-view-nologin': !hasMusicAccount && !userStore.localOnlyMode}">
         <router-view v-slot="{ Component }">
           <keep-alive :include="['LibraryDetail','LibrarySongList','LibraryAlbumList','LibraryMVList']">
             <Transition name="fade">

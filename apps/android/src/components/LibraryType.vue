@@ -120,7 +120,7 @@
     }
 
     const params = {
-      uid: requestUserId,
+      uid: getMusicAccountId(requestUserId, 'netease'),
       limit: 500,
       offset: 0,
       timestamp: Date.now()
@@ -128,12 +128,12 @@
 
     try {
       const listCount = await getUserPlaylistCount(options)
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
       updateUserPlaylistCount(listCount)
 
       const list = await getUserPlaylist(params, options)
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
 
       updateUserPlaylist(Array.isArray(list?.playlist) ? list.playlist : [])
       syncFavoritePlaylistTrackCount()
@@ -141,7 +141,7 @@
       lastLoadedUserId.value = requestUserId
       return true
     } catch (error) {
-      if (!isLibraryRequestActive(requestToken, requestUserId)) return false
+      if (!isLibraryRequestActive(requestToken, requestUserId, 'netease')) return false
       console.error('加载用户歌单失败:', error)
       clearAccountLibraryLists()
       return false
