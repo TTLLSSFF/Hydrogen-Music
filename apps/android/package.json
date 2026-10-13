@@ -29,6 +29,7 @@
     "@vitejs/plugin-vue": "^6.0.1",
     "howler": "^2.2.4",
     "js-cookie": "^3.0.5",
+    "nanoid": "^5.1.16",
     "opencc-js": "^1.0.5",
     "pinia": "^3.0.3",
     "pinia-plugin-persistedstate": "^4.5.0",
