@@ -4,6 +4,7 @@ const path = require('path');
 
 const projectDir = path.resolve(__dirname, '..');
 const builderConfigPath = path.join(projectDir, 'electron-builder.config.cjs');
+const packageJson = require(path.join(projectDir, 'package.json'));
 
 function getPlatformFlag() {
   const currentPlatform = process.platform;
