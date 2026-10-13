@@ -54,9 +54,18 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
+      # ubuntu-24.04 runner 已预装 Android SDK 与 cmdline-tools（ANDROID_SDK_ROOT 也已设好），
+      # 不再需要 android-actions/setup-android：该 action 已归档，内部会去安装已从 SDK 仓库
+      # 移除的 legacy 'tools' 包，直接以 `sdkmanager 'tools'` 失败。
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          sdkmanager_bin="$(command -v sdkmanager || find "$sdk_root/cmdline-tools" -maxdepth 3 -name sdkmanager -type f | sort -V | tail -n1)"
+          echo "sdkmanager: $sdkmanager_bin"
+          yes | "$sdkmanager_bin" --licenses > /dev/null || true
+          "$sdkmanager_bin" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
       - name: Install Android dependencies
         run: npm run android:install
       - name: Resolve version
