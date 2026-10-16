@@ -15,6 +15,16 @@ const os = require('os')
 const fs = require('fs')
 const path = require('path')
 
+// 必须先于任何 API 依赖安装：真机内嵌运行时是 nodejs-mobile 18.20.4，而随 APK
+// 打包的 QQ 依赖树按 Node 20+ 构建（util.styleText / Array#toReversed）。
+// 缺失时 QQ 请求一旦出错，koa 的错误处理会抛 TypeError；内嵌 Node 与 App 同进程，
+// 该未捕获异常会让 Node 直接退出，表现为登录后闪退。
+try {
+  require('./node20-compat.cjs').install()
+} catch (error) {
+  console.error('[node] Node 20 兼容层安装失败:', error && error.message)
+}
+
 /**
  * 修正临时目录（必须在加载 API 之前执行）
  *

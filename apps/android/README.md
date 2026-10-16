@@ -208,3 +208,29 @@ GitHub Actions 的 **Build Android** 工作流独立于桌面发行：
 
 - 未连接 Android 真机、本机也无 Android SDK，未产出 APK；以上均为前端构建、宿主 Node 冒烟与单元测试结果。
 - 待真机确认：QQ 扫码/登录态持久化、VIP 歌曲播放与下载、QQ 歌单写入、歌词桥接匹配率、下载队列在后台/断网时的表现、长按菜单（个别 WebView 不触发 `contextmenu`）。
+
+### 修复 QQ 登录后闪退：内嵌 Node 18 与依赖树的 Node 20 落差（2026-10-16）
+
+**现象**：安卓端 QQ 音乐登录后随即闪退（网易云登录不受影响）。
+
+**根因**：Capacitor Node.js 插件内置的运行时是 nodejs-mobile **18.20.4**，而随 APK 打包的 QQ 依赖树按 **Node 20+** 构建：
+
+| 位置 | 用到的 Node 20+ API | 引入版本 |
+| --- | --- | --- |
+| `@sansenjian/qq-music-api`（`dist/services.cjs` 的 `colors.*`） | `util.styleText` | 20.12 |
+| `@koa/router@15.7.0`（`_setMatchedRouteInfo`，其 `engines` 亦为 `>=20`） | `Array#toReversed` | 20.0 |
+
+QQ 请求失败时 koa 的 `onerror` 调用 `colors.error` → 在 Node 18 上抛
+`TypeError: (0 , node_util.styleText) is not a function`。该异常发生在 koa 错误处理内部、没有旁路；而内嵌 Node 与 App 处于同一进程（`Nodejs.java` 用 `System.loadLibrary("node")`），未捕获异常直接让 Node 退出，App 立即闪退。登录成功后才会走这些路由，因此表现为「登录闪退」。
+
+**修复**：新增 `mobile-runtime/node20-compat.cjs`，在加载任何 API 依赖之前补上 `util.styleText`、`Array#toReversed`、`AbortSignal.any`（原生已提供时完全不动）；`index.js` 最前面安装，`build-android.cjs` 随运行时一起打进 APK。
+
+**对照复现**（宿主 Node v24.21.0 与 `npx node@18.20.4`，同一份 `mobile-runtime/index.js`，端口清空后启动）
+
+| 场景 | Node 18（真机同款） | Node 24（宿主） |
+| --- | --- | --- |
+| 修复前 `/user/getUserDetail` 等已放行路由 | `FETCH_ERR`，Node `EXIT 1`（闪退） | 200，进程存活 |
+| 修复后同上 | 200，进程存活 | 200，进程存活 |
+
+回归：`test/android-node20-compat.test.mjs`（4 项，Node 18 与 Node 24 均通过）；全量 `npm test` 264 项通过。
+仍未在真机复验：APK 需重新构建安装后确认 QQ 登录不再闪退。

@@ -36,7 +36,7 @@ run(process.execPath, [path.join(root, 'node_modules/@capacitor/cli/bin/capacito
 const publicDir = path.join(root, 'android/app/src/main/assets/public')
 const runtimeDest = path.join(publicDir, 'nodejs')
 fs.mkdirSync(runtimeDest, { recursive: true })
-for (const name of ['index.js', 'api-bridge.cjs', 'package.json', 'node_modules']) {
+for (const name of ['index.js', 'api-bridge.cjs', 'node20-compat.cjs', 'package.json', 'node_modules']) {
   fs.cpSync(path.join(runtime, name), path.join(runtimeDest, name), { recursive: true, dereference: true })
 }
 // QQ 音乐 API 服务端保持单一真源：直接拷仓库根 server/qqMusicApi.cjs，不在 mobile-runtime 里放副本
