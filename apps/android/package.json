@@ -1,7 +1,7 @@
 {
   "name": "hydrogen-music-android",
   "private": true,
-  "androidVersionCode": 4,
+  "androidVersionCode": 5,
   "description": "Hydrogen Music Android app (Vue + Capacitor)",
   "engines": {
     "node": ">=22.12.0"
@@ -14,14 +14,14 @@
     "sync": "node scripts/build-android.cjs sync",
     "android:build": "node scripts/build-android.cjs debug",
     "android:release": "node scripts/build-android.cjs release",
-    "android:bundle": "node scripts/build-android.cjs bundle",
     "android:open": "cap open android",
     "inspect": "node scripts/device-cdp.cjs"
   },
   "dependencies": {
     "@capacitor/core": "8.5.2",
     "@capawesome/capacitor-nodejs": "0.1.1",
-    "axios": "^1.12.2"
+    "axios": "^1.12.2",
+    "nanoid": "^5.1.6"
   },
   "devDependencies": {
     "@capacitor/android": "8.5.2",
@@ -29,7 +29,6 @@
     "@vitejs/plugin-vue": "^6.0.1",
     "howler": "^2.2.4",
     "js-cookie": "^3.0.5",
-    "nanoid": "^5.1.16",
     "opencc-js": "^1.0.5",
     "pinia": "^3.0.3",
     "pinia-plugin-persistedstate": "^4.5.0",

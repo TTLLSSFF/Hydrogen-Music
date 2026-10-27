@@ -6,6 +6,7 @@
 *.sh text eol=lf
 .github/workflows/*.yml text eol=lf
 scripts/mpv-audio-only/*.txt text eol=lf
+scripts/ffmpeg/*.txt text eol=lf
 
 # 二进制文件不做任何行尾转换。text=auto 通常能自动识别，这里显式声明，
 # 避免被误判成文本而在检出时把字节改坏。
