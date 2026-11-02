@@ -250,7 +250,35 @@ npm run serve
 - QQ 音乐 API 服务：`http://127.0.0.1:3200`
 - Hydrogen Music 静态资源服务：`http://localhost:30000`
 
-本地服务会同时处理 `/api`、`/api/qq`、`/siren-api`、`/github-api` 与 `/download-proxy`。可通过 `PORT` 环境变量修改 Web 服务端口，通过 `QQ_API_PORT` 修改 QQ API 端口。
+本地服务会同时处理 `/api`、`/api/qq`、`/siren-api`、`/github-api`、`/download-tags` 与 `/download-proxy`。可通过 `PORT` 环境变量修改 Web 服务端口，通过 `QQ_API_PORT` 修改 QQ API 端口。
+
+### 部署到子路径（例如 Nginx 的 `/hydro/`）
+
+前端所有同源请求（API、静态资源、下载代理）都取自 Vite 的 `base`，所以在子路径下部署不需要改代码，只要构建时把 base 一起改掉：
+
+```shell
+VITE_BASE=/hydro/ npm run build
+```
+
+构建产物里的资源引用与运行期请求会全部带上 `/hydro` 前缀。反向代理再把前缀剥掉转发给本地服务即可：
+
+```nginx
+location ^~ /hydro/ {
+    proxy_pass http://127.0.0.1:30000/;   # 结尾的 / 负责剥掉 /hydro/ 前缀
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+}
+```
+
+两个容易踩的点：
+
+- `location` 的匹配串必须以 `/` 开头（`^~ /hydro/`，不能写成 `^~ hydro/`），否则这条规则永远不会命中，请求会落到默认 `root` 上返回 404。
+- `base` 与 `proxy_pass` 要配套：base 带前缀时 `proxy_pass` 结尾必须有 `/`，让 Nginx 把 `/hydro/` 剥掉；web-server.js 本身只认无前缀路径。默认 dev（`npm run dev`）在相对 base `./` 下会回落到 `/`，只有显式设置了 `VITE_BASE` 才需要同步 Vite 代理前缀（`vite.config.js` 已按 base 自动生成代理键）。
 
 ### 运行测试
 
@@ -276,7 +304,7 @@ npm run test:player-open-performance
 
 - 想让浏览器显示安全标志，证书必须是受信任的。推荐用 [mkcert](https://github.com/FiloSottile/mkcert) 生成本地受信任证书：`mkcert -install` 之后执行 `mkcert -cert-file certs/server.crt -key-file certs/server.key localhost 127.0.0.1 <你的内网IP>`。
 - 自签证书（例如 `openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/server.key -out certs/server.crt -days 365 -subj "/CN=localhost"`）虽然同样是 HTTPS，但浏览器仍会提示不安全，需要先手动信任该证书。
-- 也可以用 Nginx/Caddy 等反向代理终止 TLS，此时无需上面的证书配置——但请确保代理只转发 `/api`、`/api/qq`、`/siren-api`、`/github-api`、`/download-tags`、`/download-proxy` 与静态资源，浏览器侧的全部请求都会以同源 HTTPS 发出。
+- 也可以用 Nginx/Caddy 等反向代理终止 TLS，此时无需上面的证书配置——但请确保代理把整站（静态资源 + `/api`、`/api/qq`、`/siren-api`、`/github-api`、`/download-tags`、`/download-proxy`）都转发到本地服务，浏览器侧的全部请求都会以同源 HTTPS 发出；部署在子路径（如 `/hydro/`）时请参考上面的「部署到子路径」一节。
 
 ### 提高「检查更新」限额（可选）
 

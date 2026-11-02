@@ -5,8 +5,9 @@ import { useUserStore } from '../store/userStore'
 import { clearAccountScopedState } from './accountState'
 import { noticeOpen } from "./dialog";
 import { resolveNcmBridgeUrl } from './ncmApiBridge.mjs'
+import { resolveApiBaseUrl } from './appBase.mjs'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || resolveApiBaseUrl('/api')
 const request = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,

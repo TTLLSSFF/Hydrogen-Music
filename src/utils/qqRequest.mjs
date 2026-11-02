@@ -1,6 +1,7 @@
 import { containsQQSecret, sanitizeQQPayload } from './qqSecurity.mjs'
+import { resolveApiBaseUrl } from './appBase.mjs'
 
-const QQ_API_BASE_URL = '/api/qq'
+const QQ_API_BASE_URL = resolveApiBaseUrl('/api/qq')
 const QQ_REQUEST_TIMEOUT_MS = 10000
 
 function assertSafeQQRequest(config) {

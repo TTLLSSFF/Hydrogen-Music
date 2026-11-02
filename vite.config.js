@@ -33,6 +33,30 @@ function resolveAppBuildId() {
 }
 
 // 可选 GitHub Token：与 web-server.js 用同一组环境变量，用于提高「检查更新」接口限额
+// 部署基路径。默认 './' 用于桌面端与根路径部署；子路径部署（例如 nginx 下 /hydro/）
+// 用 VITE_BASE=/hydro/ 构建，或直接改这里的默认值。dev 代理的关键字必须与 base 前缀一致，
+// 否则浏览器请求的 '/hydro/api/...' 匹配不上 '/api' 规则。
+function normalizeViteBase(raw) {
+  const value = String(raw ?? '').trim()
+  if (!value || value === '.' || value === './') return './'
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value.endsWith('/') ? value : value + '/'
+  const absolute = value.startsWith('/') ? value : '/' + value
+  return absolute.endsWith('/') ? absolute : absolute + '/'
+}
+
+const APP_BASE = normalizeViteBase(process.env.VITE_BASE)
+const BASE_PREFIX = APP_BASE === './' ? '' : APP_BASE.replace(/\/+$/, '')
+
+function withBase(key) {
+  return BASE_PREFIX ? BASE_PREFIX + key : key
+}
+
+function stripBasePrefix(path) {
+  if (!BASE_PREFIX) return path
+  if (path === BASE_PREFIX) return '/'
+  return path.startsWith(BASE_PREFIX + '/') ? path.slice(BASE_PREFIX.length) : path
+}
+
 function resolveGithubToken() {
   return process.env.GITHUB_TOKEN || process.env.GITHUB_API_TOKEN || ''
 }
@@ -90,7 +114,22 @@ function fetchUrlToFile(targetUrl, filePath, req, res, redirectCount = 0) {
       const redirectLocation = proxyRes.headers.location
       if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && redirectLocation) {
         proxyRes.resume()
-        fetchUrlToFile(new URL(redirectLocation, parsedTarget).toString(), filePath, req, res, redirectCount + 1)
+        // 重定向目标同样来自上游，畸形 Location（如 http://[）会在 new URL 处抛异常；
+        // 这个回调不在任何 try/catch 里，抛出去就是未捕获异常，直接带走整个 dev server。
+        let nextTarget = null
+        try {
+          nextTarget = new URL(redirectLocation, parsedTarget)
+        } catch (error) {
+          proxyRes.resume()
+          reject(error)
+          return
+        }
+        if (nextTarget.protocol !== 'http:' && nextTarget.protocol !== 'https:') {
+          proxyRes.resume()
+          reject(new Error('unsupported redirect protocol'))
+          return
+        }
+        fetchUrlToFile(nextTarget.toString(), filePath, req, res, redirectCount + 1)
           .then(resolvePromise, reject)
         return
       }
@@ -161,10 +200,43 @@ async function writeTaggedDownload(targetUrl, filename, metadata, req, res) {
   }
 }
 
+// Vite 的 configureServer 中间件排在内部 baseMiddleware 之前，所以 base 为 '/hydro/' 时，
+// 前端请求的 /hydro/download-tags 到达插件中间件时前缀仍然完整，与 use('/download-tags', ...)
+// 的路由对不上，请求会一路落到静态资源兜底并返回 404。这里只把这两个下载端点的 base 剥掉，
+// 其余请求原样放行给 Vite 自己处理。
+function createBaseStripper(base) {
+  const prefix = base && base !== '/' ? base.replace(/\/+$/, '') : ''
+  if (!prefix) return null
+  return (value) => {
+    if (value === prefix) return '/'
+    if (value.startsWith(prefix + '/')) return value.slice(prefix.length)
+    if (value.startsWith(prefix + '?')) return '/' + value.slice(prefix.length)
+    return value
+  }
+}
+
+const DOWNLOAD_DEV_ENDPOINTS = ['/download-tags', '/download-proxy']
+
 function downloadProxyPlugin() {
   return {
     name: 'hydrogen-download-proxy',
     configureServer(server) {
+      const stripBase = createBaseStripper(server.config.base || '/')
+
+      if (stripBase) {
+        server.middlewares.use((req, _res, next) => {
+          const url = req.url || ''
+          const queryIndex = url.indexOf('?')
+          const pathname = queryIndex === -1 ? url : url.slice(0, queryIndex)
+          if (!DOWNLOAD_DEV_ENDPOINTS.includes(stripBase(pathname))) {
+            next()
+            return
+          }
+          req.url = stripBase(url)
+          next()
+        })
+      }
+
       // 与 web-server.js 的 POST /download-tags 一致：把下载元数据换成一次性 token
       server.middlewares.use('/download-tags', (req, res) => {
         if (req.method !== 'POST') {
@@ -260,13 +332,27 @@ function downloadProxyPlugin() {
           headers: {
             'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
             Accept: 'audio/*,*/*',
-            Referer: parsedTarget.origin,
+            Referer: resolveDownloadReferer(parsedTarget),
           },
         }, (proxyRes) => {
           const redirectLocation = proxyRes.headers.location
           if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && redirectLocation) {
             proxyRes.resume()
-            pipeDownload(new URL(redirectLocation, parsedTarget).toString(), redirectCount + 1)
+            // 同上：畸形或非 http(s) 的 Location 必须在这里挡掉，否则异常逃出回调会杀掉进程
+            let nextTarget = null
+            try {
+              nextTarget = new URL(redirectLocation, parsedTarget)
+            } catch (_) {
+              if (!res.headersSent) res.writeHead(502)
+              res.end('Bad download redirect')
+              return
+            }
+            if (nextTarget.protocol !== 'http:' && nextTarget.protocol !== 'https:') {
+              if (!res.headersSent) res.writeHead(502)
+              res.end('Bad download redirect')
+              return
+            }
+            pipeDownload(nextTarget.toString(), redirectCount + 1)
             return
           }
 
@@ -302,7 +388,7 @@ function downloadProxyPlugin() {
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [vue(), downloadProxyPlugin()],
-  base: './',
+  base: APP_BASE,
   define: {
     __APP_BUILD_ID__: JSON.stringify(resolveAppBuildId()),
   },
@@ -360,27 +446,29 @@ export default defineConfig({
   server: {
     open: false,
     cors: true,
-  proxy: {
-    '/api/qq': {
-      target: 'http://127.0.0.1:3200',
-      changeOrigin: true,
-      rewrite: (path) => path.replace(/^\/api\/qq/, '')
-    },
-    '/api': {
+    // 键名必须带 base 前缀（Vite 文档：non-relative base 时每个键都要加前缀），
+    // 转发前再把前缀与自有路由前缀一起去掉，上游只看到业务路径。
+    proxy: {
+      [withBase('/api/qq')]: {
+        target: 'http://127.0.0.1:3200',
+        changeOrigin: true,
+        rewrite: (path) => stripBasePrefix(path).replace(/^\/api\/qq/, '')
+      },
+      [withBase('/api')]: {
         target: 'http://127.0.0.1:36530',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        rewrite: (path) => stripBasePrefix(path).replace(/^\/api/, '')
       },
-      '/siren-api': {
+      [withBase('/siren-api')]: {
         target: 'https://monster-siren.hypergryph.com/api',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/siren-api/, '')
+        rewrite: (path) => stripBasePrefix(path).replace(/^\/siren-api/, '')
       },
       // 开发环境与 web-server.js 保持一致的 GitHub 只读代理（可选携带 Token）
-      '/github-api': {
+      [withBase('/github-api')]: {
         target: 'https://api.github.com',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/github-api/, ''),
+        rewrite: (path) => stripBasePrefix(path).replace(/^\/github-api/, ''),
         headers: resolveGithubToken() ? { Authorization: `Bearer ${resolveGithubToken()}` } : {}
       }
     }

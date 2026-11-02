@@ -1,5 +1,6 @@
 import pinia from '../store/pinia'
 import { useOtherStore } from '../store/otherStore'
+import { resolveAppUrl } from './appBase.mjs'
 
 // 网页版的「新版本追加」：更新日志取自本仓库最新的提交（推送）记录，
 // 触发时机为首次打开网页、网页更新后首次打开、以及设置里的「检查更新」。
@@ -7,7 +8,7 @@ const REPO = 'TTLLSSFF/Hydrogen-Music'
 // 通过同源代理请求：服务端（web-server.js / Vite dev 代理）会附带 GITHUB_TOKEN，
 // 既能避免 Token 暴露在浏览器，也能提高 GitHub 接口限额
 const COMMITS_API_PATH = `/repos/${REPO}/commits?per_page=20`
-const COMMITS_PROXY = `/github-api${COMMITS_API_PATH}`
+const COMMITS_PROXY = `${resolveAppUrl('/github-api').replace(/\/+$/, '')}${COMMITS_API_PATH}`
 // 仅托管静态产物、没有代理时直连 GitHub（匿名请求，限额较低）
 const COMMITS_DIRECT = `https://api.github.com${COMMITS_API_PATH}`
 const COMMITS_PAGE = `https://github.com/${REPO}/commits`

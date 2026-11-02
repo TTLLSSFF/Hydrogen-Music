@@ -2,6 +2,7 @@ import { getPreferredQuality } from './quality'
 import { resolveDownloadPlaybackInfo } from './player/lazy'
 import { getSongDisplayName } from './songName'
 import { isQQSong } from './providerPolicy.mjs'
+import { resolveAppUrl } from './appBase.mjs'
 import pinia from '../store/pinia'
 import { useDownloadStore } from '../store/downloadStore'
 
@@ -135,7 +136,7 @@ async function requestDownloadTagToken(metadata) {
     if (!metadata.name && !metadata.album && !metadata.coverUrl && !metadata.lyrics) return ''
 
     try {
-        const response = await fetch('/download-tags', {
+        const response = await fetch(resolveAppUrl('/download-tags'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(metadata),
@@ -166,7 +167,7 @@ export async function pushBrowserDownload(url, filename, metadata = null) {
     const tagToken = await requestDownloadTagToken(metadata)
 
     const link = document.createElement('a')
-    const downloadUrl = new URL('/download-proxy', window.location.origin)
+    const downloadUrl = new URL(resolveAppUrl('/download-proxy'), window.location.origin)
     downloadUrl.searchParams.set('url', url)
     if (filename) downloadUrl.searchParams.set('filename', filename)
     if (tagToken) downloadUrl.searchParams.set('tags', tagToken)

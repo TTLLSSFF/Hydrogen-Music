@@ -1,5 +1,7 @@
+import { resolveAppUrl } from '../utils/appBase.mjs'
+
 const SIREN_DESKTOP_API_BASE = 'https://monster-siren.hypergryph.com/api'
-const SIREN_WEB_API_BASE = '/siren-api'
+const SIREN_WEB_API_BASE = resolveAppUrl('/siren-api').replace(/\/+$/, '')
 const DEFAULT_REQUEST_TIMEOUT = 15000
 
 // 桌面端（Electron）由 preload 注入 windowApi，塞壬请求交给主进程代理，需使用绝对地址；
