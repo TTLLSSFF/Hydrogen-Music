@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { getPlaylistDetail, getPlaylistAll, getRecommendSongs, getHistoryRecommendSongsDetail, playlistDynamic } from '../api/playlist'
 import { getAlbumDetail, albumDynamic } from '../api/album'
-import { getArtistDetail, getArtistFansCount, getArtistTopSong, getArtistAlbum } from '../api/artist'
+import { getArtistDetail, getArtistFansCount, getArtistSongs, getArtistAlbum } from '../api/artist'
 import { getArtistMV } from '../api/mv'
 import { getSongDetail } from '../api/song'
 import { getQQSongListDetail, getQQTopListDetail, normalizeQQTopListDetail } from '../api/qqMusic'
@@ -13,6 +13,8 @@ import { getSongIdentity, normalizeMusicSource } from '../utils/musicSource.mjs'
 const PLAYLIST_PAGE_SIZE = 100
 const PLAYLIST_HYDRATION_CONCURRENCY = 4
 const PLAYLIST_OVERVIEW_COUNT_FIELDS = ['trackCount', 'size']
+// 网易云歌手页歌曲分页步长：/artist/songs 单页上限（与 QQ 歌手页一样滚动到底再取下一页）。
+const ARTIST_SONGS_PAGE_SIZE = 100
 // QQ 歌手页歌曲分页步长，与 server 端 QQ_SINGER_SONGS_MAX_LIMIT（上游单次上限）一致。
 const QQ_SINGER_SONGS_PAGE_SIZE = 60
 // QQ 歌手页专辑分页步长，与 server 端 QQ_SINGER_ALBUMS_PAGE_SIZE 一致。
@@ -101,6 +103,10 @@ export const useLibraryStore = defineStore('libraryStore', {
             qqSingerAlbumsNextPage: 1,
             qqSingerAlbumsLoading: false,
             qqSingerAlbumsHasMore: false,
+            artistSongsOffset: 0,
+            artistSongsTotal: 0,
+            artistSongsLoading: false,
+            artistSongsHasMore: false,
         }
     },
     actions: {
@@ -401,6 +407,8 @@ export const useLibraryStore = defineStore('libraryStore', {
                 libraryAlbum: this.libraryAlbum,
                 libraryMV: this.libraryMV,
                 artistPageType: this.artistPageType,
+                artistSongsTotal: this.artistSongsTotal,
+                artistSongsHasMore: this.artistSongsHasMore,
                 playlistHydration: { ...(this.playlistHydration || createPlaylistHydrationState()) },
                 source: normalizedSource,
                 searchIndexById: cloneSearchIndexState(this.searchIndexById),
@@ -437,6 +445,12 @@ export const useLibraryStore = defineStore('libraryStore', {
             if (routerName == 'artist' && normalizedSource === 'qq') {
                 this.resetQQSingerSongsPaging()
                 this.resetQQSingerAlbumsPaging()
+            } else if (routerName == 'artist') {
+                this.resetArtistSongsPaging({
+                    offset: Array.isArray(this.librarySongs) ? this.librarySongs.length : 0,
+                    total: Number(cached.artistSongsTotal) || 0,
+                    more: Boolean(cached.artistSongsHasMore),
+                })
             }
 
             return true
@@ -1012,42 +1026,105 @@ export const useLibraryStore = defineStore('libraryStore', {
             })
         },
         async updateArtistDetail(id) {
-            let params = {
-                id: id,
-                // timestamp: new Date().getTime()
-            }
-            await Promise.all([getArtistDetail(params), getArtistFansCount(id)]).then(async results => {
-                results[0].artist.follow = results[1].data
-                results[0].artist.followed = results[1].data.follow
-                this.libraryInfo = results[0].artist
-                
-                // 获取热门歌曲的完整详情（包括封面）
-                const songIds = results[0].hotSongs.map(song => song.id)
-                const songDetailResult = await getSongDetail(songIds)
-                
-                // 使用详情API返回的完整歌曲数据
-                this.librarySongs = mapSongsPlayableStatus(songDetailResult.songs)
-                this.indexLibrarySongs(this.librarySongs)
-                this.libraryChangeAnimation = false
-            })
+            const params = { id }
+            const results = await Promise.all([getArtistDetail(params), getArtistFansCount(id)])
+            results[0].artist.follow = results[1].data
+            results[0].artist.followed = results[1].data.follow
+            this.libraryInfo = results[0].artist
+            await this.updateArtistSongs(id, results[0].hotSongs)
+            this.libraryChangeAnimation = false
         },
-        //获取歌手热门歌曲前50首，并更新Store数据
-        async updateArtistTopSong(id) {
-            let params = {
-                id: id,
-                // timestamp: new Date().getTime()
+        isCurrentNeteaseArtist(artistId) {
+            return String(this.libraryInfo?.id ?? '') === String(artistId ?? '') && normalizeMusicSource(this.libraryInfo?.source) !== 'qq'
+        },
+        // 歌手页歌曲分页游标：offset 由已加载条数推导，total/more 来自 /artist/songs
+        resetArtistSongsPaging({ offset = 0, total = 0, more = false } = {}) {
+            this.artistSongsOffset = Number(offset) || 0
+            this.artistSongsTotal = Number(total) || 0
+            this.artistSongsLoading = false
+            this.artistSongsHasMore = this.artistSongsOffset > 0 && (this.artistSongsTotal > this.artistSongsOffset || Boolean(more))
+        },
+        // 分页取歌手歌曲：/artist/songs 支持 order（hot/time）与 offset；上游不给 more 时按总数推算
+        async fetchArtistSongPage(artistId, offset = 0) {
+            const result = await getArtistSongs(artistId, { limit: ARTIST_SONGS_PAGE_SIZE, offset, order: 'hot' })
+            const songs = Array.isArray(result?.songs) ? result.songs : []
+            const total = Number(result?.total) || 0
+            const more = typeof result?.more === 'boolean' ? result.more : total > offset + songs.length
+            return { songs, total, more }
+        },
+        // 列表需要完整歌曲信息（封面、可播状态），统一用 /song/detail 补齐
+        async fetchArtistSongDetails(rawSongs) {
+            const songIds = (Array.isArray(rawSongs) ? rawSongs : []).map(song => song?.id).filter(id => id != null)
+            if (!songIds.length) return []
+            const songDetailResult = await getSongDetail(songIds)
+            return mapSongsPlayableStatus(songDetailResult?.songs) || []
+        },
+        // 首屏：优先走 /artist/songs 分页（可继续加载），上游不可用时退回 /artists 自带的热门 50 首
+        async updateArtistSongs(id, fallbackSongs = []) {
+            const artistId = String(id ?? '')
+            if (!artistId) return
+            this.artistSongsLoading = true
+            try {
+                let page = null
+                try {
+                    page = await this.fetchArtistSongPage(artistId, 0)
+                } catch (_) {
+                    page = null
+                }
+                const paged = Boolean(page && page.songs.length)
+                const rawSongs = paged ? page.songs : (Array.isArray(fallbackSongs) ? fallbackSongs : [])
+                // 上游 /artist/songs 与 /artists 都没给数据时保留既有列表，避免把页面清空
+                if (!rawSongs.length) return
+                const songs = await this.fetchArtistSongDetails(rawSongs)
+                if (!this.isCurrentNeteaseArtist(artistId)) return
+                this.librarySongs = songs
+                this.indexLibrarySongs(songs)
+                if (paged) this.resetArtistSongsPaging({ offset: page.songs.length, total: page.total, more: page.more })
+                else this.resetArtistSongsPaging()
+            } finally {
+                this.artistSongsLoading = false
             }
-            await getArtistTopSong(params).then(async result => {
-                // 获取所有歌曲ID
-                const songIds = result.songs.map(song => song.id)
-                
-                // 使用歌曲详情API获取完整信息（包括正确的封面）
-                const songDetailResult = await getSongDetail(songIds)
-                
-                // 使用详情API返回的完整歌曲数据
-                this.librarySongs = mapSongsPlayableStatus(songDetailResult.songs)
-                this.indexLibrarySongs(this.librarySongs)
-            })
+        },
+        // 滚动到底加载下一页歌手歌曲；失败即停止自动重试，避免反复请求上游
+        async loadMoreArtistSongs() {
+            if (this.artistSongsLoading || !this.artistSongsHasMore) return false
+            const artistId = String(this.libraryInfo?.id ?? '')
+            if (!artistId || !this.isCurrentNeteaseArtist(artistId)) return false
+            const offset = Number(this.artistSongsOffset) || 0
+            this.artistSongsLoading = true
+            try {
+                const page = await this.fetchArtistSongPage(artistId, offset)
+                if (!this.isCurrentNeteaseArtist(artistId)) return false
+                const songs = await this.fetchArtistSongDetails(page.songs)
+                const existing = Array.isArray(this.librarySongs) ? this.librarySongs : []
+                const seen = new Set(existing.map(song => getSongIdentity(song)))
+                const appended = songs.filter(song => {
+                    const key = getSongIdentity(song)
+                    if (!key || seen.has(key)) return false
+                    seen.add(key)
+                    return true
+                })
+                if (appended.length) {
+                    this.librarySongs = [...existing, ...appended]
+                    this.indexLibrarySongs(appended, { append: true })
+                }
+                this.artistSongsOffset = offset + page.songs.length
+                this.artistSongsTotal = Math.max(page.total, this.artistSongsTotal || 0)
+                this.artistSongsHasMore = Boolean(page.more) && page.songs.length > 0 && appended.length > 0
+                // 同步缓存，切到专辑/MV 页签再切回时不会丢失已加载的分页
+                if (appended.length) this.cacheCurrentLibraryDetail(artistId, 'artist', 'netease')
+                return appended.length > 0
+            } catch (_) {
+                this.artistSongsHasMore = false
+                return false
+            } finally {
+                this.artistSongsLoading = false
+            }
+        },
+        //切换回「热门单曲」：同一歌手已加载过分页时直接复用，避免丢进度
+        async updateArtistTopSong(id) {
+            if (this.isCurrentNeteaseArtist(id) && Array.isArray(this.librarySongs) && this.librarySongs.length) return
+            await this.updateArtistSongs(id)
         },
         //获取歌手专辑，并更新Store数据
         async updateArtistAlbum(id) {

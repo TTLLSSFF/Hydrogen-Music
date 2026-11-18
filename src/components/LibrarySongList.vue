@@ -65,7 +65,7 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
-    // 分页列表（当前为 QQ 歌手页）用：还有更多时滚动到底触发 load-more
+    // 分页列表（歌手页：网易云 / QQ）用：还有更多时滚动到底触发 load-more
     hasMore: {
         type: Boolean,
         default: false,

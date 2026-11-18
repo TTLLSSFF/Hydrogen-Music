@@ -30,6 +30,18 @@ export function getArtistDetail(id, extraParams = {}) {
 }
 
 /**
+ * 获取歌手歌曲（分页）。上游 /artist/songs 支持 order 排序（hot 按热度 / time 按时间）
+ * @param {string|number} id - 歌手ID
+ * @param {object} options - 分页选项
+ * @param {number} options.limit - 每页数量，默认100
+ * @param {number} options.offset - 偏移量，默认0
+ * @param {'hot'|'time'} options.order - 排序方式，默认hot
+ */
+export function getArtistSongs(id, { limit = 100, offset = 0, order = 'hot', ...extraParams } = {}) {
+    return get('/artist/songs', { id, limit, offset, order, ...extraParams });
+}
+
+/**
  * 获取歌手热门50首歌曲
  * @param {string|number} id - 歌手ID
  * @param {object} extraParams - 额外参数

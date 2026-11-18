@@ -31,7 +31,7 @@ const playerStore = usePlayerStore();
 const libraryStore = useLibraryStore();
 const otherStore = useOtherStore();
 const { updateLibraryDetail, updateArtistTopSong, updateArtistAlbum, updateArtistsMV, waitForPlaylistHydration, saveDetailScroll, getDetailScroll } = libraryStore;
-const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration, qqSingerSongsHasMore, qqSingerSongsLoading, qqSingerAlbumsHasMore, qqSingerAlbumsLoading } = storeToRefs(libraryStore);
+const { libraryList, libraryInfo, librarySongs, libraryAlbum, libraryMV, playlistUserCreated, artistPageType, listType1, listType2, lastLibraryRoute, lastLibraryScrollTop, restoreLibraryScrollOnActivate, playlistHydration, qqSingerSongsHasMore, qqSingerSongsLoading, qqSingerAlbumsHasMore, qqSingerAlbumsLoading, artistSongsHasMore, artistSongsLoading } = storeToRefs(libraryStore);
 
 const router = useRouter();
 const isAlbum = ref(false);
@@ -301,11 +301,14 @@ const songSearchEmptyDescription = computed(() => {
     if (isSongSearchFailed.value) return '剩余歌曲加载失败，结果可能不完整';
     return '';
 });
-// QQ 歌手页歌曲分页：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
-const isQQSingerSongsPaging = computed(() => isArtistTopSongRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
-const loadMoreQQSingerSongs = () => {
-    if (!isQQSingerSongsPaging.value || !qqSingerSongsHasMore.value || qqSingerSongsLoading.value) return;
-    void libraryStore.loadMoreQQSingerSongs();
+// 歌手页歌曲分页（网易云 / QQ 共用）：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
+const isSingerSongsPaging = computed(() => isArtistTopSongRoute.value && !hasSongSearchKeyword.value);
+const singerSongsHasMore = computed(() => (isQQSource.value ? qqSingerSongsHasMore.value : artistSongsHasMore.value));
+const singerSongsLoading = computed(() => (isQQSource.value ? qqSingerSongsLoading.value : artistSongsLoading.value));
+const loadMoreSingerSongs = () => {
+    if (!isSingerSongsPaging.value || !singerSongsHasMore.value || singerSongsLoading.value) return;
+    if (isQQSource.value) void libraryStore.loadMoreQQSingerSongs();
+    else void libraryStore.loadMoreArtistSongs();
 };
 // QQ 歌手页专辑分页：仅由列表滚动到底自动加载（搜索态下列表是过滤结果，不触发）
 const isQQSingerAlbumsPaging = computed(() => isArtistAlbumRoute.value && isQQSource.value && !hasSongSearchKeyword.value);
@@ -984,10 +987,10 @@ const onAfterLeave = () => (introduceDetailShowDelay.value = false);
                         :source-indexes="visibleLibrarySourceIndexes"
                         :download-selection-mode="downloadSelectionMode"
                         :selected-download-ids="selectedDownloadIds"
-                        :has-more="isQQSingerSongsPaging && qqSingerSongsHasMore"
-                        :loading-more="qqSingerSongsLoading"
+                        :has-more="isSingerSongsPaging && singerSongsHasMore"
+                        :loading-more="singerSongsLoading"
                         @toggle-download-selection="toggleDownloadSelection"
-                        @load-more="loadMoreQQSingerSongs"
+                        @load-more="loadMoreSingerSongs"
                         class="library-content"
                     ></LibrarySongList>
                 </template>
